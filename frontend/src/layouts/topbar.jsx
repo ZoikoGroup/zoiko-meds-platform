@@ -10,7 +10,8 @@ import { Popover, PopoverContent, PopoverTrigger, } from '@/components/ui/popove
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger, } from '@/components/ui/tooltip';
 import { useTheme } from '@/providers/theme-provider';
-import { currentUser, notifications, organizations } from '@/services/data';
+import { useAuth } from '@/providers/auth-provider';
+import { notifications, organizations } from '@/services/data';
 import { cn } from '@/lib/utils';
 /* ------------------------------- search --------------------------------- */
 function SearchTrigger({ onClick }) {
@@ -138,27 +139,33 @@ function NotificationsMenu() {
 }
 /* ----------------------------- profile menu ----------------------------- */
 function ProfileMenu() {
+    const { user, logout } = useAuth();
+    const initials = user?.initials || 'U';
+    const name = user?.name || 'User';
+    const email = user?.email || '';
+    const role = user?.role || 'Enterprise Partner';
+
     return (<DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="flex items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background" aria-label="Account menu">
           <Avatar className="size-9 border border-border">
-            <AvatarFallback>{currentUser.initials}</AvatarFallback>
+            <AvatarFallback>{initials}</AvatarFallback>
           </Avatar>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         <div className="flex items-center gap-3 px-2.5 py-2">
           <Avatar className="size-10">
-            <AvatarFallback>{currentUser.initials}</AvatarFallback>
+            <AvatarFallback>{initials}</AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="text-sm font-medium">{currentUser.name}</span>
-            <span className="text-xs text-muted-foreground">{currentUser.email}</span>
+            <span className="text-sm font-medium">{name}</span>
+            <span className="text-xs text-muted-foreground">{email}</span>
           </div>
         </div>
         <div className="px-2.5 pb-2">
           <Badge variant="secondary" size="sm">
-            {currentUser.role}
+            {role}
           </Badge>
         </div>
         <DropdownMenuSeparator />
@@ -175,7 +182,7 @@ function ProfileMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="danger">
+        <DropdownMenuItem variant="danger" onSelect={logout}>
           <LogOut />
           Sign out
         </DropdownMenuItem>

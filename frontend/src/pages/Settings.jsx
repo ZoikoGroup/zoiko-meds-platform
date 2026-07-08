@@ -48,7 +48,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Check, Minus } from 'lucide-react'
 import { apiKeys, auditLogs, billingSummary, integrations, roleMatrix, users } from '@/services/ops-data'
-import { currentUser } from '@/services/data'
+import { useAuth } from '@/providers/auth-provider'
 import { initials } from '@/utils/format'
 
 const ROLE_VARIANT = {
@@ -157,6 +157,7 @@ function actionsMenu(items) {
 /* -------------------------------- page ---------------------------------- */
 
 export default function Settings() {
+  const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = searchParams.get('tab') || 'organization'
   const setTab = (v) =>
@@ -493,7 +494,7 @@ export default function Settings() {
 
       {/* current-user footnote */}
       <p className="text-center text-xs text-muted-foreground">
-        Signed in as {currentUser.name} · {currentUser.role}
+        Signed in as {user?.name || 'User'} · {user?.role || 'Guest'}
       </p>
     </div>
   )
