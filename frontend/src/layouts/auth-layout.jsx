@@ -44,10 +44,7 @@ export function AuthLayout({
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-12">
         {/* Left Side Showcase (Logo & Pitch) */}
         <section className="relative flex flex-col justify-between p-8 sm:p-12 lg:col-span-7 xl:col-span-8 lg:p-20">
-          {/* Logo */}
-          <div className="flex items-center">
-            <Brand className="scale-110" />
-          </div>
+          <div /> {/* Spacer replacing top logo placeholder */}
 
           {/* Core Content */}
           <div className="my-auto max-w-2xl py-12 lg:py-0">
@@ -57,7 +54,15 @@ export function AuthLayout({
               transition={{ duration: 0.5 }}
               className="flex flex-col gap-6"
             >
-              <div className="flex items-center gap-2">
+              {/* Highlighted Logo aligned with content stack */}
+              <div className="flex items-center mb-1">
+                <div className="relative group">
+                  <div className="absolute -inset-1.5 rounded-lg bg-gradient-to-r from-primary/15 via-teal/15 to-transparent opacity-90 blur-md group-hover:opacity-100 transition duration-500" />
+                  <Brand className="relative scale-125 origin-left" />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
                 <span className="rounded-full bg-teal/10 px-3.5 py-1 text-xs font-semibold uppercase tracking-wider text-teal">
                   Secure ZoikoMeds Access
                 </span>
