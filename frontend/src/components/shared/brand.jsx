@@ -1,21 +1,23 @@
 import { cn } from '@/lib/utils';
-export function BrandMark({ size = 34, className, }) {
-    return (<div className={cn('grid shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-teal text-white shadow-sm', className)} style={{ width: size, height: size }} aria-hidden>
-      <svg width={size * 0.56} height={size * 0.56} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 12h3.2l2-5.2 3.8 12 2.4-6.8H21"/>
-      </svg>
-    </div>);
+
+// ZoikoMeds mark: crossed pill capsules with a plus, on a navy disc.
+export function BrandMark({ size = 34, className }) {
+    return (<svg className={cn('shrink-0', className)} width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden>
+      <circle cx="24" cy="24" r="22.5" fill="#2b4192"/>
+      <rect x="18.9" y="10.7" width="10.2" height="26.6" rx="5.1" fill="#ffffff"/>
+      <rect x="10.4" y="19.0" width="27.2" height="10.0" rx="5.0" fill="#10aaa4"/>
+      <rect x="20.7" y="22.8" width="6.6" height="2.4" fill="#ffffff"/>
+      <rect x="22.8" y="20.7" width="2.4" height="6.6" fill="#ffffff"/>
+    </svg>);
 }
-export function Brand({ collapsed = false, className, }) {
+
+export function Brand({ collapsed = false, className }) {
     return (<div className={cn('flex items-center gap-2.5', className)}>
       <BrandMark />
-      {!collapsed && (<div className="flex flex-col leading-tight">
-          <span className="text-[15px] font-semibold tracking-tight">
-            ZoikoMeds
-          </span>
-          <span className="text-[11px] font-medium text-muted-foreground">
-            Intelligence
-          </span>
-        </div>)}
+      {!collapsed && (<span className="text-[19px] font-extrabold tracking-tight leading-none">
+          <span className="text-foreground">Zoiko</span>
+          <span className="text-teal">Meds</span>
+          <span className="align-super text-[9px] font-semibold text-muted-foreground">™</span>
+        </span>)}
     </div>);
 }

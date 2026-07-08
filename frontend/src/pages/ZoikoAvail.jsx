@@ -1,11 +1,8 @@
-import { useState } from 'react'
 import {
   Activity,
   AlertTriangle,
   BookOpen,
-  Check,
   CheckCircle2,
-  Copy,
   Gauge,
   KeyRound,
   Terminal,
@@ -19,13 +16,7 @@ import { SectionHeading } from '@/components/shared/section-heading'
 import { StatTile } from '@/components/shared/stat-tile'
 import { ChartCard } from '@/components/shared/chart-card'
 import { ServiceStatusBadge } from '@/components/shared/status'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -43,7 +34,6 @@ import {
   apiHealth,
   authSteps,
   endpoints,
-  exampleResponse,
   rateTiers,
   requestThroughput,
   responseTime,
@@ -68,32 +58,6 @@ function MethodTag({ method }) {
   )
 }
 
-function CodeBlock({ code, label }) {
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    navigator.clipboard?.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
-  return (
-    <div className="overflow-hidden rounded-xl border border-border bg-muted/40">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="font-mono text-[11px] text-muted-foreground">{label}</span>
-        <button
-          onClick={copy}
-          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <pre className="max-h-[480px] overflow-auto p-4 text-xs leading-relaxed">
-        <code className="font-mono text-foreground">{code}</code>
-      </pre>
-    </div>
-  )
-}
-
 const HEALTH = [
   { label: 'Uptime (30d)', value: apiHealth.uptime, icon: Activity, severity: 'good' },
   { label: 'p50 latency', value: apiHealth.p50, unit: 'ms', icon: Gauge, severity: 'good' },
@@ -108,11 +72,11 @@ export default function ZoikoAvail() {
     <div className="flex flex-col gap-8">
       <PageHeader
         eyebrow="Medicine Intelligence"
-        title="ZoikoAvail™ API"
+        title="ZoikoAvail™"
         subtitle="A governed, aggregate-only API for availability confidence and access-risk intelligence."
         breadcrumbs={[
           { label: 'ZoikoMeds', to: '/dashboard' },
-          { label: 'ZoikoAvail™ API' },
+          { label: 'ZoikoAvail™' },
         ]}
         meta={
           <Badge variant="success" size="sm">
@@ -235,26 +199,6 @@ export default function ZoikoAvail() {
           ))}
         </div>
       </section>
-
-      {/* Request / response viewer */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Example request & response</CardTitle>
-          <CardDescription>
-            Aggregate-only payloads. No PHI, no exact stock — enforced at the gateway.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
-          <CodeBlock
-            label="cURL · request"
-            code={`curl https://api.zoikomeds.io/v2/availability/confidence \\
-  -H "Authorization: Bearer $ZOIKO_TOKEN" \\
-  -H "X-Jurisdiction: APAC" \\
-  --cert client.pem`}
-          />
-          <CodeBlock label="200 OK · application/json" code={exampleResponse} />
-        </CardContent>
-      </Card>
 
       {/* Security, auth flow, rate limits */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
