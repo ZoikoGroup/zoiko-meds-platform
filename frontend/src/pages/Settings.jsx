@@ -355,7 +355,7 @@ export default function Settings() {
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <div>
                 <CardTitle>API keys</CardTitle>
-                <CardDescription>Scoped keys for the ZoikoAvail™ API.</CardDescription>
+                <CardDescription>Scoped keys for ZoikoAvail™.</CardDescription>
               </div>
               <Button size="sm">
                 <Plus />

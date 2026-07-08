@@ -59,7 +59,7 @@ npm run lint       # ESLint
 - **ZoikoSignal™** — shortage intelligence, demand movement, restock signals
   with a filter bar (date range · medicine group · country · region · category)
   and export.
-- **ZoikoAvail™ API** — health strip, latency/throughput charts, endpoint cards,
+- **ZoikoAvail™** — health strip, latency/throughput charts, endpoint cards,
   request/response viewer, security status, auth flow, and rate limits.
 - **MediBase™** — schematic medicine-identity graph, identifier mapping,
   normalization/governance status, quality tiers, and a searchable identity table.

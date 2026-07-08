@@ -9,7 +9,7 @@ export const navSections = [
         heading: 'Medicine Intelligence',
         items: [
             { label: 'ZoikoSignal™', to: '/zoikosignal', icon: Radar },
-            { label: 'ZoikoAvail™ API', to: '/zoikoavail', icon: Webhook },
+            { label: 'ZoikoAvail™', to: '/zoikoavail', icon: Webhook },
             { label: 'MediBase™', to: '/medibase', icon: Network },
         ],
     },
@@ -39,7 +39,7 @@ export const allNavLinks = navSections.flatMap((s) => s.items);
 export const routeMeta = {
     '/dashboard': { title: 'Dashboard' },
     '/zoikosignal': { title: 'ZoikoSignal™', section: 'Medicine Intelligence' },
-    '/zoikoavail': { title: 'ZoikoAvail™ API', section: 'Medicine Intelligence' },
+    '/zoikoavail': { title: 'ZoikoAvail™', section: 'Medicine Intelligence' },
     '/medibase': { title: 'MediBase™', section: 'Medicine Intelligence' },
     '/health-systems': { title: 'Health Systems', section: 'Solutions' },
     '/government': { title: 'Government & Public Health', section: 'Solutions' },

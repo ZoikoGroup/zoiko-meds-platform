@@ -34,7 +34,7 @@ enterprise pages and requires accessible, server-rendered content. Next.js gives
 Enterprise & Intelligence
 /enterprise/solutions         Enterprise Solutions
 /enterprise/medibase-data     MediBase™ Data
-/enterprise/zoikoavail-api    ZoikoAvail™ API
+/enterprise/zoikoavail-api    ZoikoAvail™
 /enterprise/zoikosignal       ZoikoSignal™ Intelligence
 /enterprise/health-systems    Health Systems
 /enterprise/government-public-health   Government & Public Health
@@ -89,7 +89,7 @@ access/licensing → trust & close) with one dominant CTA.
 
 - [ ] Shared enterprise page template (hero, section blocks, CTA strips, lead form).
 - [ ] `/enterprise/medibase-data` — medicine identity graph visual + data governance.
-- [ ] `/enterprise/zoikoavail-api` — API capability model + governance + eval path.
+      - [ ] `/enterprise/zoikoavail-api` — ZoikoAvail™ capability model + governance + eval path.
 - [ ] `/enterprise/zoikosignal` — intelligence outputs (aggregate-only framing).
 - [ ] `/enterprise/solutions` — cross-sell hub.
 - [ ] `/enterprise/health-systems` — health-system workflows.

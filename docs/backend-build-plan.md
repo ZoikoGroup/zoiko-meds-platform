@@ -118,7 +118,7 @@ returns `db: up`.
 
 ## Phase 6 — Auth, access control & API governance (2 weeks)
 
-**Goal:** enterprise-grade access model for gated surfaces and the ZoikoAvail™ API.
+**Goal:** enterprise-grade access model for gated surfaces and ZoikoAvail™.
 
 - [ ] AuthN: JWT/session + SSO readiness (OIDC), MFA for privileged roles.
 - [ ] AuthZ: RBAC (`PUBLIC`, `PHARMACY_STAFF/ADMIN`, `ENTERPRISE`, `ADMIN`) + guards.
@@ -155,7 +155,7 @@ returns `db: up`.
 ## Phase 9 — Testing, observability & delivery (ongoing)
 
 - [ ] Unit tests (services) + e2e tests (controllers) — target coverage gates.
-- [ ] Contract tests for the ZoikoAvail™ API (governance boundaries as assertions:
+- [ ] Contract tests for ZoikoAvail™ (governance boundaries as assertions:
       no exact stock, no clinical fields).
 - [ ] Seed + fixtures for deterministic test data.
 - [ ] Metrics (Prometheus), tracing (OpenTelemetry), dashboards + alerts.
