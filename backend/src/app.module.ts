@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
+import { MailModule } from './modules/mail/mail.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { MeModule } from './modules/me/me.module';
 import { HealthModule } from './modules/health/health.module';
 import { MedibaseModule } from './modules/medibase/medibase.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
@@ -22,9 +24,11 @@ import { EnterpriseModule } from './modules/enterprise/enterprise.module';
       },
     ]),
     PrismaModule,
+    MailModule, // Transactional email (credentials, invites, resets)
     HealthModule,
     AuthModule, // Authentication, JWT sessions & role-based access
     AdminModule, // SUPER_ADMIN platform administration
+    MeModule, // Authenticated patient portal (search, saved, alerts)
     // Service domains
     MedibaseModule, // MediBase™ medicine identity
     AvailabilityModule, // ZoikoAvail™ confidence engine

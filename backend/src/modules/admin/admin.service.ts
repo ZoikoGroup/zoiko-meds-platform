@@ -8,6 +8,9 @@ import {
 import { Prisma, User, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthService } from '../auth/auth.service';
+import { MailService } from '../mail/mail.service';
+import { roleLabel } from '../auth/roles';
 import { AuditWriter } from './audit.writer';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -27,6 +30,8 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditWriter: AuditWriter,
+    private readonly auth: AuthService,
+    private readonly mail: MailService,
   ) {}
 
   // --- Overview ------------------------------------------------------------
@@ -141,7 +146,14 @@ export class AdminService {
     }
     if (dto.pharmacyId) await this.assertPharmacyExists(dto.pharmacyId);
 
-    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    // Two provisioning modes:
+    //  - invite: no password now; user sets one via an emailed link.
+    //  - credentials: admin supplies a temporary password, emailed to the user.
+    const useInvite = dto.sendInvite === true || !dto.password;
+    const passwordHash = useInvite
+      ? null
+      : await bcrypt.hash(dto.password as string, SALT_ROUNDS);
+
     const user = await this.prisma.user.create({
       data: {
         email,
@@ -151,14 +163,28 @@ export class AdminService {
         role: dto.role,
         pharmacyId: dto.pharmacyId || null,
         isActive: dto.isActive ?? true,
+        mustChangePassword: !useInvite, // temp password must be rotated
       },
     });
+
+    // Best-effort delivery — never fail account creation on a mail hiccup.
+    if (useInvite) {
+      await this.auth.sendInviteFor(user);
+    } else {
+      await this.mail.sendAccountCredentials({
+        to: user.email,
+        fullName: user.fullName,
+        temporaryPassword: dto.password as string,
+        roleLabel: roleLabel(user.role),
+      });
+    }
 
     await this.audit(actorId, 'admin.user.create', user.id, {
       email: user.email,
       role: user.role,
+      provisioned: useInvite ? 'invite' : 'credentials',
     });
-    return this.toPublicUser(user);
+    return { ...this.toPublicUser(user), invited: useInvite };
   }
 
   async updateUser(actorId: string, id: string, dto: UpdateUserDto) {
@@ -361,6 +387,7 @@ export class AdminService {
       role: user.role,
       pharmacyId: user.pharmacyId,
       isActive: user.isActive,
+      mustChangePassword: user.mustChangePassword,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
