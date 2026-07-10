@@ -159,11 +159,7 @@ export default function Login() {
                 Trust this device
               </label>
               <Link
-                to="#"
-                onClick={(e) => {
-                  e.preventDefault()
-                  alert('Forgot password flow is managed by your enterprise identity system.')
-                }}
+                to="/forgot-password"
                 className="font-medium text-teal hover:underline"
               >
                 Forgot password?
