@@ -1,0 +1,48 @@
+# ZoikoMeds Backend — local Docker stack (API + PostgreSQL)
+# Usage:
+#   docker compose up --build
+# The API will be available at http://localhost:4000/api
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: zoikomeds-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zoikomeds
+    ports:
+      - "5432:5432"
+    volumes:
+      - zoikomeds-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d zoikomeds"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zoikomeds-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      API_PREFIX: api
+      CORS_ORIGIN: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/zoikomeds?schema=public
+      JWT_SECRET: change-me-in-production
+      THROTTLE_TTL: 60
+      THROTTLE_LIMIT: 100
+      EXPOSE_EXACT_STOCK: "false"
+    ports:
+      - "4000:4000"
+
+volumes:
+  zoikomeds-db-data:
