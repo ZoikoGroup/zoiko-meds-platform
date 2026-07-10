@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Home, Search, Heart, Bell, Settings, HelpCircle,
-  Menu, LogOut, Sun, Moon, Loader2, User, ShieldCheck,
+  Menu, LogOut, Sun, Moon, Loader2, User,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
@@ -80,22 +80,6 @@ export function UserLayout() {
             Patient
           </Badge>
         </Link>
-
-        {/* User context */}
-        <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-3.5 shadow-soft">
-          <Avatar className="size-10 ring-2 ring-primary/10">
-            <AvatarFallback>{user?.initials || 'ZM'}</AvatarFallback>
-          </Avatar>
-          <div className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-sm font-semibold text-foreground">
-              {user?.name || 'ZoikoMeds User'}
-            </span>
-            <span className="flex items-center gap-1 truncate text-xs text-teal">
-              <ShieldCheck className="size-3 shrink-0" />
-              Verified account
-            </span>
-          </div>
-        </div>
 
         {/* Navigation — grouped into labeled sections */}
         <nav className="flex flex-col gap-5" aria-label="Patient portal">
