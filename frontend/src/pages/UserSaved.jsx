@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
@@ -7,23 +7,38 @@ import { EmptyState } from '@/components/shared/states'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { mapsHref } from '@/lib/availability'
-import { Search, Trash2, ShieldCheck, Clock, Heart, Navigation } from 'lucide-react'
-
-const INITIAL = [
-  { id: 'med-1', name: 'Dolo 650', generic: 'Paracetamol', strength: '650 mg', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: '0.9 km', updated: '2 min ago' },
-  { id: 'med-2', name: 'Metformin 500 mg', generic: 'Metformin', strength: '500 mg', confidence: 'moderate', pharmacy: 'MedPlus', distance: '1.4 km', updated: '3 hrs ago' },
-  { id: 'med-3', name: 'Cetirizine 10 mg', generic: 'Cetirizine', strength: '10 mg', confidence: 'high', pharmacy: 'Netmeds Store', distance: '1.1 km', updated: '1 hr ago' },
-]
+import { listSaved, unsaveMedicine } from '@/services/user-api'
+import { Search, Trash2, ShieldCheck, Clock, Heart, Navigation, Loader2 } from 'lucide-react'
 
 export default function UserSaved() {
-  const [saved, setSaved] = useState(INITIAL)
+  const [saved, setSaved] = useState([])
+  const [loading, setLoading] = useState(true)
   const [flashMsg, flash] = useFlash()
   const navigate = useNavigate()
 
-  const remove = (id, name) => {
-    setSaved((prev) => prev.filter((m) => m.id !== id))
-    flash(`Removed ${name} from saved`)
+  useEffect(() => {
+    let alive = true
+    listSaved()
+      .then((rows) => alive && setSaved(rows))
+      .catch((err) => alive && flash(err.message || 'Could not load saved medicines'))
+      .finally(() => alive && setLoading(false))
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const remove = async (id, name) => {
+    const prev = saved
+    setSaved((rows) => rows.filter((m) => m.id !== id)) // optimistic
+    try {
+      await unsaveMedicine(id)
+      flash(`Removed ${name} from saved`)
+    } catch (err) {
+      setSaved(prev) // revert
+      flash(err.message || 'Could not remove medicine')
+    }
   }
+
+  const distanceLabel = (d) => (d == null ? '—' : `${d} km`)
 
   return (
     <div className="flex flex-col gap-6">
@@ -34,7 +49,12 @@ export default function UserSaved() {
 
       {flashMsg && <Flash message={flashMsg} />}
 
-      {saved.length === 0 ? (
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Loading your saved medicines…
+        </div>
+      ) : saved.length === 0 ? (
         <EmptyState
           icon={Heart}
           title="No saved medicines yet"
@@ -68,7 +88,7 @@ export default function UserSaved() {
                   </span>
                   <span className="flex items-center justify-between">
                     <span className="text-muted-foreground">Distance</span>
-                    <span className="font-semibold text-foreground tabular">{med.distance}</span>
+                    <span className="font-semibold text-foreground tabular">{distanceLabel(med.distance)}</span>
                   </span>
                   <span className="flex items-center justify-between">
                     <span className="text-muted-foreground">Last confirmed</span>

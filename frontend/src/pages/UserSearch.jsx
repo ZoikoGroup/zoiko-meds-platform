@@ -11,29 +11,15 @@ import {
 import { EmptyState } from '@/components/shared/states'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
-import { CONFIRM_NOTE, byConfidence, mapsHref, telHref } from '@/lib/availability'
+import { CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
+import { searchMedicines, listSaved, saveMedicine, unsaveMedicine } from '@/services/user-api'
 import {
-  Search, Heart, Bell, Navigation, Info, ShieldCheck, Phone, Clock,
+  Search, Heart, Bell, Navigation, Info, ShieldCheck, Phone, Clock, Loader2,
   Map as MapIcon, List, LayoutGrid, SlidersHorizontal, AlertTriangle, Mic, Network,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-/* Synthetic, governed data — availability is a CONFIDENCE band, not stock. */
-const MEDICINES = [
-  { id: 'med-1', name: 'Dolo 650', generic: 'Paracetamol', manufacturer: 'Micro Labs Ltd', strength: '650 mg', form: 'Tablet', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: 0.9, updated: '2 min ago', rx: false, isGeneric: true, description: 'Analgesic and antipyretic used for mild-to-moderate pain and fever.', related: [] },
-  { id: 'med-2', name: 'Metformin 500 mg', generic: 'Metformin', manufacturer: 'Merck & Co', strength: '500 mg', form: 'Extended-release tablet', confidence: 'moderate', pharmacy: 'MedPlus', distance: 1.4, updated: '3 hrs ago', rx: true, isGeneric: true, description: 'First-line therapy for type 2 diabetes.', related: [] },
-  { id: 'med-3', name: 'Insulin Glargine', generic: 'Insulin', manufacturer: 'Sanofi', strength: '100 U/mL', form: 'Injection pen', confidence: 'low', pharmacy: 'Wellness Forever', distance: 2.1, updated: '3 days ago', rx: true, isGeneric: false, description: 'Long-acting insulin analogue for type 1 and type 2 diabetes.', related: [{ name: 'Lantus Pen', strength: '100 U/mL', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: 0.9 }, { name: 'Basaglar Pen', strength: '100 U/mL', confidence: 'moderate', pharmacy: 'Netmeds Store', distance: 1.1 }] },
-  { id: 'med-4', name: 'Cetirizine 10 mg', generic: 'Cetirizine', manufacturer: 'Johnson & Johnson', strength: '10 mg', form: 'Tablet', confidence: 'high', pharmacy: 'Netmeds Store', distance: 1.1, updated: '1 hr ago', rx: false, isGeneric: true, description: 'Second-generation antihistamine for allergy symptoms.', related: [] },
-]
-
-const PHARMACIES = [
-  { id: '1', name: 'Apollo Pharmacy', confidence: 'high', distance: 0.9, x: 160, y: 130, eta: '4 min', open: true, open24h: false, verified: true, address: 'Kompally Main Rd, Hyderabad', phone: '+91 40 2345 6789', updated: '2 min ago' },
-  { id: '2', name: 'Netmeds Store', confidence: 'high', distance: 1.1, x: 270, y: 190, eta: '6 min', open: true, open24h: true, verified: true, address: 'Dundigal, Hyderabad', phone: '+91 40 4444 9090', updated: '1 hr ago' },
-  { id: '3', name: 'MedPlus', confidence: 'moderate', distance: 1.4, x: 120, y: 250, eta: '8 min', open: true, open24h: false, verified: true, address: 'Gandimaisamma X Roads, Hyderabad', phone: '+91 40 8765 4321', updated: '3 hrs ago' },
-  { id: '4', name: 'Wellness Forever', confidence: 'low', distance: 2.1, x: 310, y: 280, eta: '9 min', open: false, open24h: true, verified: false, address: 'Bowrampet, Hyderabad', phone: '+91 40 5555 1212', updated: '3 days ago' },
-]
-
-const PIN = { high: 'var(--success)', moderate: 'var(--info)', low: 'var(--warning)' }
+const PIN = { high: 'var(--success)', moderate: 'var(--info)', low: 'var(--warning)', unknown: 'var(--muted-foreground)' }
 
 export default function UserSearch() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -48,48 +34,79 @@ export default function UserSearch() {
   const [maxDistance, setMaxDistance] = useState(5)
   const [filterVerified, setFilterVerified] = useState(true)
   const [filterType, setFilterType] = useState('all')
-  const [activeId, setActiveId] = useState('1')
+  const [activeId, setActiveId] = useState(null)
   const [isListening, setIsListening] = useState(false)
+
+  // Live data from the backend (modules/me).
+  const [meds, setMeds] = useState([])
+  const [allPharmacies, setAllPharmacies] = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => setSearchQuery(queryParam), [queryParam])
 
-  const parsedQuery = useMemo(
-    () => queryParam.toLowerCase().replace(/near me|in hyderabad/g, '').trim(),
-    [queryParam],
-  )
+  // Load saved medicine ids once so the heart toggles reflect persisted state.
+  useEffect(() => {
+    let alive = true
+    listSaved()
+      .then((rows) => alive && setSavedIds(new Set(rows.map((m) => m.id))))
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
 
-  const meds = useMemo(() => {
-    return MEDICINES.filter((m) => {
-      const text = !parsedQuery || m.name.toLowerCase().includes(parsedQuery) || m.generic.toLowerCase().includes(parsedQuery) || m.manufacturer.toLowerCase().includes(parsedQuery)
-      const dist = m.distance <= maxDistance
-      const type = filterType === 'all' || (filterType === 'generic' && m.isGeneric) || (filterType === 'brand' && !m.isGeneric)
-      return text && dist && type
-    })
-  }, [parsedQuery, maxDistance, filterType])
+  // Fetch results whenever the query or server-side filters change.
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    const q = queryParam.toLowerCase().replace(/near me|in hyderabad/g, '').trim()
+    searchMedicines({ q, maxDistance, type: filterType })
+      .then((data) => {
+        if (!alive) return
+        setMeds(data.medicines || [])
+        setAllPharmacies(data.pharmacies || [])
+        setActiveId((prev) => prev || data.pharmacies?.[0]?.id || null)
+      })
+      .catch(() => alive && (setMeds([]), setAllPharmacies([])))
+      .finally(() => alive && setLoading(false))
+    return () => { alive = false }
+  }, [queryParam, maxDistance, filterType])
 
   const pharmacies = useMemo(() => {
-    return PHARMACIES.filter((p) => {
-      const dist = p.distance <= maxDistance
+    return allPharmacies.filter((p) => {
       const verified = !filterVerified || p.verified
       const urgent = !urgentOnly || p.open
-      return dist && verified && urgent
-    }).sort((a, b) => byConfidence(a.confidence, b.confidence))
-  }, [maxDistance, filterVerified, urgentOnly])
+      return verified && urgent
+    })
+  }, [allPharmacies, filterVerified, urgentOnly])
 
-  const active = PHARMACIES.find((p) => p.id === activeId)
+  const active = allPharmacies.find((p) => p.id === activeId)
 
   const handleSubmit = (e) => {
     e.preventDefault()
     setSearchParams(searchQuery.trim() ? { q: searchQuery } : {})
   }
 
-  const toggleSave = (id, name) => {
+  const toggleSave = async (id, name) => {
+    const isSaved = savedIds.has(id)
+    // Optimistic toggle, reconciled on error.
     setSavedIds((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) { next.delete(id); flash(`Removed ${name} from saved`) }
-      else { next.add(id); flash(`Saved ${name}`) }
+      if (isSaved) next.delete(id)
+      else next.add(id)
       return next
     })
+    try {
+      if (isSaved) { await unsaveMedicine(id); flash(`Removed ${name} from saved`) }
+      else { await saveMedicine(id); flash(`Saved ${name}`) }
+    } catch (err) {
+      // Revert on failure.
+      setSavedIds((prev) => {
+        const next = new Set(prev)
+        if (isSaved) next.add(id)
+        else next.delete(id)
+        return next
+      })
+      flash(err.message || 'Could not update saved medicines')
+    }
   }
 
   const triggerVoice = () => {
@@ -276,7 +293,12 @@ export default function UserSearch() {
               </label>
             </div>
 
-            {meds.length === 0 ? (
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Searching verified pharmacies…
+              </div>
+            ) : meds.length === 0 ? (
               <EmptyState title="No matching medicine" description="Try a wider range or a different name — MediBase™ also matches generics." />
             ) : (
               <div className="flex flex-col gap-4">
