@@ -3,35 +3,37 @@ import {
   Activity,
   ArrowUpRight,
   Clock,
-  Gavel,
   Globe2,
-  Layers,
   Layers3,
   ShieldCheck,
-  Sparkles,
-  Timer,
   Users,
+  Building2,
+  AlertCircle,
+  Network,
+  Search,
+  CheckCircle2,
+  Webhook,
+  Blocks,
+  Settings,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { SectionHeading } from '@/components/shared/section-heading'
 import { KpiCard } from '@/components/shared/kpi-card'
-import { KpiCardSkeleton } from '@/components/shared/skeletons'
 import { ChartCard } from '@/components/shared/chart-card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { TrendChart } from '@/components/charts/trend-chart'
-import { BarCompare, GroupedBars } from '@/components/charts/bar-chart'
+import { BarCompare } from '@/components/charts/bar-chart'
 import { Donut } from '@/components/charts/donut'
 import { Heatmap } from '@/components/charts/heatmap'
 import { AvailabilityMap } from '@/features/dashboard/availability-map'
-import { useMockQuery } from '@/services/queries'
+import { GroupedBars } from '@/components/charts/bar-chart'
 import {
   apiUsage,
   availabilityTrend,
   confidenceDistribution,
   HEATMAP_COLS,
   jurisdictionComparison,
-  kpis,
   partnerParticipation,
   riskHeatmap,
   shortagePressure,
@@ -39,15 +41,17 @@ import {
   topCategories,
 } from '@/services/data'
 
-const KPI_ICONS = {
-  confidence: ShieldCheck,
-  coverage: Layers,
-  regions: Globe2,
-  freshness: Timer,
-  jurisdiction: Gavel,
-  partners: Users,
-  api: Activity,
-  governance: ShieldCheck,
+const SUPER_KPI_ICONS = {
+  'total-pharmacies': Building2,
+  'verified-pharmacies': ShieldCheck,
+  'pending-verifications': AlertCircle,
+  'active-users': Users,
+  'total-medicines': Network,
+  'searches-today': Search,
+  'confirmation-rate': CheckCircle2,
+  'api-requests': Webhook,
+  'system-health': Activity,
+  'active-integrations': Blocks
 }
 
 const DONUT_COLORS = {
@@ -57,16 +61,27 @@ const DONUT_COLORS = {
   unknown: 'var(--chart-axis)',
 }
 
-export default function Dashboard() {
-  const { data: metrics, isLoading } = useMockQuery(['dashboard', 'kpis'], kpis)
+const superAdminKpis = [
+  { id: 'total-pharmacies', label: 'Total Pharmacies', value: '1,284', delta: '+37', deltaLabel: 'vs last month', trend: 'up', upIsGood: true, status: { label: 'Active', severity: 'good' }, spark: [55, 60, 64, 72, 79, 84, 88, 92, 98, 102, 108, 114] },
+  { id: 'verified-pharmacies', label: 'Verified Pharmacies', value: '1,212', delta: '+42', deltaLabel: 'certified', trend: 'up', upIsGood: true, status: { label: 'Compliant', severity: 'good' }, spark: [50, 54, 58, 66, 72, 76, 80, 84, 90, 94, 98, 102] },
+  { id: 'pending-verifications', label: 'Pending Verifications', value: '72', delta: '−5', deltaLabel: 'review queue', trend: 'down', upIsGood: true, status: { label: 'Pending Action', severity: 'warning' }, spark: [15, 14, 13, 11, 10, 8, 9, 7, 8, 6, 5, 4] },
+  { id: 'active-users', label: 'Active Users', value: '3,482', delta: '+182', deltaLabel: 'weekly active', trend: 'up', upIsGood: true, status: { label: 'High traffic', severity: 'good' }, spark: [20, 22, 24, 25, 27, 28, 30, 31, 32, 33, 34, 35] },
+  { id: 'total-medicines', label: 'Total Medicines', value: '312.4K', delta: '+8.2K', deltaLabel: 'normalized', trend: 'up', upIsGood: true, status: { label: 'Expanding', severity: 'good' }, spark: [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92] },
+  { id: 'searches-today', label: 'Searches Today', value: '42.8K', delta: '+4.2%', deltaLabel: 'ZoikoSignal volume', trend: 'up', upIsGood: true, status: { label: 'Nominal', severity: 'good' }, spark: [30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52] },
+  { id: 'confirmation-rate', label: 'Confirmation Rate', value: '98.6%', delta: '+1.4 pts', deltaLabel: 'median accuracy', trend: 'up', upIsGood: true, status: { label: 'SLA Standard', severity: 'good' }, spark: [92, 93, 94, 94, 95, 95, 96, 96, 97, 97, 98, 98] },
+  { id: 'api-requests', label: 'API Requests Today', value: '244K', delta: '+18K', deltaLabel: 'governed endpoints', trend: 'up', upIsGood: true, status: { label: 'Operational', severity: 'good' }, spark: [12, 14, 15, 17, 19, 21, 22, 24, 25, 27, 28, 30] },
+  { id: 'system-health', label: 'System Health', value: '99.99%', delta: '0.00 pts', deltaLabel: '30-day average uptime', trend: 'flat', upIsGood: true, status: { label: 'Healthy', severity: 'good' }, spark: [99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99] },
+  { id: 'active-integrations', label: 'Active Integrations', value: '48', delta: '+3', deltaLabel: 'ERP connections', trend: 'up', upIsGood: true, status: { label: 'Online', severity: 'good' }, spark: [8, 9, 10, 11, 12, 12, 13, 14, 14, 15, 16, 17] }
+]
 
+export default function Dashboard() {
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
         variant="hero"
         eyebrow="Medicine Availability Intelligence"
-        title="Governed intelligence for medicine access at scale"
-        subtitle="Governed enterprise intelligence across medicine availability, shortage pressure, and access risk — aggregate-only, jurisdiction-aware, and audit-ready."
+        title="Super Admin Portal Control Panel"
+        subtitle="Govern license verifications, manage medicine mappings, monitor real-time shortages, and oversee active integrations."
         meta={
           <>
             <Badge variant="secondary" size="sm">
@@ -79,22 +94,22 @@ export default function Dashboard() {
             </Badge>
             <Badge variant="success" size="sm">
               <ShieldCheck className="size-3.5" />
-              Governed · aggregate-only
+              Super Admin Level Access
             </Badge>
           </>
         }
         actions={
           <>
             <Button asChild size="lg">
-              <Link to="/enterprise">
-                <Sparkles />
-                Request Enterprise Briefing
+              <Link to="/verification">
+                <ShieldCheck />
+                Review Verification Queue
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link to="/enterprise">
-                <Layers3 />
-                Explore Intelligence Stack
+              <Link to="/settings">
+                <Settings />
+                Configure Settings
               </Link>
             </Button>
           </>
@@ -102,17 +117,15 @@ export default function Dashboard() {
       />
 
       {/* KPI grid */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {isLoading || !metrics
-          ? Array.from({ length: 8 }).map((_, i) => <KpiCardSkeleton key={i} />)
-          : metrics.map((metric, i) => (
-              <KpiCard
-                key={metric.id}
-                metric={metric}
-                icon={KPI_ICONS[metric.id] ?? Activity}
-                index={i}
-              />
-            ))}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        {superAdminKpis.map((metric, i) => (
+          <KpiCard
+            key={metric.id}
+            metric={metric}
+            icon={SUPER_KPI_ICONS[metric.id] ?? Activity}
+            index={i}
+          />
+        ))}
       </div>
 
       {/* Visualizations */}

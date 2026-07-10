@@ -21,30 +21,11 @@ export function AuthLayout({
       <div className="absolute inset-0 -z-10 bg-radial-[circle_at_top_right] from-primary/5 via-transparent to-transparent opacity-80" />
       <div className="absolute -top-40 -left-40 -z-10 size-96 rounded-full bg-teal/10 blur-3xl" />
       
-      {/* Top Header Navigation (Back to Site & Theme Toggle) */}
-      <header className="absolute top-4 right-4 z-50 flex items-center gap-3 px-4 sm:top-6 sm:right-6">
-        <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
-          <Link to="/" className="flex items-center gap-1">
-            Back to site
-            <ArrowRight className="size-3.5" />
-          </Link>
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
-          className="rounded-full text-muted-foreground hover:text-foreground"
-        >
-          {isDark ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
-        </Button>
-      </header>
-
       {/* Main Container */}
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-12">
         {/* Left Side Showcase (Logo & Pitch) */}
-        <section className="relative flex flex-col justify-between p-8 sm:p-12 lg:col-span-7 xl:col-span-8 lg:p-20">
-          {/* Logo at the top-left of the left pane, highlighted */}
+        <section className="relative flex flex-col justify-between p-8 sm:p-12 lg:col-span-6 xl:col-span-7 lg:p-20">
+          {/* Logo at the top-left of the left pane, scaled up and highlighted */}
           <div className="flex items-center">
             <div className="relative group">
               <div className="absolute -inset-2.5 rounded-lg bg-gradient-to-r from-primary/20 via-teal/20 to-transparent opacity-95 blur-md group-hover:opacity-100 transition duration-500" />
@@ -129,11 +110,30 @@ export function AuthLayout({
         </section>
 
         {/* Right Side (Form Card Container, shifted left on desktop) */}
-        <section className="relative flex flex-col items-center justify-center lg:items-start lg:pl-16 xl:pl-28 bg-muted/20 p-6 sm:p-12 lg:col-span-5 xl:col-span-4 lg:border-l lg:border-border/30 lg:bg-card/20 lg:backdrop-blur-md">
+        <section className="relative flex flex-col justify-between items-center lg:items-start lg:pl-16 xl:pl-28 bg-muted/20 p-6 sm:p-12 lg:col-span-6 xl:col-span-5 lg:border-l lg:border-border/30 lg:bg-card/20 lg:backdrop-blur-md">
           {/* Decorative Backdrops */}
           <div className="absolute top-1/2 left-1/2 -z-10 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-3xl" />
           
-          <div className="w-full max-w-[420px]">
+          {/* Top Header Navigation placed inside right section to prevent overlap */}
+          <div className="w-full flex justify-end items-center gap-3 mb-6 sm:mb-8 max-w-[420px]">
+            <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
+              <a href="https://zoikomeds.com/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
+                Back to site
+                <ArrowRight className="size-3.5" />
+              </a>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggleTheme}
+              aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+              className="rounded-full text-muted-foreground hover:text-foreground"
+            >
+              {isDark ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
+            </Button>
+          </div>
+
+          <div className="w-full max-w-[420px] my-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -142,6 +142,9 @@ export function AuthLayout({
               {children}
             </motion.div>
           </div>
+
+          {/* Bottom spacer to align vertical flex layout */}
+          <div className="h-4 hidden lg:block" />
         </section>
       </div>
     </div>

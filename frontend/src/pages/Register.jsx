@@ -122,20 +122,20 @@ export default function Register() {
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
         <CardContent className="flex flex-col gap-6 p-6">
           
-          {/* Segmented Control Headers (Sign In vs Create Account) */}
-          <div className="grid grid-cols-2 rounded-xl bg-muted p-1">
+          {/* Segmented Control Headers (Sign In vs Create Account) - dark mode contrast enhanced */}
+          <div className="grid grid-cols-2 rounded-xl bg-muted/80 dark:bg-slate-900/60 p-1 border border-border/40 dark:border-slate-800/80">
             <Link
               to="/login"
-              className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
             >
               <LogIn className="size-3.5" />
               Sign In
             </Link>
             <button
               type="button"
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-card px-3 py-2 text-xs font-semibold shadow-xs text-foreground"
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-card dark:bg-slate-800 px-3 py-2 text-xs font-semibold shadow-xs text-foreground dark:text-slate-50 border border-transparent dark:border-slate-700/50 transition-all"
             >
-              <UserPlus className="size-3.5" />
+              <UserPlus className="size-3.5 text-primary dark:text-teal" />
               Create Account
             </button>
           </div>

@@ -77,18 +77,18 @@ export default function Login() {
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
         <CardContent className="flex flex-col gap-6 p-6">
           
-          {/* Segmented Control Headers (Sign In vs Create Account) */}
-          <div className="grid grid-cols-2 rounded-xl bg-muted p-1">
+          {/* Segmented Control Headers (Sign In vs Create Account) - dark mode contrast enhanced */}
+          <div className="grid grid-cols-2 rounded-xl bg-muted/80 dark:bg-slate-900/60 p-1 border border-border/40 dark:border-slate-800/80">
             <button
               type="button"
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-card px-3 py-2 text-xs font-semibold shadow-xs text-foreground"
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-card dark:bg-slate-800 px-3 py-2 text-xs font-semibold shadow-xs text-foreground dark:text-slate-50 border border-transparent dark:border-slate-700/50 transition-all"
             >
-              <LogIn className="size-3.5" />
+              <LogIn className="size-3.5 text-primary dark:text-teal" />
               Sign In
             </button>
             <Link
               to="/register"
-              className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
             >
               <UserPlus className="size-3.5" />
               Create Account
@@ -193,60 +193,43 @@ export default function Login() {
             </Button>
           </form>
 
+          {/* Quick Demo Logins for Testing */}
+          <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/40 p-3 text-xs">
+            <span className="font-semibold text-muted-foreground">Demo Accounts (One-Click Auto-Fill):</span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1 text-[10px] h-8 bg-card"
+                onClick={() => {
+                  setEmail('john@example.com')
+                  setPassword('User@123')
+                }}
+              >
+                Log In as Patient
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1 text-[10px] h-8 bg-card"
+                onClick={() => {
+                  setEmail('super@zoikogroup.com')
+                  setPassword('Super@123')
+                }}
+              >
+                Log In as Admin
+              </Button>
+            </div>
+          </div>
+
           {/* Governance Notice */}
           <div className="flex gap-2 rounded-lg bg-teal/5 border border-teal/10 p-3 text-[11px] leading-relaxed text-muted-foreground">
             <Shield className="size-4.5 shrink-0 text-teal mt-0.5" />
             <p>
               Data access is governed by organization, role, policy, and approved use case. Enterprise users may be redirected to their organization sign-in provider.
             </p>
-          </div>
-
-          {/* Divider */}
-          <div className="relative flex items-center justify-center">
-            <div className="absolute inset-x-0 h-px bg-border/80" />
-            <span className="relative bg-card px-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              Or continue with
-            </span>
-          </div>
-
-          {/* SSO Options */}
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => alert('Passkey authentication initiated...')}
-              className="flex items-center justify-center gap-1.5 font-medium text-xs py-2"
-            >
-              <Key className="size-3.5" />
-              Use passkey
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => alert('Redirecting to SSO Gateway...')}
-              className="flex items-center justify-center gap-1.5 font-medium text-xs py-2"
-            >
-              <Shield className="size-3.5" />
-              Continue with SSO
-            </Button>
-          </div>
-
-          {/* Help tip for testing */}
-          <div className="mt-2 border-t border-border/60 pt-4 flex flex-col gap-2">
-            <button
-              onClick={fillDemo}
-              type="button"
-              className="group flex items-center justify-between rounded-lg bg-accent/70 px-3 py-2 text-[11px] text-left hover:bg-accent transition-colors outline-none"
-            >
-              <div className="flex gap-1.5 items-center">
-                <HelpCircle className="size-3.5 text-primary" />
-                <div>
-                  <span className="font-semibold text-foreground">Need testing accounts?</span>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Click to auto-fill demo credentials</p>
-                </div>
-              </div>
-              <span className="text-primary group-hover:translate-x-0.5 transition-transform text-xs font-semibold">&rarr;</span>
-            </button>
           </div>
 
         </CardContent>
