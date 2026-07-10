@@ -19,13 +19,21 @@ export class CreateUserDto {
   @MaxLength(120)
   fullName!: string;
 
+  // Optional: when omitted (or when sendInvite is true) the account is created
+  // without a password and the user sets one via an emailed invite link.
+  @IsOptional()
   @IsString()
   @MinLength(8)
   @MaxLength(128)
-  password!: string;
+  password?: string;
 
   @IsEnum(UserRole)
   role!: UserRole;
+
+  // If true, email a set-password invite link instead of using `password`.
+  @IsOptional()
+  @IsBoolean()
+  sendInvite?: boolean;
 
   @IsOptional()
   @IsString()

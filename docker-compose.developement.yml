@@ -46,6 +46,12 @@ services:
       SUPER_ADMIN_EMAIL: superadmin@zoikomeds.io
       SUPER_ADMIN_PASSWORD: ChangeMe!SuperAdmin1
       SUPER_ADMIN_NAME: ZoikoMeds Super Admin
+      # Links in outbound email point here.
+      APP_BASE_URL: http://localhost:5173
+      # SMTP credentials are intentionally NOT set here (no secrets committed).
+      # They are read from the mounted backend/.env (ConfigModule). If that file
+      # has no SMTP_HOST, the backend falls back to a log-only mailer and prints
+      # emails (including reset links) to this container's log.
     volumes:
       - ./backend:/app
       - zoikomeds-dev-backend-node-modules:/app/node_modules

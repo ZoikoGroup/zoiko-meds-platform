@@ -13,44 +13,28 @@ import {
 } from '@/components/ui/dialog'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { AVAILABILITY, CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
+import { getUserOverview, listNearbyPharmacies } from '@/services/user-api'
 import { cn } from '@/lib/utils'
 
 const AUTOCOMPLETE = ['Paracetamol', 'Dolo 650', 'Cetirizine', 'Azithromycin', 'Insulin Glargine', 'Metformin', 'Amoxicillin', 'Pantoprazole']
 const QUICK_CHIPS = ['Dolo 650', 'Paracetamol', 'Cetirizine', 'Azithromycin', 'Metformin']
 
-const SUMMARY = [
-  { label: 'Saved medicines', value: 5, icon: Heart, to: '/saved' },
-  { label: 'Recent searches', value: 18, icon: Search, to: '/search' },
-  { label: 'Verified pharmacies', value: 12, icon: Building2, to: '/search' },
-  { label: 'Active alerts', value: 4, icon: Bell, to: '/alerts' },
-]
-
-const FEATURED = [
-  { name: 'Dolo 650', generic: 'Paracetamol', strength: '650 mg', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: '0.9 km', updated: '2 min ago' },
-  { name: 'Cetirizine 10 mg', generic: 'Cetirizine', strength: '10 mg', confidence: 'moderate', pharmacy: 'MedPlus', distance: '1.3 km', updated: '52 min ago' },
-  { name: 'Azithromycin 500 mg', generic: 'Azithromycin', strength: '500 mg', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: '0.9 km', updated: '8 min ago' },
-]
-
-const RECENT = [
-  { term: 'Paracetamol', when: 'Today' },
-  { term: 'Dolo 650', when: 'Yesterday' },
-  { term: 'Cetirizine', when: 'Yesterday' },
+// Icons / links for the four summary tiles; values come from the backend.
+const SUMMARY_META = [
+  { key: 'savedMedicines', label: 'Saved medicines', icon: Heart, to: '/saved' },
+  { key: 'recentSearches', label: 'Recent searches', icon: Search, to: '/search' },
+  { key: 'verifiedPharmacies', label: 'Verified pharmacies', icon: Building2, to: '/search' },
+  { key: 'activeAlerts', label: 'Active alerts', icon: Bell, to: '/alerts' },
 ]
 
 const FEED = [
-  { icon: CheckCircle2, tone: 'text-success', text: 'Dolo 650 confidence rose to High at a verified pharmacy near you.', time: '2 min ago' },
-  { icon: RefreshCw, tone: 'text-info', text: 'Apollo Pharmacy refreshed its availability signals.', time: '10 min ago' },
-  { icon: Bell, tone: 'text-teal', text: 'Your alert for Metformin is active.', time: 'Yesterday' },
-  { icon: MapPin, tone: 'text-muted-foreground', text: 'Preferred location updated.', time: 'Yesterday' },
+  { icon: CheckCircle2, tone: 'text-success', text: 'Availability confidence is refreshed continuously from verified pharmacies.', time: 'Live' },
+  { icon: RefreshCw, tone: 'text-info', text: 'ZoikoAvail™ weighs signal freshness and pharmacy reliability.', time: 'Live' },
+  { icon: Bell, tone: 'text-teal', text: 'Set alerts so we can tell you when confidence changes near you.', time: 'Tip' },
+  { icon: MapPin, tone: 'text-muted-foreground', text: 'Update your location to refine nearby results.', time: 'Tip' },
 ]
 
-const PHARMACIES = [
-  { id: '1', name: 'Apollo Pharmacy', confidence: 'high', distance: '0.9 km', eta: '4 min', x: 150, y: 132, open: true, address: 'Kompally Main Rd, Hyderabad', phone: '+91 40 2345 6789', updated: '2 min ago' },
-  { id: '2', name: 'MedPlus', confidence: 'moderate', distance: '1.3 km', eta: '6 min', x: 262, y: 205, open: true, address: 'Gandimaisamma X Roads, Hyderabad', phone: '+91 40 8765 4321', updated: '38 min ago' },
-  { id: '3', name: 'Wellness Forever', confidence: 'low', distance: '2.1 km', eta: '9 min', x: 108, y: 286, open: false, address: 'Bowrampet, Hyderabad', phone: '+91 40 5555 1212', updated: '5 hrs ago' },
-]
-
-const PIN = { high: 'var(--success)', moderate: 'var(--info)', low: 'var(--warning)' }
+const PIN = { high: 'var(--success)', moderate: 'var(--info)', low: 'var(--warning)', unknown: 'var(--muted-foreground)' }
 
 export default function UserHome() {
   const navigate = useNavigate()
@@ -59,10 +43,25 @@ export default function UserHome() {
   const [showManualLoc, setShowManualLoc] = useState(false)
   const [manualLocInput, setManualLocInput] = useState('')
   const [isListening, setIsListening] = useState(false)
-  const [activeId, setActiveId] = useState('1')
+  const [activeId, setActiveId] = useState(null)
+  const [overview, setOverview] = useState(null)
+  const [pharmacies, setPharmacies] = useState([])
   const [location, setLocation] = useState(
     () => localStorage.getItem('zoiko-user-loc') || 'Gandimaisamma, Hyderabad',
   )
+
+  useEffect(() => {
+    let alive = true
+    getUserOverview().then((d) => alive && setOverview(d)).catch(() => {})
+    listNearbyPharmacies(10)
+      .then((rows) => {
+        if (!alive) return
+        setPharmacies(rows)
+        setActiveId((prev) => prev || rows[0]?.id || null)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
 
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -111,7 +110,10 @@ export default function UserHome() {
     }, 2600)
   }
 
-  const active = PHARMACIES.find((p) => p.id === activeId)
+  const active = pharmacies.find((p) => p.id === activeId)
+  const summary = overview?.summary ?? {}
+  const featured = overview?.featured ?? []
+  const recent = overview?.recentSearches ?? []
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-8">
@@ -272,7 +274,7 @@ export default function UserHome() {
 
       {/* Summary tiles */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {SUMMARY.map((s) => {
+        {SUMMARY_META.map((s) => {
           const Icon = s.icon
           return (
             <button
@@ -283,7 +285,7 @@ export default function UserHome() {
               <span className="flex size-9 items-center justify-center rounded-xl bg-teal/10 text-teal">
                 <Icon className="size-4.5" />
               </span>
-              <span className="text-2xl font-extrabold tracking-tight text-foreground tabular">{s.value}</span>
+              <span className="text-2xl font-extrabold tracking-tight text-foreground tabular">{summary[s.key] ?? 0}</span>
               <span className="text-xs font-medium text-muted-foreground">{s.label}</span>
             </button>
           )
@@ -357,7 +359,7 @@ export default function UserHome() {
                   <circle r="16" fill="var(--primary)" fillOpacity="0.15" className="animate-ping" />
                   <circle r="6" fill="var(--primary)" stroke="#fff" strokeWidth="2.5" />
                 </g>
-                {PHARMACIES.map((p) => {
+                {pharmacies.map((p) => {
                   const isActive = p.id === activeId
                   const color = PIN[p.confidence]
                   return (
@@ -413,7 +415,7 @@ export default function UserHome() {
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">Distance</span>
-                      <span className="font-semibold text-foreground tabular">{active.distance} · {active.eta}</span>
+                      <span className="font-semibold text-foreground tabular">{active.distance} km · {active.eta}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">Last confirmed</span>
@@ -448,8 +450,8 @@ export default function UserHome() {
           Featured medicines
         </h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURED.map((med) => (
-            <Card key={med.name} className="transition-shadow hover:shadow-card">
+          {featured.map((med) => (
+            <Card key={med.id ?? med.name} className="transition-shadow hover:shadow-card">
               <CardContent className="flex flex-col gap-4 py-5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex flex-col">
@@ -463,7 +465,7 @@ export default function UserHome() {
                     <ShieldCheck className="size-3.5 text-teal" />
                     {med.pharmacy}
                   </span>
-                  <span className="font-semibold text-foreground tabular">{med.distance}</span>
+                  <span className="font-semibold text-foreground tabular">{med.distance == null ? '—' : `${med.distance} km`}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span className="flex items-center gap-1"><Clock className="size-3.5" />Confirmed {med.updated}</span>
@@ -478,27 +480,29 @@ export default function UserHome() {
       </section>
 
       {/* Recent searches */}
-      <section className="flex flex-col gap-4">
-        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
-          <Clock className="size-4 text-muted-foreground" />
-          Recent searches
-        </h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {RECENT.map((r) => (
-            <button
-              key={r.term}
-              onClick={() => goSearch(r.term)}
-              className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
-            >
-              <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <Search className="size-4 text-muted-foreground" />
-                {r.term}
-              </span>
-              <span className="text-xs text-muted-foreground">{r.when}</span>
-            </button>
-          ))}
-        </div>
-      </section>
+      {recent.length > 0 && (
+        <section className="flex flex-col gap-4">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+            <Clock className="size-4 text-muted-foreground" />
+            Recent searches
+          </h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {recent.map((r) => (
+              <button
+                key={r.term}
+                onClick={() => goSearch(r.term)}
+                className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Search className="size-4 text-muted-foreground" />
+                  {r.term}
+                </span>
+                <span className="text-xs text-muted-foreground">{r.when}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

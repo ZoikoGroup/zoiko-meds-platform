@@ -21,6 +21,21 @@ export const ROLE_RANK: Record<UserRole, number> = {
 /** Roles that bypass per-endpoint role requirements entirely. */
 export const ELEVATED_ROLES: UserRole[] = [UserRole.SUPER_ADMIN];
 
+/** Human-readable labels — kept in sync with the frontend ROLE_LABELS map. */
+export const ROLE_LABELS: Record<UserRole, string> = {
+  PUBLIC: 'Patient',
+  PHARMACY_STAFF: 'Pharmacist',
+  PHARMACY_ADMIN: 'Pharmacy Manager',
+  ENTERPRISE: 'Enterprise User',
+  GOVERNMENT: 'Government User',
+  ADMIN: 'Administrator',
+  SUPER_ADMIN: 'Super Admin',
+};
+
+export function roleLabel(role: UserRole): string {
+  return ROLE_LABELS[role] ?? role;
+}
+
 /**
  * True if a user holding `actual` may access something requiring `required`.
  * SUPER_ADMIN always passes; otherwise the role must match exactly.
