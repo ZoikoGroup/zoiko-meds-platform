@@ -1,41 +1,88 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DataTable } from '@/components/shared/data-table'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Bell, Send, AlertTriangle, ShieldCheck, Mail, ShieldAlert, Sparkles, Plus, Trash } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Bell, Plus, Trash, Loader2, AlertTriangle } from 'lucide-react'
+import * as admin from '@/services/admin-api'
 
-const initialNotifications = [
-  { id: '1', title: 'System Maintenance Window', message: 'Platform will undergo standard database upgrades on Saturday from 02:00 to 04:00 UTC.', type: 'Maintenance', target: 'All Users', status: 'Dispatched', date: '2025-07-08' },
-  { id: '2', title: 'Critical Stock Level: APAC', message: 'Upstream supply chains report a 22% latency on critical cardiovascular distributions.', type: 'Emergency Alert', target: 'Pharmacy Managers', status: 'Dispatched', date: '2025-07-07' },
-  { id: '3', title: 'SSO Protocol Update', message: 'OAuth2 configuration sync required for all federated pharmacy identities by next week.', type: 'Platform Update', target: 'Enterprise Admins', status: 'Draft', date: '2025-07-06' },
-  { id: '4', title: 'New Licensing Policy Enacted', message: 'National Health Directorate enforces strict digital document checks for wholesale verification.', type: 'System Announcement', target: 'All Users', status: 'Dispatched', date: '2025-07-04' }
-]
+const TYPE_LABEL = {
+  PLATFORM_UPDATE: 'Platform Update',
+  MAINTENANCE: 'Maintenance',
+  EMERGENCY_ALERT: 'Emergency Alert',
+  SYSTEM_ANNOUNCEMENT: 'System Announcement',
+}
+const TYPE_VARIANT = {
+  EMERGENCY_ALERT: 'destructive',
+  MAINTENANCE: 'secondary',
+  PLATFORM_UPDATE: 'default',
+  SYSTEM_ANNOUNCEMENT: 'default',
+}
+const TARGET_LABEL = {
+  ALL_USERS: 'All Users',
+  PHARMACY_MANAGERS: 'Pharmacy Managers',
+  ENTERPRISE_ADMINS: 'Enterprise Admins',
+  GOVERNMENT_PARTNERS: 'Government Partners',
+}
 
 export default function Notifications() {
-  const [notifications, setNotifications] = useState(initialNotifications)
+  const [notifications, setNotifications] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [isAddOpen, setIsAddOpen] = useState(false)
-  const [form, setForm] = useState({ title: '', message: '', type: 'Platform Update', target: 'All Users' })
+  const [form, setForm] = useState({
+    title: '',
+    message: '',
+    type: 'PLATFORM_UPDATE',
+    target: 'ALL_USERS',
+  })
 
-  const handleBroadcast = (e) => {
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      setNotifications(await admin.listNotifications())
+    } catch (err) {
+      setError(err.message || 'Failed to load notifications')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const handleBroadcast = async (e) => {
     e.preventDefault()
     if (!form.title || !form.message) return
-    const newAlert = {
-      id: String(notifications.length + 1),
-      ...form,
-      status: 'Dispatched',
-      date: new Date().toISOString().split('T')[0]
+    try {
+      await admin.createNotification(form)
+      setIsAddOpen(false)
+      setForm({ title: '', message: '', type: 'PLATFORM_UPDATE', target: 'ALL_USERS' })
+      await load()
+    } catch (err) {
+      setError(err.message || 'Failed to dispatch broadcast')
     }
-    setNotifications((prev) => [newAlert, ...prev])
-    setIsAddOpen(false)
-    setForm({ title: '', message: '', type: 'Platform Update', target: 'All Users' })
   }
 
-  const handleDelete = (id) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id))
+  const handleDelete = async (id) => {
+    try {
+      await admin.deleteNotification(id)
+      await load()
+    } catch (err) {
+      setError(err.message || 'Failed to delete broadcast')
+    }
   }
 
   const columns = [
@@ -48,41 +95,55 @@ export default function Notifications() {
           <Bell className="size-4 text-muted-foreground shrink-0" />
           <span>{row.title}</span>
         </div>
-      )
+      ),
     },
     {
       key: 'type',
       header: 'Category',
       sortable: true,
-      cell: (row) => {
-        const severity = row.type === 'Emergency Alert' ? 'destructive' : row.type === 'Maintenance' ? 'secondary' : 'default'
-        return <Badge variant={severity}>{row.type}</Badge>
-      }
+      cell: (row) => (
+        <Badge variant={TYPE_VARIANT[row.type] || 'default'}>
+          {TYPE_LABEL[row.type] || row.type}
+        </Badge>
+      ),
     },
     {
       key: 'target',
       header: 'Target Audience',
-      cell: (row) => <span className="text-muted-foreground">{row.target}</span>
+      cell: (row) => (
+        <span className="text-muted-foreground">{TARGET_LABEL[row.target] || row.target}</span>
+      ),
     },
     {
       key: 'status',
       header: 'Dispatch Status',
       sortable: true,
       cell: (row) => (
-        <Badge variant={row.status === 'Dispatched' ? 'default' : 'outline'} className={row.status === 'Dispatched' ? 'bg-success text-white' : ''}>
-          {row.status}
+        <Badge
+          variant={row.status === 'DISPATCHED' ? 'default' : 'outline'}
+          className={row.status === 'DISPATCHED' ? 'bg-success text-white' : ''}
+        >
+          {row.status === 'DISPATCHED' ? 'Dispatched' : 'Draft'}
         </Badge>
-      )
+      ),
     },
     {
       key: 'date',
       header: 'Broadcast Date',
-      cell: (row) => <span className="text-xs text-muted-foreground">{row.date}</span>
-    }
+      cell: (row) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(row.date).toLocaleDateString()}
+        </span>
+      ),
+    },
   ]
 
   const toolbar = (
-    <Button size="sm" onClick={() => setIsAddOpen(true)} className="bg-primary hover:bg-primary/95 text-white flex gap-1 items-center">
+    <Button
+      size="sm"
+      onClick={() => setIsAddOpen(true)}
+      className="bg-primary hover:bg-primary/95 text-white flex gap-1 items-center"
+    >
       <Plus className="size-3.5" />
       Compose Broadcast
     </Button>
@@ -107,22 +168,34 @@ export default function Notifications() {
         description="Broadcast security policies, alert channels, maintenance schedules, and platform status changes."
       />
 
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <AlertTriangle className="size-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
       <Card className="border-border/70 bg-card">
         <CardContent className="pt-6">
-          <DataTable
-            columns={columns}
-            data={notifications}
-            getRowId={(row) => row.id}
-            searchable
-            searchPlaceholder="Search broadcasts by title..."
-            searchAccessor={(row) => `${row.title} ${row.message}`}
-            toolbar={toolbar}
-            rowActions={rowActions}
-          />
+          {loading ? (
+            <div className="flex items-center gap-2 py-16 justify-center text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Loading broadcasts…
+            </div>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={notifications}
+              getRowId={(row) => row.id}
+              searchable
+              searchPlaceholder="Search broadcasts by title..."
+              searchAccessor={(row) => `${row.title} ${row.message}`}
+              toolbar={toolbar}
+              rowActions={rowActions}
+            />
+          )}
         </CardContent>
       </Card>
 
-      {/* Broadcast Dialog */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
@@ -149,10 +222,11 @@ export default function Notifications() {
                   onChange={(e) => setForm({ ...form, type: e.target.value })}
                   className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
                 >
-                  <option value="Platform Update">Platform Update</option>
-                  <option value="Maintenance">Maintenance</option>
-                  <option value="Emergency Alert">Emergency Alert</option>
-                  <option value="System Announcement">System Announcement</option>
+                  {Object.entries(TYPE_LABEL).map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
@@ -162,10 +236,11 @@ export default function Notifications() {
                   onChange={(e) => setForm({ ...form, target: e.target.value })}
                   className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
                 >
-                  <option value="All Users">All Users</option>
-                  <option value="Pharmacy Managers">Pharmacy Managers</option>
-                  <option value="Enterprise Admins">Enterprise Admins</option>
-                  <option value="Government Partners">Government Partners</option>
+                  {Object.entries(TARGET_LABEL).map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
