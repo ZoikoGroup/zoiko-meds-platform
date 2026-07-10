@@ -40,10 +40,69 @@ model User {
   pharmacyId   String?
   pharmacy     Pharmacy? @relation(fields: [pharmacyId], references: [id])
   isActive     Boolean  @default(true)
+  mustChangePassword Boolean @default(false) // set when an admin provisions an account
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  savedMedicines   SavedMedicine[]
+  alertPreference  AlertPreference?
+  searchHistory    SearchHistory[]
+  passwordResets   PasswordResetToken[]
+
   @@index([role])
+}
+
+// ---------------------------------------------------------------------------
+// Patient portal — personal, non-PHI data (saved meds, alert prefs, history)
+// ---------------------------------------------------------------------------
+
+model SavedMedicine {
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  medicineId String
+  medicine   MedicineEntity @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now())
+
+  @@unique([userId, medicineId])
+  @@index([userId])
+}
+
+model AlertPreference {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Keys mirror the patient Alerts screen toggles.
+  backToHigh       Boolean  @default(true)
+  nearby           Boolean  @default(true)
+  confidenceChange Boolean  @default(false)
+  shortage         Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
+}
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  term      String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// One-time password-reset tokens (hashed at rest). Also used for admin invites.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  purpose   String    @default("reset") // "reset" | "invite"
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +147,8 @@ model MedicineEntity {
   canonicalName        String
   genericName          String?
   brandNames           String[]             @default([])
+  manufacturer         String? // primary marketing-authorisation holder (public label)
+  description          String? // short public-safe description shown in the patient portal
   activeIngredient     String?
   strength             String?
   dosageForm           String?
@@ -105,6 +166,7 @@ model MedicineEntity {
 
   identifiers        IdentifierMapping[]
   availabilitySignals AvailabilitySignal[]
+  savedByUsers       SavedMedicine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
