@@ -44,9 +44,12 @@ export function AuthLayout({
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-12">
         {/* Left Side Showcase (Logo & Pitch) */}
         <section className="relative flex flex-col justify-between p-8 sm:p-12 lg:col-span-7 xl:col-span-8 lg:p-20">
-          {/* Logo */}
+          {/* Logo at the top-left of the left pane, highlighted */}
           <div className="flex items-center">
-            <Brand className="scale-110" />
+            <div className="relative group">
+              <div className="absolute -inset-2.5 rounded-lg bg-gradient-to-r from-primary/20 via-teal/20 to-transparent opacity-95 blur-md group-hover:opacity-100 transition duration-500" />
+              <Brand className="relative scale-135 origin-left" />
+            </div>
           </div>
 
           {/* Core Content */}
@@ -57,7 +60,7 @@ export function AuthLayout({
               transition={{ duration: 0.5 }}
               className="flex flex-col gap-6"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <span className="rounded-full bg-teal/10 px-3.5 py-1 text-xs font-semibold uppercase tracking-wider text-teal">
                   Secure ZoikoMeds Access
                 </span>
@@ -125,8 +128,8 @@ export function AuthLayout({
           </div>
         </section>
 
-        {/* Right Side (Form Card Container) */}
-        <section className="relative flex flex-col items-center justify-center bg-muted/20 p-6 sm:p-12 lg:col-span-5 xl:col-span-4 lg:border-l lg:border-border/30 lg:bg-card/20 lg:backdrop-blur-md">
+        {/* Right Side (Form Card Container, shifted left on desktop) */}
+        <section className="relative flex flex-col items-center justify-center lg:items-start lg:pl-16 xl:pl-28 bg-muted/20 p-6 sm:p-12 lg:col-span-5 xl:col-span-4 lg:border-l lg:border-border/30 lg:bg-card/20 lg:backdrop-blur-md">
           {/* Decorative Backdrops */}
           <div className="absolute top-1/2 left-1/2 -z-10 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-3xl" />
           
