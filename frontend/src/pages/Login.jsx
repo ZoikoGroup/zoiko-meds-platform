@@ -41,19 +41,14 @@ export default function Login() {
     setLoading(true)
 
     try {
-      await login(email, password)
-      navigate('/dashboard')
+      const authedUser = await login(email, password)
+      // Route to the correct portal based on the resolved role.
+      navigate(authedUser?.isSuperAdmin ? '/admin' : '/dashboard')
     } catch (err) {
       setError(err.message || 'Authentication failed. Please verify credentials.')
     } finally {
       setLoading(false)
     }
-  }
-
-  // Auto-fill demo credentials
-  const fillDemo = () => {
-    setEmail('a.okafor@zoikomeds.io')
-    setPassword('password123')
   }
 
   // Left Showcase content configuration

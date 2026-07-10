@@ -13,29 +13,46 @@ import { useTheme } from '@/providers/theme-provider'
 import { User, Lock, LogOut, Palette, ShieldCheck, Sun, Moon } from 'lucide-react'
 
 export default function UserProfile() {
-  const { user, logout } = useAuth()
+  const { user, logout, updateProfile, changePassword } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [flashMsg, flash] = useFlash()
+  const [error, setError] = useState('')
 
   const [form, setForm] = useState({
-    name: user?.name || 'ZoikoMeds User',
-    email: user?.email || 'user@example.com',
-    phone: user?.phone || '+91 90000 00000',
+    name: user?.name || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
   })
   const [pwd, setPwd] = useState({ current: '', next: '' })
 
   const isDark = theme === 'dark'
 
-  const saveProfile = (e) => {
+  const saveProfile = async (e) => {
     e.preventDefault()
-    flash('Profile updated')
+    setError('')
+    try {
+      await updateProfile({ fullName: form.name, phone: form.phone })
+      flash('Profile updated')
+    } catch (err) {
+      setError(err.message || 'Could not update profile')
+    }
   }
 
-  const savePassword = (e) => {
+  const savePassword = async (e) => {
     e.preventDefault()
-    setPwd({ current: '', next: '' })
-    flash('Password updated')
+    setError('')
+    if (pwd.next.length < 8) {
+      setError('New password must be at least 8 characters.')
+      return
+    }
+    try {
+      await changePassword(pwd.current, pwd.next)
+      setPwd({ current: '', next: '' })
+      flash('Password updated')
+    } catch (err) {
+      setError(err.message || 'Could not update password')
+    }
   }
 
   const handleLogout = () => {
@@ -68,6 +85,11 @@ export default function UserProfile() {
       </Card>
 
       {flashMsg && <Flash message={flashMsg} />}
+      {error && (
+        <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {error}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Contact details */}
@@ -89,11 +111,11 @@ export default function UserProfile() {
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+                    <Input id="email" type="email" value={form.email} disabled />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="phone">Phone</Label>
-                    <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
+                    <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
                   </div>
                 </div>
                 <Button type="submit" variant="teal" className="mt-1 w-fit">Save changes</Button>

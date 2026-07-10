@@ -1,14 +1,22 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
+import { getToken, setToken, setUnauthorizedHandler } from '@/lib/api-client'
+import {
+  loginRequest,
+  registerRequest,
+  meRequest,
+  updateProfileRequest,
+  changePasswordRequest,
+} from '@/services/auth-api'
+import { roleLabel, isSuperAdmin as roleIsSuperAdmin } from '@/lib/roles'
 
-const STORAGE_KEY = 'zoiko-user'
 const AuthContext = createContext(null)
-
-const DEFAULT_USER = {
-  name: 'Dr. Amara Okafor',
-  email: 'a.okafor@zoikomeds.io',
-  role: 'Intelligence Director',
-  initials: 'AO',
-}
 
 function getInitials(name) {
   if (!name) return 'U'
@@ -20,120 +28,109 @@ function getInitials(name) {
     .substring(0, 2)
 }
 
+/** Map the backend user record onto the shape the UI expects. */
+function toClientUser(apiUser) {
+  if (!apiUser) return null
+  return {
+    id: apiUser.id,
+    name: apiUser.fullName,
+    email: apiUser.email,
+    phone: apiUser.phone || '',
+    role: apiUser.role, // raw enum, e.g. 'SUPER_ADMIN' / 'PUBLIC'
+    roleLabel: roleLabel(apiUser.role),
+    isSuperAdmin: roleIsSuperAdmin(apiUser.role),
+    initials: getInitials(apiUser.fullName),
+    isActive: apiUser.isActive,
+  }
+}
+
 export function AuthProvider({ children }) {
-  // The app always starts at the login page: the persisted session is NOT
-  // auto-restored on load, so opening / (which routes to /login) shows login
-  // every time. Login still holds the session in memory for the active session.
-  const [user, setUserState] = useState(null)
+  const [user, setUser] = useState(null)
+  // While validating a stored token against /auth/me, routes must not redirect.
+  const [bootstrapping, setBootstrapping] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function restore() {
+      if (!getToken()) {
+        setBootstrapping(false)
+        return
+      }
+      try {
+        const apiUser = await meRequest()
+        if (!cancelled) setUser(toClientUser(apiUser))
+      } catch {
+        setToken(null)
+        if (!cancelled) setUser(null)
+      } finally {
+        if (!cancelled) setBootstrapping(false)
+      }
+    }
+    restore()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const login = useCallback(async (email, password) => {
-    // Simulate API request delay
-    await new Promise((resolve) => setTimeout(resolve, 800))
-
-    if (!email || !password) {
-      throw new Error('Email and password are required')
-    }
-
-    const normEmail = email.toLowerCase()
-    let authUser
-
-    // Demo Credentials check
-    if (normEmail === 'super@zoikogroup.com') {
-      if (password !== 'Super@123') {
-        throw new Error('Invalid credentials')
-      }
-      authUser = {
-        name: 'Platform Super Administrator',
-        email: 'super@zoikogroup.com',
-        role: 'SUPER_ADMIN',
-        initials: 'PS'
-      }
-    } else if (normEmail === 'john@example.com') {
-      if (password !== 'User@123') {
-        throw new Error('Invalid credentials')
-      }
-      authUser = {
-        name: 'Naveen',
-        email: 'john@example.com',
-        role: 'USER',
-        roleType: 'Patient / Caregiver',
-        initials: 'N',
-        memberSince: 'July 2026',
-        accountType: 'Personal',
-        location: 'Gandimaisamma, Hyderabad',
-        language: 'English',
-        notifications: 'Enabled',
-        locationAccess: 'Allowed',
-        theme: 'Light',
-        lastLogin: 'Today • 10:42 AM'
-      }
-    } else {
-      // Mock other users logging in
-      const name = email.split('@')[0]
-      const capitalized = name.charAt(0).toUpperCase() + name.slice(1)
-      authUser = {
-        name: capitalized,
-        email: email,
-        role: 'USER',
-        initials: getInitials(capitalized)
-      }
-    }
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(authUser))
-    } catch {
-      /* ignore storage errors */
-    }
-
-    setUserState(authUser)
-    return authUser
+    const { accessToken, user: apiUser } = await loginRequest(email, password)
+    setToken(accessToken)
+    const clientUser = toClientUser(apiUser)
+    setUser(clientUser)
+    return clientUser
   }, [])
 
   const register = useCallback(async (formData) => {
-    // Simulate API request delay
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const { name, email, phone, password } = formData
-    if (!name || !email || !password) {
-      throw new Error('Name, email, and password are required')
-    }
-
-    const authUser = {
-      name,
+    const { name, fullName, email, phone, password } = formData
+    const { accessToken, user: apiUser } = await registerRequest({
       email,
+      fullName: fullName || name,
+      password,
       phone,
-      role: 'USER',
-      initials: getInitials(name),
-    }
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(authUser))
-    } catch {
-      /* ignore storage errors */
-    }
-
-    setUserState(authUser)
-    return authUser
+    })
+    setToken(accessToken)
+    const clientUser = toClientUser(apiUser)
+    setUser(clientUser)
+    return clientUser
   }, [])
 
   const logout = useCallback(() => {
-    try {
-      localStorage.removeItem(STORAGE_KEY)
-    } catch {
-      /* ignore storage errors */
-    }
-    setUserState(null)
+    setToken(null)
+    setUser(null)
   }, [])
+
+  // Auto-logout when an authenticated request returns 401 (expired token).
+  useEffect(() => {
+    setUnauthorizedHandler(logout)
+    return () => setUnauthorizedHandler(null)
+  }, [logout])
+
+  const updateProfile = useCallback(async ({ fullName, phone }) => {
+    const apiUser = await updateProfileRequest({ fullName, phone })
+    const clientUser = toClientUser(apiUser)
+    setUser(clientUser)
+    return clientUser
+  }, [])
+
+  const changePassword = useCallback(
+    (currentPassword, newPassword) =>
+      changePasswordRequest(currentPassword, newPassword),
+    []
+  )
 
   const value = useMemo(
     () => ({
       user,
       isAuthenticated: !!user,
+      isSuperAdmin: !!user?.isSuperAdmin,
+      bootstrapping,
       login,
       register,
       logout,
+      updateProfile,
+      changePassword,
     }),
-    [user, login, register, logout]
+    [user, bootstrapping, login, register, logout, updateProfile, changePassword]
   )
 
   return <AuthContext value={value}>{children}</AuthContext>
