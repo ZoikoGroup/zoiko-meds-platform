@@ -1,4 +1,6 @@
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { getOverview } from '@/services/admin-api'
 import {
   Activity,
   ArrowUpRight,
@@ -74,7 +76,35 @@ const superAdminKpis = [
   { id: 'active-integrations', label: 'Active Integrations', value: '48', delta: '+3', deltaLabel: 'ERP connections', trend: 'up', upIsGood: true, status: { label: 'Online', severity: 'good' }, spark: [8, 9, 10, 11, 12, 12, 13, 14, 14, 15, 16, 17] }
 ]
 
+function formatNum(n) {
+  return typeof n === 'number' ? n.toLocaleString() : n
+}
+
 export default function Dashboard() {
+  const [overview, setOverview] = useState(null)
+
+  useEffect(() => {
+    getOverview()
+      .then(setOverview)
+      .catch(() => setOverview(null))
+  }, [])
+
+  // Overlay live counts from /admin/overview onto the KPI cards where we have
+  // a real backend value; the rest keep their illustrative figures.
+  const kpis = useMemo(() => {
+    if (!overview) return superAdminKpis
+    const live = {
+      'total-pharmacies': overview.pharmacies?.total,
+      'verified-pharmacies': overview.pharmacies?.verified,
+      'pending-verifications': overview.verifications?.pending,
+      'active-users': overview.users?.active,
+      'total-medicines': overview.medicines?.total,
+    }
+    return superAdminKpis.map((k) =>
+      live[k.id] != null ? { ...k, value: formatNum(live[k.id]) } : k
+    )
+  }, [overview])
+
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
@@ -101,13 +131,13 @@ export default function Dashboard() {
         actions={
           <>
             <Button asChild size="lg">
-              <Link to="/verification">
+              <Link to="/admin/verification">
                 <ShieldCheck />
                 Review Verification Queue
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link to="/settings">
+              <Link to="/admin/settings">
                 <Settings />
                 Configure Settings
               </Link>
@@ -118,7 +148,7 @@ export default function Dashboard() {
 
       {/* KPI grid */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {superAdminKpis.map((metric, i) => (
+        {kpis.map((metric, i) => (
           <KpiCard
             key={metric.id}
             metric={metric}
@@ -135,7 +165,7 @@ export default function Dashboard() {
           description="Live availability, access-risk, and network telemetry across the governed data plane."
           action={
             <Button variant="ghost" size="sm" asChild>
-              <Link to="/zoikosignal">
+              <Link to="/admin/zoikosignal">
                 Open ZoikoSignal™
                 <ArrowUpRight />
               </Link>
