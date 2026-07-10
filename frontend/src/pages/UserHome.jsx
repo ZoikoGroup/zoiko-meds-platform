@@ -1,0 +1,504 @@
+import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import {
+  Search, MapPin, Mic, Bell, Info, ShieldCheck, Clock, Pill, Heart,
+  Network, Webhook, ArrowRight, Building2, CheckCircle2, RefreshCw,
+} from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog'
+import { ConfidenceBadge } from '@/components/shared/status'
+import { AVAILABILITY, CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
+import { cn } from '@/lib/utils'
+
+const AUTOCOMPLETE = ['Paracetamol', 'Dolo 650', 'Cetirizine', 'Azithromycin', 'Insulin Glargine', 'Metformin', 'Amoxicillin', 'Pantoprazole']
+const QUICK_CHIPS = ['Dolo 650', 'Paracetamol', 'Cetirizine', 'Azithromycin', 'Metformin']
+
+const SUMMARY = [
+  { label: 'Saved medicines', value: 5, icon: Heart, to: '/saved' },
+  { label: 'Recent searches', value: 18, icon: Search, to: '/search' },
+  { label: 'Verified pharmacies', value: 12, icon: Building2, to: '/search' },
+  { label: 'Active alerts', value: 4, icon: Bell, to: '/alerts' },
+]
+
+const FEATURED = [
+  { name: 'Dolo 650', generic: 'Paracetamol', strength: '650 mg', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: '0.9 km', updated: '2 min ago' },
+  { name: 'Cetirizine 10 mg', generic: 'Cetirizine', strength: '10 mg', confidence: 'moderate', pharmacy: 'MedPlus', distance: '1.3 km', updated: '52 min ago' },
+  { name: 'Azithromycin 500 mg', generic: 'Azithromycin', strength: '500 mg', confidence: 'high', pharmacy: 'Apollo Pharmacy', distance: '0.9 km', updated: '8 min ago' },
+]
+
+const RECENT = [
+  { term: 'Paracetamol', when: 'Today' },
+  { term: 'Dolo 650', when: 'Yesterday' },
+  { term: 'Cetirizine', when: 'Yesterday' },
+]
+
+const FEED = [
+  { icon: CheckCircle2, tone: 'text-success', text: 'Dolo 650 confidence rose to High at a verified pharmacy near you.', time: '2 min ago' },
+  { icon: RefreshCw, tone: 'text-info', text: 'Apollo Pharmacy refreshed its availability signals.', time: '10 min ago' },
+  { icon: Bell, tone: 'text-teal', text: 'Your alert for Metformin is active.', time: 'Yesterday' },
+  { icon: MapPin, tone: 'text-muted-foreground', text: 'Preferred location updated.', time: 'Yesterday' },
+]
+
+const PHARMACIES = [
+  { id: '1', name: 'Apollo Pharmacy', confidence: 'high', distance: '0.9 km', eta: '4 min', x: 150, y: 132, open: true, address: 'Kompally Main Rd, Hyderabad', phone: '+91 40 2345 6789', updated: '2 min ago' },
+  { id: '2', name: 'MedPlus', confidence: 'moderate', distance: '1.3 km', eta: '6 min', x: 262, y: 205, open: true, address: 'Gandimaisamma X Roads, Hyderabad', phone: '+91 40 8765 4321', updated: '38 min ago' },
+  { id: '3', name: 'Wellness Forever', confidence: 'low', distance: '2.1 km', eta: '9 min', x: 108, y: 286, open: false, address: 'Bowrampet, Hyderabad', phone: '+91 40 5555 1212', updated: '5 hrs ago' },
+]
+
+const PIN = { high: 'var(--success)', moderate: 'var(--info)', low: 'var(--warning)' }
+
+export default function UserHome() {
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
+  const [showLocationDialog, setShowLocationDialog] = useState(false)
+  const [showManualLoc, setShowManualLoc] = useState(false)
+  const [manualLocInput, setManualLocInput] = useState('')
+  const [isListening, setIsListening] = useState(false)
+  const [activeId, setActiveId] = useState('1')
+  const [location, setLocation] = useState(
+    () => localStorage.getItem('zoiko-user-loc') || 'Gandimaisamma, Hyderabad',
+  )
+
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return []
+    return AUTOCOMPLETE.filter((a) => a.toLowerCase().includes(q)).slice(0, 6)
+  }, [query])
+
+  useEffect(() => {
+    if (!localStorage.getItem('zoiko-loc-permission')) {
+      const t = setTimeout(() => setShowLocationDialog(true), 1000)
+      return () => clearTimeout(t)
+    }
+  }, [])
+
+  const goSearch = (term) => navigate(`/search?q=${encodeURIComponent(term)}`)
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (query.trim()) goSearch(query.trim())
+  }
+
+  const allowLocation = () => {
+    localStorage.setItem('zoiko-loc-permission', 'granted')
+    localStorage.setItem('zoiko-user-loc', location)
+    setShowLocationDialog(false)
+  }
+
+  const denyLocation = () => {
+    localStorage.setItem('zoiko-loc-permission', 'denied')
+    setShowLocationDialog(false)
+  }
+
+  const saveManualLocation = () => {
+    if (!manualLocInput.trim()) return
+    setLocation(manualLocInput.trim())
+    localStorage.setItem('zoiko-user-loc', manualLocInput.trim())
+    setShowManualLoc(false)
+    setManualLocInput('')
+  }
+
+  const triggerVoice = () => {
+    setIsListening(true)
+    setTimeout(() => {
+      setIsListening(false)
+      goSearch('Dolo 650')
+    }, 2600)
+  }
+
+  const active = PHARMACIES.find((p) => p.id === activeId)
+
+  return (
+    <div className="mx-auto flex max-w-6xl flex-col gap-8">
+      {/* ---------------------------------------------------------------- */}
+      {/*  Dialogs                                                        */}
+      {/* ---------------------------------------------------------------- */}
+      <Dialog open={showLocationDialog} onOpenChange={setShowLocationDialog}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader className="items-center text-center">
+            <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <MapPin className="size-6" />
+            </div>
+            <DialogTitle>Use your location?</DialogTitle>
+            <DialogDescription>
+              Location helps us surface nearby verified pharmacies and fresher
+              availability signals. We don&apos;t store precise coordinates.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-center">
+            <Button variant="outline" onClick={denyLocation}>Not now</Button>
+            <Button variant="teal" onClick={allowLocation}>Allow location</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showManualLoc} onOpenChange={setShowManualLoc}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Set your location</DialogTitle>
+            <DialogDescription>Enter a city, area, or PIN code.</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={manualLocInput}
+            onChange={(e) => setManualLocInput(e.target.value)}
+            placeholder="e.g. Gandimaisamma, Hyderabad"
+            onKeyDown={(e) => e.key === 'Enter' && saveManualLocation()}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowManualLoc(false)}>Cancel</Button>
+            <Button variant="teal" onClick={saveManualLocation}>Save location</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isListening} onOpenChange={setIsListening}>
+        <DialogContent className="sm:max-w-[320px]">
+          <DialogHeader className="items-center text-center">
+            <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/15 text-primary">
+              <Mic className="size-7 animate-pulse" />
+            </div>
+            <DialogTitle>Listening…</DialogTitle>
+            <DialogDescription>Say a medicine name — e.g. “Dolo 650”.</DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---------------------------------------------------------------- */}
+      {/*  Hero                                                           */}
+      {/* ---------------------------------------------------------------- */}
+      <section className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft">
+        <div className="absolute inset-0 bg-grid opacity-60" aria-hidden />
+        <div className="absolute -right-24 -top-24 size-72 rounded-full bg-primary/15 blur-3xl" aria-hidden />
+        <div className="absolute -left-20 top-1/2 size-56 rounded-full bg-teal/10 blur-3xl" aria-hidden />
+
+        <div className="relative flex flex-col gap-6 p-6 sm:p-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Badge variant="teal" className="gap-1.5">
+              <ShieldCheck className="size-3.5" />
+              Verified patient access
+            </Badge>
+            <button
+              onClick={() => setShowManualLoc(true)}
+              className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-primary/30"
+            >
+              <MapPin className="size-3.5 text-primary" />
+              {location}
+              <span className="text-primary">Change</span>
+            </button>
+          </div>
+
+          <div className="flex max-w-2xl flex-col gap-1.5">
+            <h1 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
+              Find medicine availability near you
+            </h1>
+            <p className="text-sm text-muted-foreground sm:text-base">
+              Search a medicine to see real-time availability confidence from
+              verified pharmacies — powered by MediBase™ and ZoikoAvail™.
+            </p>
+          </div>
+
+          {/* Search */}
+          <div className="relative max-w-2xl">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search by medicine, brand, or generic — e.g. Dolo 650"
+                  aria-label="Search medicines"
+                  className="h-12 rounded-xl pl-11 pr-11 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={triggerVoice}
+                  aria-label="Voice search"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-primary"
+                >
+                  <Mic className="size-5" />
+                </button>
+                {suggestions.length > 0 && (
+                  <div className="absolute left-0 top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-elevated">
+                    {suggestions.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => goSearch(s)}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent"
+                      >
+                        <Pill className="size-4 shrink-0 text-teal" />
+                        <span className="text-sm font-semibold text-foreground">{s}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <Button type="submit" size="lg" className="h-12 rounded-xl px-6">
+                <Search />
+                Search
+              </Button>
+            </form>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Popular:
+              </span>
+              {QUICK_CHIPS.map((chip) => (
+                <button
+                  key={chip}
+                  onClick={() => goSearch(chip)}
+                  className="rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Governance banner */}
+      <div className="flex items-start gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4">
+        <Info className="mt-0.5 size-5 shrink-0 text-primary" />
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {CONFIRM_NOTE}
+        </p>
+      </div>
+
+      {/* Summary tiles */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {SUMMARY.map((s) => {
+          const Icon = s.icon
+          return (
+            <button
+              key={s.label}
+              onClick={() => navigate(s.to)}
+              className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+            >
+              <span className="flex size-9 items-center justify-center rounded-xl bg-teal/10 text-teal">
+                <Icon className="size-4.5" />
+              </span>
+              <span className="text-2xl font-extrabold tracking-tight text-foreground tabular">{s.value}</span>
+              <span className="text-xs font-medium text-muted-foreground">{s.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* How availability works + notifications */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
+        <Card className="p-6 md:col-span-6">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+            <Webhook className="size-4 text-teal" />
+            How availability works
+          </h3>
+          <ul className="mt-4 flex flex-col gap-3">
+            {[
+              { icon: Network, t: 'MediBase™ identifies the medicine', d: 'Brands, generics, and strengths map to one governed identity.' },
+              { icon: Webhook, t: 'ZoikoAvail™ scores confidence', d: 'Verified-pharmacy signals are weighted by freshness and reliability.' },
+              { icon: ShieldCheck, t: 'You confirm before visiting', d: 'We show confidence, never exact stock. Always confirm with the pharmacy.' },
+            ].map((row) => {
+              const Icon = row.icon
+              return (
+                <li key={row.t} className="flex items-start gap-3">
+                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-teal">
+                    <Icon className="size-4" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{row.t}</p>
+                    <p className="text-xs text-muted-foreground">{row.d}</p>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </Card>
+
+        <Card className="p-6 md:col-span-6">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+            <Bell className="size-4 text-primary" />
+            Recent activity
+          </h3>
+          <div className="mt-4 flex flex-col">
+            {FEED.map((f, i) => {
+              const Icon = f.icon
+              return (
+                <div key={i} className="flex items-start justify-between gap-3 border-b border-border py-2.5 last:border-0">
+                  <div className="flex items-start gap-2.5">
+                    <Icon className={cn('mt-0.5 size-4 shrink-0', f.tone)} />
+                    <span className="text-sm text-foreground">{f.text}</span>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">{f.time}</span>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      </div>
+
+      {/* Nearby verified pharmacies */}
+      <section className="flex flex-col gap-4">
+        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+          <MapPin className="size-4 text-teal" />
+          Nearby verified pharmacies
+        </h3>
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-12">
+          <Card className="overflow-hidden p-0 md:col-span-8">
+            <div className="relative h-[380px] w-full bg-slate-100 dark:bg-slate-900">
+              <svg className="size-full" viewBox="0 0 400 400" role="img" aria-label="Map of nearby verified pharmacies">
+                <path d="M0 200 H400 M200 0 V400" stroke="var(--border)" strokeWidth="8" strokeOpacity="0.5" strokeLinecap="round" />
+                <path d="M0 90 L400 300" stroke="var(--border)" strokeWidth="5" strokeOpacity="0.35" strokeLinecap="round" />
+                <g transform="translate(200 200)">
+                  <circle r="16" fill="var(--primary)" fillOpacity="0.15" className="animate-ping" />
+                  <circle r="6" fill="var(--primary)" stroke="#fff" strokeWidth="2.5" />
+                </g>
+                {PHARMACIES.map((p) => {
+                  const isActive = p.id === activeId
+                  const color = PIN[p.confidence]
+                  return (
+                    <g
+                      key={p.id}
+                      transform={`translate(${p.x} ${p.y})`}
+                      className="cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${p.name}, availability confidence ${p.confidence}`}
+                      onClick={() => setActiveId(p.id)}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setActiveId(p.id))}
+                    >
+                      {isActive && <circle r="16" fill={color} fillOpacity="0.22" className="animate-pulse" />}
+                      <path d="M0 -24 C-8 -24 -15 -18 -15 -9 C-15 0 0 11 0 11 C0 11 15 0 15 -9 C15 -18 8 -24 0 -24 Z" fill={color} stroke="#fff" strokeWidth={isActive ? 2.5 : 1.5} />
+                      <circle cy="-10" r="5" fill="#fff" />
+                    </g>
+                  )
+                })}
+              </svg>
+              <div className="absolute bottom-3 left-3 flex items-center gap-3 rounded-xl border border-border bg-card/90 px-3 py-2 text-xs backdrop-blur-sm">
+                <span className="font-semibold text-muted-foreground">Confidence:</span>
+                {[['High', 'var(--success)'], ['Moderate', 'var(--info)'], ['Low', 'var(--warning)']].map(([l, c]) => (
+                  <span key={l} className="flex items-center gap-1.5 text-muted-foreground">
+                    <span className="size-2.5 rounded-full" style={{ background: c }} />{l}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          <div className="md:col-span-4">
+            {active && (
+              <Card className="flex h-full flex-col justify-between p-5">
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-col gap-1">
+                      <span className="flex items-center gap-1.5 text-base font-bold text-foreground">
+                        <ShieldCheck className="size-4 shrink-0 text-teal" />
+                        {active.name}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{active.address}</span>
+                    </div>
+                    <Badge variant={active.open ? 'success' : 'secondary'} size="sm">
+                      {active.open ? 'Open' : 'Closed'}
+                    </Badge>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-muted/40 p-3.5 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Availability</span>
+                      <ConfidenceBadge level={active.confidence} size="sm" />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Distance</span>
+                      <span className="font-semibold text-foreground tabular">{active.distance} · {active.eta}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Last confirmed</span>
+                      <span className="font-semibold text-foreground">{active.updated}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {AVAILABILITY[active.confidence]?.plain}. Confirm with the pharmacy before visiting.
+                  </p>
+                </div>
+
+                <div className="mt-4 flex gap-2 border-t border-border pt-4">
+                  <Button variant="outline" className="flex-1" asChild>
+                    <a href={telHref(active.phone)}><Clock className="size-4" />Call</a>
+                  </Button>
+                  <Button className="flex-1" asChild>
+                    <a href={mapsHref(`${active.name}, ${active.address}`)} target="_blank" rel="noopener noreferrer">
+                      <MapPin className="size-4" />Directions
+                    </a>
+                  </Button>
+                </div>
+              </Card>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Featured medicines */}
+      <section className="flex flex-col gap-4">
+        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+          <Pill className="size-4 text-teal" />
+          Featured medicines
+        </h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURED.map((med) => (
+            <Card key={med.name} className="transition-shadow hover:shadow-card">
+              <CardContent className="flex flex-col gap-4 py-5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-foreground">{med.name}</span>
+                    <span className="text-xs text-muted-foreground">{med.generic} · {med.strength}</span>
+                  </div>
+                  <ConfidenceBadge level={med.confidence} size="sm" />
+                </div>
+                <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3 text-xs">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <ShieldCheck className="size-3.5 text-teal" />
+                    {med.pharmacy}
+                  </span>
+                  <span className="font-semibold text-foreground tabular">{med.distance}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1"><Clock className="size-3.5" />Confirmed {med.updated}</span>
+                  <button onClick={() => goSearch(med.name)} className="flex items-center gap-1 font-semibold text-primary hover:underline">
+                    Check availability <ArrowRight className="size-3.5" />
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      {/* Recent searches */}
+      <section className="flex flex-col gap-4">
+        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+          <Clock className="size-4 text-muted-foreground" />
+          Recent searches
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {RECENT.map((r) => (
+            <button
+              key={r.term}
+              onClick={() => goSearch(r.term)}
+              className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Search className="size-4 text-muted-foreground" />
+                {r.term}
+              </span>
+              <span className="text-xs text-muted-foreground">{r.when}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}

@@ -21,14 +21,10 @@ function getInitials(name) {
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUserState] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      return stored ? JSON.parse(stored) : null
-    } catch {
-      return null
-    }
-  })
+  // The app always starts at the login page: the persisted session is NOT
+  // auto-restored on load, so opening / (which routes to /login) shows login
+  // every time. Login still holds the session in memory for the active session.
+  const [user, setUserState] = useState(null)
 
   const login = useCallback(async (email, password) => {
     // Simulate API request delay
@@ -38,19 +34,48 @@ export function AuthProvider({ children }) {
       throw new Error('Email and password are required')
     }
 
+    const normEmail = email.toLowerCase()
     let authUser
-    // Default admin user check
-    if (email.toLowerCase() === DEFAULT_USER.email.toLowerCase()) {
-      authUser = DEFAULT_USER
+
+    // Demo Credentials check
+    if (normEmail === 'super@zoikogroup.com') {
+      if (password !== 'Super@123') {
+        throw new Error('Invalid credentials')
+      }
+      authUser = {
+        name: 'Platform Super Administrator',
+        email: 'super@zoikogroup.com',
+        role: 'SUPER_ADMIN',
+        initials: 'PS'
+      }
+    } else if (normEmail === 'john@example.com') {
+      if (password !== 'User@123') {
+        throw new Error('Invalid credentials')
+      }
+      authUser = {
+        name: 'Naveen',
+        email: 'john@example.com',
+        role: 'USER',
+        roleType: 'Patient / Caregiver',
+        initials: 'N',
+        memberSince: 'July 2026',
+        accountType: 'Personal',
+        location: 'Gandimaisamma, Hyderabad',
+        language: 'English',
+        notifications: 'Enabled',
+        locationAccess: 'Allowed',
+        theme: 'Light',
+        lastLogin: 'Today • 10:42 AM'
+      }
     } else {
-      // Mock logging in any user
+      // Mock other users logging in
       const name = email.split('@')[0]
       const capitalized = name.charAt(0).toUpperCase() + name.slice(1)
       authUser = {
         name: capitalized,
         email: email,
-        role: 'Enterprise Partner',
-        initials: getInitials(capitalized),
+        role: 'USER',
+        initials: getInitials(capitalized)
       }
     }
 
@@ -77,7 +102,7 @@ export function AuthProvider({ children }) {
       name,
       email,
       phone,
-      role: 'Enterprise Partner',
+      role: 'USER',
       initials: getInitials(name),
     }
 

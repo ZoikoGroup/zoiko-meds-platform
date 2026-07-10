@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, AlertTriangle, Bell, Check, CheckCircle2, ChevronsUpDown, LogOut, Menu, Moon, Plus, Search, Settings, Sun, UserCog, XCircle, } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Bell, Check, CheckCircle2, ChevronsUpDown, LogOut, Menu, Moon, Plus, Search, Settings, Sun, UserCog, XCircle, Activity, CheckSquare, Send, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -11,13 +11,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Tooltip, TooltipContent, TooltipTrigger, } from '@/components/ui/tooltip';
 import { useTheme } from '@/providers/theme-provider';
 import { useAuth } from '@/providers/auth-provider';
-import { notifications, organizations } from '@/services/data';
+import { notifications } from '@/services/data';
+import { routeMeta } from '@/routes/navigation';
 import { cn } from '@/lib/utils';
 /* ------------------------------- search --------------------------------- */
 function SearchTrigger({ onClick }) {
-    return (<button type="button" onClick={onClick} className="group flex h-9 w-full max-w-sm items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground">
+    return (<button type="button" onClick={onClick} className="group flex h-9 w-60 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground">
       <Search className="size-4"/>
-      <span className="flex-1 text-left">Search intelligence…</span>
+      <span className="flex-1 text-left">Search…</span>
       <kbd className="hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline-flex">
         ⌘K
       </kbd>
@@ -40,40 +41,40 @@ function ThemeToggle() {
       <TooltipContent>{isDark ? 'Light mode' : 'Dark mode'}</TooltipContent>
     </Tooltip>);
 }
-/* ---------------------------- org switcher ------------------------------ */
-function OrgSwitcher() {
-    const [active, setActive] = useState(organizations[0]);
+/* ---------------------------- quick actions ----------------------------- */
+function QuickActions() {
     return (<DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="hidden h-10 gap-2 px-2 md:flex" aria-label="Switch organization">
-          <span className="flex size-7 items-center justify-center rounded-md bg-gradient-to-br from-primary to-teal text-[11px] font-semibold text-white">
-            {active.initials}
-          </span>
-          <span className="flex max-w-40 flex-col items-start leading-tight">
-            <span className="truncate text-sm font-medium">{active.name}</span>
-            <span className="text-[11px] text-muted-foreground">{active.plan}</span>
-          </span>
-          <ChevronsUpDown className="size-3.5 text-muted-foreground"/>
+        <Button size="sm" className="hidden sm:flex gap-1.5 items-center bg-primary text-white hover:bg-primary/95 shadow-xs">
+          <Plus className="size-3.5"/>
+          Quick Actions
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-72">
-        <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-        {organizations.map((org) => (<DropdownMenuItem key={org.id} onSelect={() => setActive(org)} className="gap-2.5">
-            <span className="flex size-7 items-center justify-center rounded-md bg-secondary text-[11px] font-semibold text-secondary-foreground">
-              {org.initials}
-            </span>
-            <span className="flex flex-col">
-              <span className="text-sm font-medium">{org.name}</span>
-              <span className="text-[11px] text-muted-foreground">
-                {org.type} · {org.plan}
-              </span>
-            </span>
-            {active.id === org.id && (<Check className="ml-auto size-4 text-primary"/>)}
-          </DropdownMenuItem>))}
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel>Platform Actions</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="gap-2.5 text-muted-foreground">
-          <Plus className="size-4"/>
-          Create workspace
+        <DropdownMenuItem asChild>
+          <Link to="/medibase" className="flex items-center gap-2">
+            <Plus className="size-4 text-muted-foreground"/>
+            Add New Medicine
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/verification" className="flex items-center gap-2">
+            <CheckSquare className="size-4 text-muted-foreground"/>
+            Review Verification Queue
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/notifications" className="flex items-center gap-2">
+            <Send className="size-4 text-muted-foreground"/>
+            Broadcast Update
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => alert('Platform availability cache reset initiated...')} className="flex items-center gap-2">
+          <RefreshCw className="size-4 text-muted-foreground"/>
+          Reset Cache
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>);
@@ -128,7 +129,7 @@ function NotificationsMenu() {
                   </span>
                 </div>
               </div>);
-        })}
+          })}
         </div>
         <Separator />
         <Link to="/reports" className="flex items-center justify-center py-2.5 text-xs font-medium text-primary hover:underline">
@@ -143,7 +144,7 @@ function ProfileMenu() {
     const initials = user?.initials || 'U';
     const name = user?.name || 'User';
     const email = user?.email || '';
-    const role = user?.role || 'Enterprise Partner';
+    const role = user?.role || 'Super Admin';
 
     return (<DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -189,20 +190,38 @@ function ProfileMenu() {
       </DropdownMenuContent>
     </DropdownMenu>);
 }
-export function Topbar({ onOpenCommand, onOpenMobileNav }) {
-    return (<header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-border glass px-4 lg:px-6">
-      <Button variant="ghost" size="icon" className="lg:hidden" onClick={onOpenMobileNav} aria-label="Open navigation">
-        <Menu className="size-5"/>
-      </Button>
+export function Topbar({ onOpenCommand, onOpenMobileNav, onToggleRightSidebar, rightSidebarOpen }) {
+    const { pathname } = useLocation();
+    const meta = routeMeta[pathname] || { title: 'Portal' };
 
-      <SearchTrigger onClick={onOpenCommand}/>
+    return (<header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b border-border bg-card/85 backdrop-blur-md px-4 lg:px-6">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" className="lg:hidden" onClick={onOpenMobileNav} aria-label="Open navigation">
+          <Menu className="size-5"/>
+        </Button>
 
-      <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
-        <OrgSwitcher />
+        {/* Breadcrumb Navigation */}
+        <div className="hidden md:flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <span className="text-muted-foreground/60">Platform</span>
+          <span className="text-border/60">/</span>
+          {meta.section && (<>
+              <span className="text-muted-foreground/60">{meta.section}</span>
+              <span className="text-border/60">/</span>
+            </>)}
+          <span className="text-foreground font-semibold">{meta.title}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 sm:gap-3">
+        <SearchTrigger onClick={onOpenCommand}/>
+        <QuickActions />
         <Separator orientation="vertical" className="mx-1 hidden h-6 md:block"/>
         <ThemeToggle />
         <NotificationsMenu />
         <ProfileMenu />
+        <Button variant="ghost" size="icon" onClick={onToggleRightSidebar} className={cn('text-muted-foreground', rightSidebarOpen && 'text-primary bg-accent')} aria-label="Toggle Activity Sidebar">
+          <Activity className="size-4.5"/>
+        </Button>
       </div>
     </header>);
 }

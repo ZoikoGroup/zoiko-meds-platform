@@ -1,4 +1,4 @@
-import { Building2, Blocks, FileText, HeartPulse, Landmark, LayoutDashboard, Network, Radar, Settings, Webhook, } from 'lucide-react';
+import { Building2, Blocks, FileText, LayoutDashboard, Network, Radar, Settings, Webhook, Users, ShieldCheck, Bell, History } from 'lucide-react';
 export const navSections = [
     {
         items: [
@@ -6,31 +6,33 @@ export const navSections = [
         ],
     },
     {
-        heading: 'Medicine Intelligence',
+        heading: 'Platform Governance',
         items: [
-            { label: 'ZoikoSignal™', to: '/zoikosignal', icon: Radar },
-            { label: 'ZoikoAvail™', to: '/zoikoavail', icon: Webhook },
-            { label: 'MediBase™', to: '/medibase', icon: Network },
+            { label: 'Pharmacy Management', to: '/pharmacies', icon: Building2 },
+            { label: 'Users & Roles', to: '/users', icon: Users },
+            { label: 'Verification Center', to: '/verification', icon: ShieldCheck },
         ],
     },
     {
-        heading: 'Solutions',
+        heading: 'Medicine Intelligence',
         items: [
-            { label: 'Health Systems', to: '/health-systems', icon: HeartPulse },
-            { label: 'Government & Public Health', to: '/government', icon: Landmark },
-            { label: 'Enterprise Solutions', to: '/enterprise', icon: Building2 },
+            { label: 'MediBase™ (Catalog)', to: '/medibase', icon: Network },
+            { label: 'ZoikoAvail™ (Engine)', to: '/zoikoavail', icon: Webhook },
+            { label: 'ZoikoSignal™ (Search)', to: '/zoikosignal', icon: Radar },
         ],
     },
     {
         heading: 'Workspace',
         items: [
-            { label: 'Reports', to: '/reports', icon: FileText },
+            { label: 'Reports & Analytics', to: '/reports', icon: FileText },
+            { label: 'Notifications', to: '/notifications', icon: Bell },
+            { label: 'Audit Logs', to: '/audit-logs', icon: History },
             {
                 label: 'API Integrations',
                 to: '/settings?tab=integrations',
                 icon: Blocks,
             },
-            { label: 'Settings', to: '/settings', icon: Settings, end: true },
+            { label: 'System Settings', to: '/settings', icon: Settings, end: true },
         ],
     },
 ];
@@ -38,12 +40,14 @@ export const allNavLinks = navSections.flatMap((s) => s.items);
 /** Per-route metadata for document titles + breadcrumbs. */
 export const routeMeta = {
     '/dashboard': { title: 'Dashboard' },
-    '/zoikosignal': { title: 'ZoikoSignal™', section: 'Medicine Intelligence' },
-    '/zoikoavail': { title: 'ZoikoAvail™', section: 'Medicine Intelligence' },
+    '/pharmacies': { title: 'Pharmacy Management', section: 'Platform Governance' },
+    '/users': { title: 'Users & Roles', section: 'Platform Governance' },
+    '/verification': { title: 'Verification Center', section: 'Platform Governance' },
     '/medibase': { title: 'MediBase™', section: 'Medicine Intelligence' },
-    '/health-systems': { title: 'Health Systems', section: 'Solutions' },
-    '/government': { title: 'Government & Public Health', section: 'Solutions' },
-    '/enterprise': { title: 'Enterprise Solutions', section: 'Solutions' },
-    '/reports': { title: 'Reports', section: 'Workspace' },
+    '/zoikoavail': { title: 'ZoikoAvail™', section: 'Medicine Intelligence' },
+    '/zoikosignal': { title: 'ZoikoSignal™', section: 'Medicine Intelligence' },
+    '/reports': { title: 'Reports & Analytics', section: 'Workspace' },
+    '/notifications': { title: 'Notifications', section: 'Workspace' },
+    '/audit-logs': { title: 'Audit Logs', section: 'Workspace' },
     '/settings': { title: 'Settings', section: 'Workspace' },
 };

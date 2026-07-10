@@ -23,9 +23,18 @@ export function GroupedBars({ data, xKey, series, height = 280, unit = '', yDoma
     return (<div className="flex flex-col gap-3">
       <ChartLegend className="justify-end" items={resolved.map((s) => ({ label: s.label, color: s.color }))}/>
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: 0 }} barGap={2} barCategoryGap="30%">
+        <BarChart data={data} margin={{ top: 6, right: 8, bottom: 35, left: 0 }} barGap={2} barCategoryGap="30%">
           <CartesianGrid vertical={false} stroke={CHART_GRID} strokeWidth={1}/>
-          <XAxis dataKey={xKey} {...axisProps} dy={8} interval={0}/>
+          <XAxis 
+            dataKey={xKey} 
+            {...axisProps} 
+            tick={{ ...axisProps.tick, fontSize: 10 }}
+            interval={0}
+            angle={-30}
+            textAnchor="end"
+            dx={-2}
+            dy={4}
+          />
           <YAxis {...axisProps} width={40} domain={yDomain} tickFormatter={(v) => `${v}${unit}`}/>
           <Tooltip cursor={{ fill: 'var(--accent)', opacity: 0.5 }} content={<ChartTooltip unit={unit}/>}/>
           {resolved.map((s) => (<Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} radius={[4, 4, 0, 0]} maxBarSize={18} animationDuration={700}/>))}
