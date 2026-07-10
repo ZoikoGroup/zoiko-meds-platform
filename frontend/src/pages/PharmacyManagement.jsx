@@ -1,26 +1,49 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
+import { motion } from 'framer-motion'
 import { PageHeader } from '@/components/shared/page-header'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DataTable } from '@/components/shared/data-table'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Building2, CheckCircle2, AlertTriangle, XCircle, ShieldCheck, Ban, Trash2, Eye, Edit, Check, X, ShieldAlert, Plus } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  Building2,
+  CheckCircle2,
+  Ban,
+  Eye,
+  Plus,
+  Loader2,
+  AlertTriangle,
+} from 'lucide-react'
+import * as admin from '@/services/admin-api'
 
-const initialPharmacies = [
-  { id: '1', name: 'Meridian Care Pharmacy', license: 'LC-990812', city: 'New York', country: 'United States', status: 'Verified', availabilityScore: 98, lastUpdate: '2h ago' },
-  { id: '2', name: 'West End Health Hub', license: 'LC-881273', city: 'London', country: 'United Kingdom', status: 'Pending', availabilityScore: 84, lastUpdate: '5h ago' },
-  { id: '3', name: 'Apotheke am Tor', license: 'LC-772183', city: 'Berlin', country: 'Germany', status: 'Verified', availabilityScore: 96, lastUpdate: '1d ago' },
-  { id: '4', name: 'Apex Meds Supply', license: 'LC-661273', city: 'New York', country: 'United States', status: 'Suspended', availabilityScore: 42, lastUpdate: '3d ago' },
-  { id: '5', name: 'Delhi Pharma & Surgical', license: 'LC-551829', city: 'New Delhi', country: 'India', status: 'Verified', availabilityScore: 91, lastUpdate: '3h ago' },
-  { id: '6', name: 'Sao Paulo Biopharma', license: 'LC-441293', city: 'Sao Paulo', country: 'Brazil', status: 'Pending', availabilityScore: 76, lastUpdate: '12h ago' },
-  { id: '7', name: 'Tokyo Central Dispensary', license: 'LC-331289', city: 'Tokyo', country: 'Japan', status: 'Verified', availabilityScore: 99, lastUpdate: '1h ago' },
-  { id: '8', name: 'Paris City Chemist', license: 'LC-221298', city: 'Paris', country: 'France', status: 'Verified', availabilityScore: 94, lastUpdate: '4h ago' }
-]
+const STATUS_LABEL = {
+  VERIFIED: 'Verified',
+  PENDING: 'Pending',
+  SUSPENDED: 'Suspended',
+  UNVERIFIED: 'Unverified',
+  REJECTED: 'Rejected',
+}
+const STATUS_VARIANT = {
+  VERIFIED: 'success',
+  PENDING: 'secondary',
+  SUSPENDED: 'destructive',
+  UNVERIFIED: 'outline',
+  REJECTED: 'destructive',
+}
 
 export default function PharmacyManagement() {
-  const [pharmacies, setPharmacies] = useState(initialPharmacies)
+  const [pharmacies, setPharmacies] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [countryFilter, setCountryFilter] = useState('All')
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -28,12 +51,48 @@ export default function PharmacyManagement() {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isAddOpen, setIsAddOpen] = useState(false)
 
-  // Form states for adding new pharmacy
-  const [newForm, setNewForm] = useState({ name: '', license: '', city: '', country: '', availabilityScore: 100 })
+  const [newForm, setNewForm] = useState({
+    name: '',
+    licenseNumber: '',
+    city: '',
+    country: '',
+    availabilityScore: 100,
+  })
 
-  const countries = useMemo(() => {
-    return ['All', ...new Set(pharmacies.map((p) => p.country))]
-  }, [pharmacies])
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await admin.listPharmacies({ pageSize: 200 })
+      setPharmacies(res.items)
+    } catch (err) {
+      setError(err.message || 'Failed to load pharmacies')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const run = useCallback(
+    async (action) => {
+      setError('')
+      try {
+        await action()
+        await load()
+      } catch (err) {
+        setError(err.message || 'Action failed')
+      }
+    },
+    [load]
+  )
+
+  const countries = useMemo(
+    () => ['All', ...new Set(pharmacies.map((p) => p.country).filter(Boolean))],
+    [pharmacies]
+  )
 
   const filteredPharmacies = useMemo(() => {
     return pharmacies.filter((p) => {
@@ -45,58 +104,33 @@ export default function PharmacyManagement() {
 
   const handleToggleSelect = (id) => {
     const next = new Set(selectedIds)
-    if (next.has(id)) {
-      next.delete(id)
-    } else {
-      next.add(id)
-    }
+    next.has(id) ? next.delete(id) : next.add(id)
     setSelectedIds(next)
   }
 
   const handleSelectAll = () => {
-    if (selectedIds.size === filteredPharmacies.length) {
+    if (selectedIds.size === filteredPharmacies.length) setSelectedIds(new Set())
+    else setSelectedIds(new Set(filteredPharmacies.map((p) => p.id)))
+  }
+
+  const bulk = (status) =>
+    run(() => admin.bulkPharmacyStatus([...selectedIds], status)).then(() =>
       setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredPharmacies.map((p) => p.id)))
-    }
-  }
-
-  const handleBulkApprove = () => {
-    setPharmacies((prev) =>
-      prev.map((p) => (selectedIds.has(p.id) ? { ...p, status: 'Verified' } : p))
     )
-    setSelectedIds(new Set())
-  }
 
-  const handleBulkReject = () => {
-    setPharmacies((prev) =>
-      prev.map((p) => (selectedIds.has(p.id) ? { ...p, status: 'Suspended' } : p))
+  const toggleSuspend = (row) =>
+    run(() =>
+      row.status === 'SUSPENDED'
+        ? admin.verifyPharmacy(row.id)
+        : admin.suspendPharmacy(row.id)
     )
-    setSelectedIds(new Set())
-  }
 
-  const handleToggleSuspend = (id) => {
-    setPharmacies((prev) =>
-      prev.map((p) => {
-        if (p.id !== id) return p
-        const nextStatus = p.status === 'Suspended' ? 'Verified' : 'Suspended'
-        return { ...p, status: nextStatus }
-      })
-    )
-  }
-
-  const handleAddPharmacy = (e) => {
+  const handleAddPharmacy = async (e) => {
     e.preventDefault()
-    if (!newForm.name || !newForm.license) return
-    const newEntry = {
-      id: String(pharmacies.length + 1),
-      ...newForm,
-      status: 'Pending',
-      lastUpdate: 'Just now'
-    }
-    setPharmacies((prev) => [newEntry, ...prev])
+    if (!newForm.name || !newForm.licenseNumber) return
+    await run(() => admin.createPharmacy(newForm))
     setIsAddOpen(false)
-    setNewForm({ name: '', license: '', city: '', country: '', availabilityScore: 100 })
+    setNewForm({ name: '', licenseNumber: '', city: '', country: '', availabilityScore: 100 })
   }
 
   const columns = [
@@ -117,7 +151,7 @@ export default function PharmacyManagement() {
           onChange={() => handleToggleSelect(row.id)}
           className="rounded border-border/80 accent-primary"
         />
-      )
+      ),
     },
     {
       key: 'name',
@@ -128,26 +162,35 @@ export default function PharmacyManagement() {
           <Building2 className="size-4 text-muted-foreground shrink-0" />
           <span>{row.name}</span>
         </div>
-      )
+      ),
     },
     {
       key: 'status',
       header: 'Status',
       sortable: true,
-      cell: (row) => {
-        const severity = row.status === 'Verified' ? 'good' : row.status === 'Pending' ? 'warning' : 'critical'
-        return <Badge variant={severity === 'good' ? 'default' : severity === 'warning' ? 'secondary' : 'destructive'}>{row.status}</Badge>
-      }
+      cell: (row) => (
+        <Badge variant={STATUS_VARIANT[row.status] || 'secondary'}>
+          {STATUS_LABEL[row.status] || row.status}
+        </Badge>
+      ),
     },
     {
-      key: 'license',
+      key: 'licenseNumber',
       header: 'License Number',
-      cell: (row) => <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">{row.license}</code>
+      cell: (row) => (
+        <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+          {row.licenseNumber || '—'}
+        </code>
+      ),
     },
     {
       key: 'city',
       header: 'Location',
-      cell: (row) => <span className="text-muted-foreground">{row.city}, {row.country}</span>
+      cell: (row) => (
+        <span className="text-muted-foreground">
+          {[row.city, row.country].filter(Boolean).join(', ') || '—'}
+        </span>
+      ),
     },
     {
       key: 'availabilityScore',
@@ -161,44 +204,53 @@ export default function PharmacyManagement() {
               style={{ width: `${row.availabilityScore}%` }}
             />
           </div>
-          <span className="font-semibold text-xs text-foreground tabular">{row.availabilityScore}%</span>
+          <span className="font-semibold text-xs text-foreground tabular">
+            {row.availabilityScore}%
+          </span>
         </div>
-      )
+      ),
     },
     {
-      key: 'lastUpdate',
+      key: 'updatedAt',
       header: 'Last Sync',
-      cell: (row) => <span className="text-xs text-muted-foreground">{row.lastUpdate}</span>
-    }
+      cell: (row) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(row.updatedAt).toLocaleString()}
+        </span>
+      ),
+    },
   ]
 
   const toolbar = (
     <div className="flex flex-wrap items-center gap-3">
-      {/* Status Select */}
       <select
         value={statusFilter}
         onChange={(e) => setStatusFilter(e.target.value)}
         className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
       >
         <option value="All">All Statuses</option>
-        <option value="Verified">Verified</option>
-        <option value="Pending">Pending</option>
-        <option value="Suspended">Suspended</option>
+        <option value="VERIFIED">Verified</option>
+        <option value="PENDING">Pending</option>
+        <option value="SUSPENDED">Suspended</option>
       </select>
 
-      {/* Country Select */}
       <select
         value={countryFilter}
         onChange={(e) => setCountryFilter(e.target.value)}
         className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
       >
         {countries.map((c) => (
-          <option key={c} value={c}>{c === 'All' ? 'All Locations' : c}</option>
+          <option key={c} value={c}>
+            {c === 'All' ? 'All Locations' : c}
+          </option>
         ))}
       </select>
 
-      {/* Add Button */}
-      <Button size="sm" onClick={() => setIsAddOpen(true)} className="bg-primary hover:bg-primary/95 text-white flex gap-1 items-center">
+      <Button
+        size="sm"
+        onClick={() => setIsAddOpen(true)}
+        className="bg-primary hover:bg-primary/95 text-white flex gap-1 items-center"
+      >
         <Plus className="size-3.5" />
         Add Pharmacy
       </Button>
@@ -220,10 +272,11 @@ export default function PharmacyManagement() {
       <Button
         variant="ghost"
         size="icon-sm"
-        className={row.status === 'Suspended' ? 'text-success' : 'text-danger'}
-        onClick={() => handleToggleSuspend(row.id)}
+        className={row.status === 'SUSPENDED' ? 'text-success' : 'text-danger'}
+        onClick={() => toggleSuspend(row)}
+        title={row.status === 'SUSPENDED' ? 'Verify' : 'Suspend'}
       >
-        {row.status === 'Suspended' ? <CheckCircle2 className="size-4" /> : <Ban className="size-4" />}
+        {row.status === 'SUSPENDED' ? <CheckCircle2 className="size-4" /> : <Ban className="size-4" />}
       </Button>
     </div>
   )
@@ -235,7 +288,13 @@ export default function PharmacyManagement() {
         description="Verify licensing compliance, audit inventory streams, and toggle operational permissions."
       />
 
-      {/* Bulk actions status panel */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <AlertTriangle className="size-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
       {selectedIds.size > 0 && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -246,10 +305,10 @@ export default function PharmacyManagement() {
             {selectedIds.size} pharmacies selected for bulk action
           </span>
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={handleBulkApprove} className="bg-success text-white hover:bg-success/95">
+            <Button size="sm" onClick={() => bulk('VERIFIED')} className="bg-success text-white hover:bg-success/95">
               Approve All
             </Button>
-            <Button size="sm" onClick={handleBulkReject} className="bg-danger text-white hover:bg-danger/95">
+            <Button size="sm" onClick={() => bulk('SUSPENDED')} className="bg-danger text-white hover:bg-danger/95">
               Suspend All
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
@@ -259,19 +318,24 @@ export default function PharmacyManagement() {
         </motion.div>
       )}
 
-      {/* Main Table */}
       <Card className="border-border/70 bg-card">
         <CardContent className="pt-6">
-          <DataTable
-            columns={columns}
-            data={filteredPharmacies}
-            getRowId={(row) => row.id}
-            searchable
-            searchPlaceholder="Search by pharmacy name or license..."
-            searchAccessor={(row) => `${row.name} ${row.license}`}
-            toolbar={toolbar}
-            rowActions={rowActions}
-          />
+          {loading ? (
+            <div className="flex items-center gap-2 py-16 justify-center text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Loading pharmacies…
+            </div>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={filteredPharmacies}
+              getRowId={(row) => row.id}
+              searchable
+              searchPlaceholder="Search by pharmacy name or license..."
+              searchAccessor={(row) => `${row.name} ${row.licenseNumber || ''}`}
+              toolbar={toolbar}
+              rowActions={rowActions}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -281,24 +345,24 @@ export default function PharmacyManagement() {
           <DialogHeader>
             <DialogTitle>Pharmacy Record Details</DialogTitle>
             <DialogDescription>
-              platform governance log for {selectedPharmacy?.name}
+              Platform governance log for {selectedPharmacy?.name}
             </DialogDescription>
           </DialogHeader>
           {selectedPharmacy && (
             <div className="grid gap-4 py-4 text-sm">
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Verification status</span>
-                <Badge variant={selectedPharmacy.status === 'Verified' ? 'default' : 'secondary'}>
-                  {selectedPharmacy.status}
+                <Badge variant={STATUS_VARIANT[selectedPharmacy.status] || 'secondary'}>
+                  {STATUS_LABEL[selectedPharmacy.status] || selectedPharmacy.status}
                 </Badge>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">License Registration</span>
-                <code>{selectedPharmacy.license}</code>
+                <code>{selectedPharmacy.licenseNumber || '—'}</code>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Headquarters Location</span>
-                <span>{selectedPharmacy.city}, {selectedPharmacy.country}</span>
+                <span>{[selectedPharmacy.city, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Availability Engine Score</span>
@@ -306,7 +370,7 @@ export default function PharmacyManagement() {
               </div>
               <div className="flex justify-between pb-1">
                 <span className="text-muted-foreground">Last Database Sync</span>
-                <span>{selectedPharmacy.lastUpdate}</span>
+                <span>{new Date(selectedPharmacy.updatedAt).toLocaleString()}</span>
               </div>
             </div>
           )}
@@ -314,12 +378,10 @@ export default function PharmacyManagement() {
             <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>
               Close
             </Button>
-            {selectedPharmacy?.status !== 'Verified' && (
+            {selectedPharmacy?.status !== 'VERIFIED' && (
               <Button
                 onClick={() => {
-                  setPharmacies((prev) =>
-                    prev.map((p) => (p.id === selectedPharmacy.id ? { ...p, status: 'Verified' } : p))
-                  )
+                  run(() => admin.verifyPharmacy(selectedPharmacy.id))
                   setIsDetailsOpen(false)
                 }}
               >
@@ -352,8 +414,8 @@ export default function PharmacyManagement() {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-muted-foreground">License Number</label>
               <Input
-                value={newForm.license}
-                onChange={(e) => setNewForm({ ...newForm, license: e.target.value })}
+                value={newForm.licenseNumber}
+                onChange={(e) => setNewForm({ ...newForm, licenseNumber: e.target.value })}
                 placeholder="e.g. LC-109283"
                 required
               />
@@ -365,7 +427,6 @@ export default function PharmacyManagement() {
                   value={newForm.city}
                   onChange={(e) => setNewForm({ ...newForm, city: e.target.value })}
                   placeholder="e.g. Chicago"
-                  required
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -374,7 +435,6 @@ export default function PharmacyManagement() {
                   value={newForm.country}
                   onChange={(e) => setNewForm({ ...newForm, country: e.target.value })}
                   placeholder="e.g. United States"
-                  required
                 />
               </div>
             </div>
