@@ -144,7 +144,7 @@ function ProfileMenu() {
     const initials = user?.initials || 'U';
     const name = user?.name || 'User';
     const email = user?.email || '';
-    const role = user?.role || 'Super Admin';
+    const role = user?.roleLabel || user?.role || 'Super Admin';
 
     return (<DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -171,13 +171,13 @@ function ProfileMenu() {
         </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/settings">
+          <Link to="/admin/settings">
             <UserCog />
             Account & profile
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/settings">
+          <Link to="/admin/settings">
             <Settings />
             Workspace settings
           </Link>
