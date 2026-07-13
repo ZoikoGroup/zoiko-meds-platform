@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search, MapPin, Mic, Bell, Info, ShieldCheck, Clock, Pill, Heart,
-  Network, Webhook, ArrowRight, Building2, CheckCircle2, RefreshCw,
+  Network, Webhook, ArrowRight, Building2, ScanLine, Radar, Thermometer,
+  Wind, Activity, HeartPulse, Flame, Droplets, Sparkles,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,7 @@ import {
 import { ConfidenceBadge } from '@/components/shared/status'
 import { AVAILABILITY, CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
 import { getUserOverview, listNearbyPharmacies } from '@/services/user-api'
+import { SignalWidget } from '@/features/signal/signal-widget'
 import { cn } from '@/lib/utils'
 
 const AUTOCOMPLETE = ['Paracetamol', 'Dolo 650', 'Cetirizine', 'Azithromycin', 'Insulin Glargine', 'Metformin', 'Amoxicillin', 'Pantoprazole']
@@ -24,17 +26,29 @@ const SUMMARY_META = [
   { key: 'savedMedicines', label: 'Saved medicines', icon: Heart, to: '/saved' },
   { key: 'recentSearches', label: 'Recent searches', icon: Search, to: '/search' },
   { key: 'verifiedPharmacies', label: 'Verified pharmacies', icon: Building2, to: '/search' },
-  { key: 'activeAlerts', label: 'Active alerts', icon: Bell, to: '/alerts' },
-]
-
-const FEED = [
-  { icon: CheckCircle2, tone: 'text-success', text: 'Availability confidence is refreshed continuously from verified pharmacies.', time: 'Live' },
-  { icon: RefreshCw, tone: 'text-info', text: 'ZoikoAvail™ weighs signal freshness and pharmacy reliability.', time: 'Live' },
-  { icon: Bell, tone: 'text-teal', text: 'Set alerts so we can tell you when confidence changes near you.', time: 'Tip' },
-  { icon: MapPin, tone: 'text-muted-foreground', text: 'Update your location to refine nearby results.', time: 'Tip' },
+  { key: 'activeAlerts', label: 'Active alerts', icon: Bell, to: '/signal' },
 ]
 
 const PIN = { high: 'var(--success)', moderate: 'var(--info)', low: 'var(--warning)', unknown: 'var(--muted-foreground)' }
+
+// Primary tasks surfaced as attractive cards under the hero.
+const QUICK_ACTIONS = [
+  { title: 'Scan a prescription', desc: 'Snap or upload it — we extract the medicines for you.', icon: ScanLine, to: '/search?mode=scan', gradient: 'from-primary to-teal' },
+  { title: 'Your ZoikoSignal™', desc: 'Get alerts when saved medicines run low or return.', icon: Radar, to: '/signal', gradient: 'from-violet-500 to-primary' },
+  { title: 'Saved medicines', desc: 'Track availability for the medicines you follow.', icon: Heart, to: '/saved', gradient: 'from-rose-500 to-red-500' },
+]
+
+// Browse-by-need shortcuts; each opens search for a representative medicine.
+const CATEGORIES = [
+  { label: 'Fever & Pain', med: 'Paracetamol', icon: Thermometer },
+  { label: 'Cold & Cough', med: 'Cetirizine', icon: Wind },
+  { label: 'Diabetes', med: 'Metformin', icon: Activity },
+  { label: 'Heart & BP', med: 'Amlodipine', icon: HeartPulse },
+  { label: 'Antibiotics', med: 'Azithromycin', icon: Pill },
+  { label: 'Acidity', med: 'Pantoprazole', icon: Flame },
+  { label: 'Allergy', med: 'Levocetirizine', icon: Droplets },
+  { label: 'Vitamins', med: 'Vitamin D3', icon: Sparkles },
+]
 
 export default function UserHome() {
   const navigate = useNavigate()
@@ -240,10 +254,6 @@ export default function UserHome() {
                   </div>
                 )}
               </div>
-              <Button type="submit" size="lg" className="h-12 rounded-xl px-6">
-                <Search />
-                Search
-              </Button>
             </form>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -262,6 +272,31 @@ export default function UserHome() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* Quick actions */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {QUICK_ACTIONS.map((a) => {
+          const Icon = a.icon
+          return (
+            <button
+              key={a.title}
+              onClick={() => navigate(a.to)}
+              className="group flex items-start gap-3.5 rounded-2xl border border-border bg-card p-5 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
+            >
+              <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', a.gradient)}>
+                <Icon className="size-5" />
+              </span>
+              <span className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-1 text-sm font-bold text-foreground">
+                  {a.title}
+                  <ArrowRight className="size-3.5 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+                </span>
+                <span className="text-xs leading-relaxed text-muted-foreground">{a.desc}</span>
+              </span>
+            </button>
+          )
+        })}
       </section>
 
       {/* Governance banner */}
@@ -292,6 +327,31 @@ export default function UserHome() {
         })}
       </div>
 
+      {/* Browse by health need */}
+      <section className="flex flex-col gap-4">
+        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+          <Sparkles className="size-4 text-teal" />
+          Browse by health need
+        </h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {CATEGORIES.map((c) => {
+            const Icon = c.icon
+            return (
+              <button
+                key={c.label}
+                onClick={() => goSearch(c.med)}
+                className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
+              >
+                <span className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                  <Icon className="size-5" />
+                </span>
+                <span className="text-sm font-semibold text-foreground">{c.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
       {/* How availability works + notifications */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
         <Card className="p-6 md:col-span-6">
@@ -321,26 +381,9 @@ export default function UserHome() {
           </ul>
         </Card>
 
-        <Card className="p-6 md:col-span-6">
-          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
-            <Bell className="size-4 text-primary" />
-            Recent activity
-          </h3>
-          <div className="mt-4 flex flex-col">
-            {FEED.map((f, i) => {
-              const Icon = f.icon
-              return (
-                <div key={i} className="flex items-start justify-between gap-3 border-b border-border py-2.5 last:border-0">
-                  <div className="flex items-start gap-2.5">
-                    <Icon className={cn('mt-0.5 size-4 shrink-0', f.tone)} />
-                    <span className="text-sm text-foreground">{f.text}</span>
-                  </div>
-                  <span className="shrink-0 text-xs text-muted-foreground">{f.time}</span>
-                </div>
-              )
-            })}
-          </div>
-        </Card>
+        <div className="md:col-span-6">
+          <SignalWidget />
+        </div>
       </div>
 
       {/* Nearby verified pharmacies */}

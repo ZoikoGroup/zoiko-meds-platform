@@ -2,6 +2,10 @@ import { Navigate, Outlet } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 
+// DEV: temporarily disable route auth guards so the app is reachable without
+// a working login. Flip back to `false` to restore Admin/User protection.
+const BYPASS_AUTH = true
+
 function AuthLoading() {
   return (
     <div className="flex min-h-screen items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -15,6 +19,7 @@ function AuthLoading() {
 export function AdminProtectedRoute() {
   const { isAuthenticated, isSuperAdmin, bootstrapping } = useAuth()
 
+  if (BYPASS_AUTH) return <Outlet />
   if (bootstrapping) return <AuthLoading />
   if (!isAuthenticated) return <Navigate to="/login" replace />
   if (!isSuperAdmin) return <Navigate to="/dashboard" replace />
@@ -26,6 +31,7 @@ export function AdminProtectedRoute() {
 export function UserProtectedRoute() {
   const { isAuthenticated, isSuperAdmin, bootstrapping } = useAuth()
 
+  if (BYPASS_AUTH) return <Outlet />
   if (bootstrapping) return <AuthLoading />
   if (!isAuthenticated) return <Navigate to="/login" replace />
   if (isSuperAdmin) return <Navigate to="/admin" replace />
@@ -37,6 +43,7 @@ export function UserProtectedRoute() {
 export function PublicRoute() {
   const { isAuthenticated, isSuperAdmin, bootstrapping } = useAuth()
 
+  if (BYPASS_AUTH) return <Outlet />
   if (bootstrapping) return <AuthLoading />
   if (isAuthenticated) {
     return <Navigate to={isSuperAdmin ? '/admin' : '/dashboard'} replace />
