@@ -15,7 +15,7 @@ async function bootstrap() {
   app.use(helmet());
   // CORS_ORIGIN may be a comma-separated list of allowed origins.
   const corsOrigins = config
-    .get<string>('CORS_ORIGIN', 'http://localhost:5173,http://localhost:3000')
+    .get<string>('CORS_ORIGIN', 'http://localhost:5173')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
@@ -41,7 +41,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
 
-  const port = config.get<number>('PORT', 4000);
+  const port = config.get<number>('PORT', 8000);
   await app.listen(port);
   // eslint-disable-next-line no-console
   console.log(`ZoikoMeds API listening on http://localhost:${port}/${apiPrefix}`);

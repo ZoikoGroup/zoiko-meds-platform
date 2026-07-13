@@ -42,7 +42,7 @@ services:
       THROTTLE_LIMIT: 100
       EXPOSE_EXACT_STOCK: "false"
     ports:
-      - "4000:4000"
+      - "8000:4000"
 
 volumes:
   zoikomeds-db-data:
