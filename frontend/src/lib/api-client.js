@@ -2,7 +2,7 @@
 // encoding, bearer-token auth, and normalizing Nest error responses.
 
 const BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 const TOKEN_KEY = 'zoiko-token'
 
 export function getToken() {

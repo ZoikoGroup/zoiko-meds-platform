@@ -1,4 +1,4 @@
-import { Building2, Blocks, FileText, LayoutDashboard, Network, Radar, Settings, Webhook, Users, ShieldCheck, Bell, History } from 'lucide-react';
+import { Building2, Blocks, FileText, LayoutDashboard, Network, Radar, Settings, Webhook, Users, ShieldCheck, Bell, History, Scale } from 'lucide-react';
 export const navSections = [
     {
         items: [
@@ -8,6 +8,7 @@ export const navSections = [
     {
         heading: 'Platform Governance',
         items: [
+            { label: 'Leadership & Oversight', to: '/governance', icon: Scale },
             { label: 'Pharmacy Management', to: '/pharmacies', icon: Building2 },
             { label: 'Users & Roles', to: '/users', icon: Users },
             { label: 'Verification Center', to: '/verification', icon: ShieldCheck },
@@ -40,6 +41,7 @@ export const allNavLinks = navSections.flatMap((s) => s.items);
 /** Per-route metadata for document titles + breadcrumbs. */
 export const routeMeta = {
     '/dashboard': { title: 'Dashboard' },
+    '/governance': { title: 'Leadership & Oversight', section: 'Platform Governance' },
     '/pharmacies': { title: 'Pharmacy Management', section: 'Platform Governance' },
     '/users': { title: 'Users & Roles', section: 'Platform Governance' },
     '/verification': { title: 'Verification Center', section: 'Platform Governance' },

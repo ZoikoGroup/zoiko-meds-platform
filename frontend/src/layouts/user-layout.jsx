@@ -2,7 +2,7 @@ import { Suspense, useState, useEffect } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  Home, Search, Heart, Bell, Settings, HelpCircle,
+  Home, Search, Heart, Radar, Settings, HelpCircle,
   Menu, LogOut, Sun, Moon, Loader2, User,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
+import { getSignalDigest } from '@/services/signal-api'
 
 const NAV_SECTIONS = [
   {
@@ -25,7 +26,7 @@ const NAV_SECTIONS = [
     heading: 'My Medicines',
     items: [
       { label: 'Saved Medicines', to: '/saved', icon: Heart },
-      { label: 'Medicine Alerts', to: '/alerts', icon: Bell },
+      { label: 'ZoikoSignal™', to: '/signal', icon: Radar },
     ],
   },
   {
@@ -41,7 +42,7 @@ const PAGE_TITLES = {
   '/dashboard': 'Home',
   '/search': 'Search Medicines',
   '/saved': 'Saved Medicines',
-  '/alerts': 'Medicine Alerts',
+  '/signal': 'ZoikoSignal™',
   '/profile': 'My Profile',
   '/settings': 'Settings',
 }
@@ -52,6 +53,15 @@ export function UserLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [signalUnread, setSignalUnread] = useState(0)
+
+  // Live unread count for the ZoikoSignal nav badge; refreshes on navigation
+  // so it stays in sync after alerts are read on the ZoikoSignal page.
+  useEffect(() => {
+    let alive = true
+    getSignalDigest().then((d) => alive && setSignalUnread(d.unread)).catch(() => {})
+    return () => { alive = false }
+  }, [location.pathname])
 
   const isDark = theme === 'dark'
   const currentTitle = PAGE_TITLES[location.pathname] ?? 'Home'
@@ -107,6 +117,11 @@ export function UserLayout() {
                   >
                     <Icon className={cn('size-5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
                     <span>{link.label}</span>
+                    {link.to === '/signal' && signalUnread > 0 && (
+                      <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
+                        {signalUnread}
+                      </span>
+                    )}
                   </Link>
                 )
               })}

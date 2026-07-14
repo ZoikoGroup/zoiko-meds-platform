@@ -38,7 +38,7 @@ export default function UserSettings() {
             </CardTitle>
             <CardDescription>Choose your preferred interface language.</CardDescription>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-2">
             <div className="flex flex-wrap items-center gap-3">
               <select
                 value={language}

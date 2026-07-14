@@ -25,6 +25,7 @@ Object.keys(routeMeta).forEach(key => {
 
 // Super Admin page chunks
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
+const Governance = lazy(() => import('@/pages/Governance'))
 const PharmacyManagement = lazy(() => import('@/pages/PharmacyManagement'))
 const UsersRoles = lazy(() => import('@/pages/UsersRoles'))
 const VerificationCenter = lazy(() => import('@/pages/VerificationCenter'))
@@ -40,7 +41,7 @@ const Settings = lazy(() => import('@/pages/Settings'))
 const UserHome = lazy(() => import('@/pages/UserHome'))
 const UserSearch = lazy(() => import('@/pages/UserSearch'))
 const UserSaved = lazy(() => import('@/pages/UserSaved'))
-const UserAlerts = lazy(() => import('@/pages/UserAlerts'))
+const UserSignal = lazy(() => import('@/pages/UserSignal'))
 const UserProfile = lazy(() => import('@/pages/UserProfile'))
 const UserSettings = lazy(() => import('@/pages/UserSettings'))
 
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="dashboard" replace /> },
           { path: 'dashboard', element: <Dashboard /> },
+          { path: 'governance', element: <Governance /> },
           { path: 'pharmacies', element: <PharmacyManagement /> },
           { path: 'users', element: <UsersRoles /> },
           { path: 'verification', element: <VerificationCenter /> },
@@ -101,7 +103,9 @@ export const router = createBrowserRouter([
           { path: 'dashboard', element: <UserHome /> },
           { path: 'search', element: <UserSearch /> },
           { path: 'saved', element: <UserSaved /> },
-          { path: 'alerts', element: <UserAlerts /> },
+          { path: 'signal', element: <UserSignal /> },
+          // Legacy alerts route now lives inside ZoikoSignal.
+          { path: 'alerts', element: <Navigate to="/signal" replace /> },
           { path: 'profile', element: <UserProfile /> },
           { path: 'settings', element: <UserSettings /> },
         ],
