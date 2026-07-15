@@ -1,13 +1,15 @@
-import { useState, useEffect, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useSearchParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { StatusBadge } from '@/components/shared/status'
+import { StatusBadge, ConfidenceBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
-import { mapsHref, telHref, CONFIRM_NOTE } from '@/lib/availability'
+import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
+import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
+import { mapsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
@@ -20,24 +22,6 @@ import { ScanPrescription } from '@/features/scan/scan-prescription'
 const LOC_KEY = 'zoiko-user-loc'
 const DISTANCES = [5, 10, 15, 25, 50]
 const KM_PER_MILE = 1.60934
-
-// Common medicines for the name-field autocomplete. Prefix matches are ranked
-// ahead of substring matches so a single letter surfaces the most relevant names.
-const MEDICINE_SUGGESTIONS = [
-  'Paracetamol', 'Dolo 650', 'Cetirizine', 'Azithromycin', 'Amoxicillin',
-  'Augmentin 625', 'Metformin 500', 'Pantoprazole 40', 'Doxycycline',
-  'Ibuprofen', 'Aspirin', 'Atorvastatin', 'Amlodipine', 'Losartan',
-  'Omeprazole', 'Levothyroxine', 'Thyronorm 75', 'Insulin Glargine',
-  'Montelukast', 'Cefixime', 'Ciprofloxacin', 'Pregabalin', 'Gabapentin',
-]
-
-// Availability status → badge tone + label (tones map to <StatusBadge>).
-const AVAIL_META = {
-  available: { tone: 'good', label: 'Available' },
-  limited: { tone: 'warning', label: 'Limited' },
-  unconfirmed: { tone: 'neutral', label: 'Unconfirmed' },
-  unavailable: { tone: 'critical', label: 'Not available' },
-}
 
 export default function UserSearch() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -84,16 +68,32 @@ export default function UserSearch() {
     return () => { alive = false }
   }, [queryParam, distanceMiles, appliedLoc, hasSearched])
 
-  // Autocomplete: prefix matches first, then substring matches.
-  const suggestions = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return []
-    const starts = MEDICINE_SUGGESTIONS.filter((m) => m.toLowerCase().startsWith(q))
-    const contains = MEDICINE_SUGGESTIONS.filter(
-      (m) => !m.toLowerCase().startsWith(q) && m.toLowerCase().includes(q),
-    )
-    return [...starts, ...contains].slice(0, 7)
-  }, [searchQuery])
+  // Live MediBase™ autocomplete (debounced, backed by /medibase/match).
+  const { suggestions, loading: suggLoading, error: suggError } = useMedicineSuggestions(searchQuery)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  // Reset the keyboard highlight whenever the query changes.
+  useEffect(() => { setActiveIndex(-1) }, [searchQuery])
+
+  // Keyboard navigation for the suggestion listbox.
+  const onNameKeyDown = (e) => {
+    if (!showSuggestions || suggestions.length === 0) {
+      if (e.key === 'Enter') runSearch()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex((i) => (i + 1) % suggestions.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (activeIndex >= 0 && suggestions[activeIndex]) selectSuggestion(suggestions[activeIndex].name)
+      else runSearch()
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
 
   const persistLocation = (value) => {
     setLocation(value)
@@ -212,36 +212,27 @@ export default function UserSearch() {
                     onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true) }}
                     onFocus={() => setShowSuggestions(true)}
                     onBlur={() => setShowSuggestions(false)}
-                    onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+                    onKeyDown={onNameKeyDown}
                     placeholder="e.g. Doxycycline"
                     aria-label="Medicine name"
                     autoComplete="off"
                     role="combobox"
-                    aria-expanded={showSuggestions && suggestions.length > 0}
+                    aria-expanded={showSuggestions && (suggLoading || suggestions.length > 0)}
                     aria-controls="medicine-suggestions"
+                    aria-activedescendant={activeIndex >= 0 ? `medicine-suggestion-${activeIndex}` : undefined}
                     className="h-11 rounded-xl pl-10"
                   />
-                  {showSuggestions && suggestions.length > 0 && (
-                    <ul
+                  {showSuggestions && (
+                    <MedicineSuggestions
                       id="medicine-suggestions"
-                      role="listbox"
-                      className="absolute left-0 top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-elevated"
-                    >
-                      {suggestions.map((s) => (
-                        <li key={s} role="option" aria-selected={false}>
-                          <button
-                            type="button"
-                            // Prevent the input's onBlur from firing before the click.
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => selectSuggestion(s)}
-                            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent"
-                          >
-                            <Pill className="size-4 shrink-0 text-primary" />
-                            <span className="text-sm font-semibold text-foreground">{s}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                      query={searchQuery}
+                      suggestions={suggestions}
+                      loading={suggLoading}
+                      error={suggError}
+                      activeIndex={activeIndex}
+                      onHover={setActiveIndex}
+                      onSelect={(s) => selectSuggestion(s.name)}
+                    />
                   )}
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
@@ -338,15 +329,77 @@ export default function UserSearch() {
             </div>
           </Card>
 
+          {/* MediBase™ identity for the matched medicine */}
+          {hasSearched && !loading && result?.identity && (
+            <Card className="flex flex-col gap-3 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Pill className="size-5" />
+                  </span>
+                  <div className="flex flex-col">
+                    {result.identity.id ? (
+                      <Link
+                        to={`/medicine/${result.identity.id}`}
+                        className="text-base font-bold text-foreground transition-colors hover:text-primary hover:underline"
+                      >
+                        {result.identity.name}
+                      </Link>
+                    ) : (
+                      <span className="text-base font-bold text-foreground">{result.identity.name}</span>
+                    )}
+                    {result.identity.generic &&
+                      result.identity.generic.toLowerCase() !== result.identity.name.toLowerCase() && (
+                        <span className="text-xs text-muted-foreground">Generic: {result.identity.generic}</span>
+                      )}
+                  </div>
+                </div>
+                {result.identity.rx != null && (
+                  <Badge variant={result.identity.rx ? 'warning' : 'secondary'} size="sm">
+                    {result.identity.rx ? 'Prescription' : 'OTC'}
+                  </Badge>
+                )}
+              </div>
+              {(result.identity.strength || result.identity.form || result.identity.manufacturer) && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {result.identity.strength && (
+                    <span className="rounded-md bg-muted px-2 py-1 font-medium text-foreground">{result.identity.strength}</span>
+                  )}
+                  {result.identity.form && (
+                    <span className="rounded-md bg-muted px-2 py-1 font-medium text-foreground">{result.identity.form}</span>
+                  )}
+                  {result.identity.manufacturer && (
+                    <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">{result.identity.manufacturer}</span>
+                  )}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <ShieldCheck className="size-3.5 shrink-0 text-primary" />
+                  Governed medicine identity — MediBase™. Availability below is a confidence signal, not exact stock.
+                </p>
+                {result.identity.id && (
+                  <Link to={`/medicine/${result.identity.id}`} className="shrink-0 text-xs font-semibold text-primary hover:underline">
+                    View details
+                  </Link>
+                )}
+              </div>
+            </Card>
+          )}
+
           {/* Results — availability of the medicine at nearby pharmacies */}
           <section className="flex flex-col gap-4">
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-base font-bold text-foreground">
                 {result?.medicine ? `${result.medicine} — availability near you` : 'Availability near you'}
               </h3>
               {hasSearched && result && items.length > 0 && (
                 <Badge size="sm">{result.availableCount} of {result.total} pharmacies</Badge>
               )}
+              <Link to="/availability" className="ml-auto flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
+                <Info className="size-3.5" />
+                What does confidence mean?
+              </Link>
             </div>
 
             {!hasSearched ? (
@@ -403,7 +456,7 @@ export default function UserSearch() {
                 {/* Pharmacy availability cards */}
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {items.map((p, i) => {
-                    const meta = AVAIL_META[p.status] ?? AVAIL_META.unconfirmed
+                    const band = p.confidence ?? 'unknown'
                     return (
                       <motion.div
                         key={p.id}
@@ -420,8 +473,18 @@ export default function UserSearch() {
                               </span>
                               <span className="truncate text-xs text-muted-foreground">{p.address}</span>
                             </div>
-                            <StatusBadge tone={meta.tone} size="sm">{meta.label}</StatusBadge>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <ConfidenceBadge level={band} size="sm" />
+                              <span className="text-right text-[11px] text-muted-foreground">{AVAILABILITY[band]?.plain}</span>
+                            </div>
                           </div>
+
+                          {band !== 'high' && (
+                            <p className="flex items-center gap-1.5 rounded-lg bg-warning/10 px-2.5 py-1.5 text-[11px] font-medium text-warning">
+                              <AlertTriangle className="size-3" />
+                              Requires confirmation — call before visiting.
+                            </p>
+                          )}
 
                           <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-3 text-xs">
                             <div className="flex items-center justify-between">

@@ -18,6 +18,25 @@ const STATUS_BY_CONFIDENCE = {
   unknown: 'unavailable',
 }
 
+// Inverse: derive the governed ZoikoAvail™ confidence band from a status. The
+// demo dataset is keyed by status, so this keeps the confidence vocabulary
+// (high/moderate/low/unknown) available as the primary signal in the UI.
+const CONFIDENCE_BY_STATUS = {
+  available: 'high',
+  limited: 'moderate',
+  unconfirmed: 'low',
+  unavailable: 'unknown',
+}
+
+const titleCase = (s) => (s || '').trim().replace(/\b\w/g, (c) => c.toUpperCase())
+
+// MediBase™ identity shown above the availability list. Only the display name
+// is known for the demo dataset; clinical fields are left blank, not fabricated.
+function demoIdentity(q) {
+  const name = titleCase(q)
+  return name ? { id: null, name, generic: '', manufacturer: '', strength: '', form: '', rx: null } : null
+}
+
 const DEMO_PHARMACIES = [
   { id: 'p1', name: 'MedPlus', address: 'Bachupally, Hyderabad', distance: 1.2, phone: '+914012345670', is24x7: true },
   { id: 'p2', name: 'Sri Sai Kanaka Durga Medical', address: 'Nizampet, Hyderabad', distance: 2.4, phone: '+914012345671', is24x7: false },
@@ -50,11 +69,15 @@ function demoResult(q, maxDistanceKm) {
   const seed = hashString((q || 'medicine').toLowerCase())
   const items = DEMO_PHARMACIES
     .filter((p) => p.distance <= maxDistanceKm)
-    .map((p, i) => ({
-      ...p,
-      status: STATUS_CYCLE[(seed + i) % STATUS_CYCLE.length],
-      updated: UPDATED_SAMPLES[(seed + i) % UPDATED_SAMPLES.length],
-    }))
+    .map((p, i) => {
+      const status = STATUS_CYCLE[(seed + i) % STATUS_CYCLE.length]
+      return {
+        ...p,
+        status,
+        confidence: CONFIDENCE_BY_STATUS[status],
+        updated: UPDATED_SAMPLES[(seed + i) % UPDATED_SAMPLES.length],
+      }
+    })
   return summarize(q, items)
 }
 
@@ -96,13 +119,28 @@ export async function searchNearbyAvailability({ q, maxDistanceKm, lat, lng, cit
         distance: p.distance,
         phone: p.phone,
         is24x7: p.open24h,
+        // Governed confidence band is the primary signal; status is derived.
+        confidence: p.confidence ?? 'unknown',
         status: STATUS_BY_CONFIDENCE[p.confidence] ?? 'unconfirmed',
         updated: p.updated,
       }))
-      return { source: 'live', ...summarize(q, items), internet }
+      // MediBase™ identity for the best-matching medicine (API ranks medicines[]).
+      const m = data?.medicines?.[0]
+      const identity = m
+        ? {
+            id: m.id ?? null,
+            name: m.name,
+            generic: m.generic,
+            manufacturer: m.manufacturer,
+            strength: m.strength,
+            form: m.form,
+            rx: m.rx ?? null,
+          }
+        : demoIdentity(q)
+      return { source: 'live', identity, ...summarize(q, items), internet }
     }
   } catch {
     /* no session / API error — fall through to the demo dataset */
   }
-  return { source: 'demo', ...(await settle(demoResult(q, maxDistanceKm))), internet: null }
+  return { source: 'demo', identity: demoIdentity(q), ...(await settle(demoResult(q, maxDistanceKm))), internet: null }
 }
