@@ -10,6 +10,7 @@ import { Flash, useFlash } from '@/components/shared/flash'
 import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
 import { mapsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
+import { reverseGeocode } from '@/lib/geocode'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
@@ -23,50 +24,71 @@ const LOC_KEY = 'zoiko-user-loc'
 const DISTANCES = [5, 10, 15, 25, 50]
 const KM_PER_MILE = 1.60934
 
+const milesToKm = (mi) => Math.max(1, Math.round(mi * KM_PER_MILE))
+const normalizeQuery = (q) => (q || '').toLowerCase().replace(/near me|in hyderabad/g, '').trim()
+
 export default function UserSearch() {
   const [searchParams, setSearchParams] = useSearchParams()
   const queryParam = searchParams.get('q') || ''
   const [flashMsg, flash] = useFlash()
 
+  // --- Draft inputs (change freely; NEVER trigger a fetch on their own) -----
   const [mode, setMode] = useState(searchParams.get('mode') === 'scan' ? 'scan' : 'name')
   const [searchQuery, setSearchQuery] = useState(queryParam)
   const [location, setLocation] = useState(() => localStorage.getItem(LOC_KEY) || '')
   // Precise coordinates from the browser's geolocation, when the user opts in.
   const [coords, setCoords] = useState(null)
   const [geoStatus, setGeoStatus] = useState('idle') // idle | loading | ok | error
-  // Location committed at search time (so typing in the box doesn't refetch).
-  const [appliedLoc, setAppliedLoc] = useState(() => ({
-    city: localStorage.getItem(LOC_KEY) || undefined,
-    lat: undefined,
-    lng: undefined,
-  }))
   const [distanceMiles, setDistanceMiles] = useState(15)
-  const [result, setResult] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [hasSearched, setHasSearched] = useState(!!queryParam)
   const [showSuggestions, setShowSuggestions] = useState(false)
 
-  useEffect(() => setSearchQuery(queryParam), [queryParam])
+  // --- Committed search (the ONLY thing that triggers a fetch) --------------
+  // Set exclusively by runSearch(). Deep links (/search?q=… from the home page)
+  // count as an explicit search, so seed it from the URL on first mount.
+  const [activeSearch, setActiveSearch] = useState(() =>
+    queryParam.trim()
+      ? {
+          q: normalizeQuery(queryParam),
+          distanceMiles: 15,
+          maxDistanceKm: milesToKm(15),
+          lat: undefined,
+          lng: undefined,
+          city: localStorage.getItem(LOC_KEY) || undefined,
+        }
+      : null,
+  )
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(false)
 
-  // Look up whether the searched medicine is available at nearby pharmacies.
+  // Clear committed results — called when any draft input changes after a
+  // search, so results for a previous query/location/radius aren't left showing.
+  const clearResults = () => {
+    setActiveSearch(null)
+    setResult(null)
+    setLoading(false)
+  }
+
+  // Fetch results ONLY when a search has been committed via runSearch().
   useEffect(() => {
-    if (!hasSearched) return
+    if (!activeSearch) return
     let alive = true
     setLoading(true)
-    const q = queryParam.toLowerCase().replace(/near me|in hyderabad/g, '').trim()
-    const maxDistanceKm = Math.max(1, Math.round(distanceMiles * KM_PER_MILE))
     searchNearbyAvailability({
-      q,
-      maxDistanceKm,
-      lat: appliedLoc.lat,
-      lng: appliedLoc.lng,
-      city: appliedLoc.city || undefined,
+      q: activeSearch.q,
+      maxDistanceKm: activeSearch.maxDistanceKm,
+      lat: activeSearch.lat,
+      lng: activeSearch.lng,
+      city: activeSearch.city,
     })
-      .then((r) => alive && setResult(r))
-      .catch(() => alive && setResult({ medicine: q, items: [], availableCount: 0, total: 0, internet: null }))
+      .then((r) => { if (alive) setResult(r) })
+      .catch(() => {
+        if (alive) {
+          setResult({ medicine: activeSearch.q, items: [], availableCount: 0, total: 0, internet: null })
+        }
+      })
       .finally(() => alive && setLoading(false))
     return () => { alive = false }
-  }, [queryParam, distanceMiles, appliedLoc, hasSearched])
+  }, [activeSearch])
 
   // Live MediBase™ autocomplete (debounced, backed by /medibase/match).
   const { suggestions, loading: suggLoading, error: suggError } = useMedicineSuggestions(searchQuery)
@@ -100,16 +122,8 @@ export default function UserSearch() {
     if (value) localStorage.setItem(LOC_KEY, value)
   }
 
-  // Freeze the current location choice so the search uses it. Precise coords
-  // win over the typed city; typing a city clears any prior coords.
-  const commitLocation = () =>
-    setAppliedLoc({
-      city: coords ? undefined : location || undefined,
-      lat: coords?.lat,
-      lng: coords?.lng,
-    })
-
-  // Ask the browser for the user's coordinates ("nearby pharmacies from the web").
+  // Ask the browser for the user's coordinates. This updates the draft location
+  // only — it does NOT run a search (the user must click Search Availability).
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) {
       setGeoStatus('error')
@@ -122,9 +136,14 @@ export default function UserSearch() {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude }
         setCoords(next)
         setGeoStatus('ok')
-        persistLocation('Current location')
-        // Refresh an on-screen search against the new precise location.
-        setAppliedLoc({ city: undefined, lat: next.lat, lng: next.lng })
+        // Show coordinates immediately, then replace with a readable place name
+        // once reverse geocoding resolves (falls back to coords on failure).
+        persistLocation(`${next.lat.toFixed(4)}, ${next.lng.toFixed(4)}`)
+        reverseGeocode(next.lat, next.lng).then((label) => {
+          if (label) persistLocation(label)
+        })
+        // Draft changed — clear any previous results; require a new search.
+        if (activeSearch) clearResults()
       },
       () => {
         setGeoStatus('error')
@@ -134,32 +153,48 @@ export default function UserSearch() {
     )
   }
 
+  // The ONLY entry point that fetches results. Validates that a medicine and a
+  // location are set, then commits the current draft as the active search.
   const runSearch = () => {
-    setHasSearched(true)
+    const q = searchQuery.trim()
+    if (!q) {
+      flash('Enter a medicine name to search.')
+      return
+    }
+    if (!coords && !location.trim()) {
+      flash('Set a location — type a city/PIN code or tap “Use my location”.')
+      return
+    }
     setShowSuggestions(false)
-    commitLocation()
-    setSearchParams(searchQuery.trim() ? { q: searchQuery.trim() } : {})
+    setActiveSearch({
+      q: normalizeQuery(q),
+      distanceMiles,
+      maxDistanceKm: milesToKm(distanceMiles),
+      lat: coords?.lat,
+      lng: coords?.lng,
+      city: coords ? undefined : location.trim() || undefined,
+    })
+    setSearchParams(q ? { q } : {})
   }
 
+  // Autocomplete select — ONLY populates the input; the user still clicks Search.
   const selectSuggestion = (name) => {
     setSearchQuery(name)
     setShowSuggestions(false)
-    setHasSearched(true)
-    commitLocation()
-    setSearchParams({ q: name })
+    if (activeSearch) clearResults()
   }
 
-  // Search a medicine extracted from a scanned prescription.
+  // A medicine extracted from a scanned prescription — populate + prompt to search.
   const handleScanSearch = (name) => {
     setMode('name')
     setSearchQuery(name)
-    setHasSearched(true)
-    commitLocation()
-    setSearchParams({ q: name })
-    flash(`Checking availability for ${name}`)
+    setShowSuggestions(false)
+    if (activeSearch) clearResults()
+    flash(`Added “${name}”. Tap Search Availability to see nearby pharmacies.`)
   }
 
   const items = result?.items ?? []
+  const hasSearched = !!activeSearch
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 pb-8">
@@ -209,7 +244,7 @@ export default function UserSearch() {
                   <Input
                     id="medicine-name"
                     value={searchQuery}
-                    onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true) }}
+                    onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); if (activeSearch) clearResults() }}
                     onFocus={() => setShowSuggestions(true)}
                     onBlur={() => setShowSuggestions(false)}
                     onKeyDown={onNameKeyDown}
@@ -256,6 +291,7 @@ export default function UserSearch() {
                       // Typing a place switches off precise coordinates.
                       setCoords(null)
                       setGeoStatus('idle')
+                      if (activeSearch) clearResults()
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                     placeholder="City, ZIP code, or postcode"
@@ -309,7 +345,7 @@ export default function UserSearch() {
                 Distance from me:
                 <select
                   value={distanceMiles}
-                  onChange={(e) => setDistanceMiles(Number(e.target.value))}
+                  onChange={(e) => { setDistanceMiles(Number(e.target.value)); if (activeSearch) clearResults() }}
                   aria-label="Distance from me"
                   className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
@@ -441,7 +477,7 @@ export default function UserSearch() {
                       <>
                         <span className="font-semibold">{result.medicine || 'This medicine'}</span> is likely
                         available at <span className="font-semibold">{result.availableCount}</span> of{' '}
-                        {result.total} nearby pharmacies within {distanceMiles} miles.
+                        {result.total} nearby pharmacies within {activeSearch?.distanceMiles ?? distanceMiles} miles.
                       </>
                     ) : (
                       <>
