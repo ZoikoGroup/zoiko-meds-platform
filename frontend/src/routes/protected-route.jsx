@@ -2,9 +2,10 @@ import { Navigate, Outlet } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 
-// DEV: temporarily disable route auth guards so the app is reachable without
-// a working login. Flip back to `false` to restore Admin/User protection.
-const BYPASS_AUTH = true
+// Route auth guards. Set to `true` only for local development when you need
+// the app reachable without a working login; `false` enforces Admin/User
+// protection (production default).
+const BYPASS_AUTH = false
 
 function AuthLoading() {
   return (

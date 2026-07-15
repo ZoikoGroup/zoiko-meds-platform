@@ -60,11 +60,35 @@ function demoResult(q, maxDistanceKm) {
 
 const settle = (value, ms = 320) => new Promise((resolve) => setTimeout(() => resolve(value), ms))
 
-export async function searchNearbyAvailability({ q, maxDistanceKm }) {
+// Map the backend `internetPharmacies` block (Google Places) onto the shape the
+// UI renders. These are nearby pharmacies discovered on the web — geographic
+// only, with no stock/availability claim.
+function mapInternet(internet) {
+  if (!internet) return null
+  return {
+    configured: internet.configured ?? false,
+    note: internet.note ?? null,
+    origin: internet.origin ?? null,
+    pharmacies: (internet.pharmacies ?? []).map((p) => ({
+      id: p.placeId || `${p.name}-${p.latitude},${p.longitude}`,
+      name: p.name,
+      address: p.address,
+      distance: p.distanceKm,
+      phone: p.phone,
+      rating: p.rating,
+      userRatingCount: p.userRatingCount,
+      openNow: p.openNow,
+      mapsUri: p.googleMapsUri,
+    })),
+  }
+}
+
+export async function searchNearbyAvailability({ q, maxDistanceKm, lat, lng, city }) {
   try {
-    const data = await searchMedicines({ q, maxDistance: maxDistanceKm })
+    const data = await searchMedicines({ q, maxDistance: maxDistanceKm, lat, lng, city })
     const ph = data?.pharmacies ?? []
-    if (ph.length) {
+    const internet = mapInternet(data?.internetPharmacies)
+    if (ph.length || internet) {
       const items = ph.map((p) => ({
         id: p.id,
         name: p.name,
@@ -75,10 +99,10 @@ export async function searchNearbyAvailability({ q, maxDistanceKm }) {
         status: STATUS_BY_CONFIDENCE[p.confidence] ?? 'unconfirmed',
         updated: p.updated,
       }))
-      return { source: 'live', ...summarize(q, items) }
+      return { source: 'live', ...summarize(q, items), internet }
     }
   } catch {
     /* no session / API error — fall through to the demo dataset */
   }
-  return { source: 'demo', ...(await settle(demoResult(q, maxDistanceKm))) }
+  return { source: 'demo', ...(await settle(demoResult(q, maxDistanceKm))), internet: null }
 }

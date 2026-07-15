@@ -2,7 +2,7 @@
 # Usage:
 #   docker compose -f docker-compose.developement.yml up --build
 # Frontend: http://localhost:5173
-# Backend:  http://localhost:4000/api
+# Backend:  http://localhost:8000/api
 
 services:
   db:
@@ -56,7 +56,7 @@ services:
       - ./backend:/app
       - zoikomeds-dev-backend-node-modules:/app/node_modules
     ports:
-      - "4000:4000"
+      - "8000:4000"
     command: sh -c "apk add --no-cache openssl libc6-compat && npm ci && npx prisma generate && npx prisma db push --skip-generate && npx prisma db seed && npm run start:dev"
 
   frontend:
@@ -67,7 +67,7 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_BASE_URL: http://localhost:4000/api
+      VITE_API_BASE_URL: http://localhost:8000/api
       VITE_APP_NAME: ZoikoMeds
       VITE_APP_ENV: development
       VITE_ENABLE_MOCK_DATA: "true"

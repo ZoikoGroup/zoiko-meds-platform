@@ -10,6 +10,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { UpdateAlertsDto } from './dto/update-alerts.dto';
 
@@ -45,7 +46,10 @@ type SignalWithPharmacy = Prisma.AvailabilitySignalGetPayload<{
 
 @Injectable()
 export class MeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly nearby: NearbyPharmacyService,
+  ) {}
 
   // --- Search --------------------------------------------------------------
 
@@ -100,7 +104,19 @@ export class MeService {
 
     const pharmacies = await this.nearbyPharmacies(maxDistance);
 
-    return { medicines: dtos, pharmacies };
+    // Internet-sourced pharmacies near the caller (Google Places). Geographic
+    // only — NOT tied to whether `q` is in stock — so it is returned separately
+    // from the availability-signal `pharmacies` above. Degrades to an empty,
+    // well-formed result when no location is given or the provider is
+    // unconfigured/unreachable.
+    const internetPharmacies = await this.nearby.findNearby({
+      lat: query.lat,
+      lng: query.lng,
+      city: query.city,
+      maxDistanceKm: maxDistance,
+    });
+
+    return { medicines: dtos, pharmacies, internetPharmacies };
   }
 
   async pharmacies(maxDistance = 5) {

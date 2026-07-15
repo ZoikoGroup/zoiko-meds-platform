@@ -167,6 +167,7 @@ model MedicineEntity {
   identifiers        IdentifierMapping[]
   availabilitySignals AvailabilitySignal[]
   savedByUsers       SavedMedicine[]
+  changeLogs         MedicineChangeLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -174,6 +175,32 @@ model MedicineEntity {
   @@index([canonicalName])
   @@index([genericName])
   @@index([qualityState])
+  @@index([isSuppressed])
+}
+
+// Field-level change history for governed medicine identities. Every MediBase
+// mutation (create, curation edit, quality-state transition, identifier change)
+// appends an immutable entry here so the governance change-log is auditable and
+// schema-version aware. Distinct from the platform-wide AuditLog: this is the
+// data-lineage trail for a single medicine entity.
+model MedicineChangeLog {
+  id            String         @id @default(cuid())
+  medicineId    String
+  medicine      MedicineEntity @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  action        String // "create" | "update" | "state_transition" | "identifier.add" | "identifier.remove"
+  field         String? // affected field, where the change is scoped to one
+  previousValue Json?
+  newValue      Json?
+  fromState     QualityState?
+  toState       QualityState?
+  schemaVersion Int            @default(1)
+  actorId       String?
+  actorEmail    String? // denormalized for fast display
+  note          String?
+  createdAt     DateTime       @default(now())
+
+  @@index([medicineId, createdAt])
+  @@index([action])
 }
 
 // Maps a medicine entity to external identifiers (NDC, RxCUI, GTIN, DIN, dm+d, EAN/UPC, local codes)

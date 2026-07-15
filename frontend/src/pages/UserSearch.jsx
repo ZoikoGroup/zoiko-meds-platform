@@ -12,6 +12,7 @@ import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
   Phone, Clock, Ambulance, Pill, CheckCircle2, AlertTriangle, Info,
+  LocateFixed, Globe, Star,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScanPrescription } from '@/features/scan/scan-prescription'
@@ -46,6 +47,15 @@ export default function UserSearch() {
   const [mode, setMode] = useState(searchParams.get('mode') === 'scan' ? 'scan' : 'name')
   const [searchQuery, setSearchQuery] = useState(queryParam)
   const [location, setLocation] = useState(() => localStorage.getItem(LOC_KEY) || '')
+  // Precise coordinates from the browser's geolocation, when the user opts in.
+  const [coords, setCoords] = useState(null)
+  const [geoStatus, setGeoStatus] = useState('idle') // idle | loading | ok | error
+  // Location committed at search time (so typing in the box doesn't refetch).
+  const [appliedLoc, setAppliedLoc] = useState(() => ({
+    city: localStorage.getItem(LOC_KEY) || undefined,
+    lat: undefined,
+    lng: undefined,
+  }))
   const [distanceMiles, setDistanceMiles] = useState(15)
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -61,12 +71,18 @@ export default function UserSearch() {
     setLoading(true)
     const q = queryParam.toLowerCase().replace(/near me|in hyderabad/g, '').trim()
     const maxDistanceKm = Math.max(1, Math.round(distanceMiles * KM_PER_MILE))
-    searchNearbyAvailability({ q, maxDistanceKm })
+    searchNearbyAvailability({
+      q,
+      maxDistanceKm,
+      lat: appliedLoc.lat,
+      lng: appliedLoc.lng,
+      city: appliedLoc.city || undefined,
+    })
       .then((r) => alive && setResult(r))
-      .catch(() => alive && setResult({ medicine: q, items: [], availableCount: 0, total: 0 }))
+      .catch(() => alive && setResult({ medicine: q, items: [], availableCount: 0, total: 0, internet: null }))
       .finally(() => alive && setLoading(false))
     return () => { alive = false }
-  }, [queryParam, distanceMiles, hasSearched])
+  }, [queryParam, distanceMiles, appliedLoc, hasSearched])
 
   // Autocomplete: prefix matches first, then substring matches.
   const suggestions = useMemo(() => {
@@ -84,9 +100,44 @@ export default function UserSearch() {
     if (value) localStorage.setItem(LOC_KEY, value)
   }
 
+  // Freeze the current location choice so the search uses it. Precise coords
+  // win over the typed city; typing a city clears any prior coords.
+  const commitLocation = () =>
+    setAppliedLoc({
+      city: coords ? undefined : location || undefined,
+      lat: coords?.lat,
+      lng: coords?.lng,
+    })
+
+  // Ask the browser for the user's coordinates ("nearby pharmacies from the web").
+  const useMyLocation = () => {
+    if (!('geolocation' in navigator)) {
+      setGeoStatus('error')
+      flash('Location isn’t supported by this browser. Enter a city instead.')
+      return
+    }
+    setGeoStatus('loading')
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+        setCoords(next)
+        setGeoStatus('ok')
+        persistLocation('Current location')
+        // Refresh an on-screen search against the new precise location.
+        setAppliedLoc({ city: undefined, lat: next.lat, lng: next.lng })
+      },
+      () => {
+        setGeoStatus('error')
+        flash('Couldn’t get your location. Enter a city instead.')
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+    )
+  }
+
   const runSearch = () => {
     setHasSearched(true)
     setShowSuggestions(false)
+    commitLocation()
     setSearchParams(searchQuery.trim() ? { q: searchQuery.trim() } : {})
   }
 
@@ -94,6 +145,7 @@ export default function UserSearch() {
     setSearchQuery(name)
     setShowSuggestions(false)
     setHasSearched(true)
+    commitLocation()
     setSearchParams({ q: name })
   }
 
@@ -102,6 +154,7 @@ export default function UserSearch() {
     setMode('name')
     setSearchQuery(name)
     setHasSearched(true)
+    commitLocation()
     setSearchParams({ q: name })
     flash(`Checking availability for ${name}`)
   }
@@ -207,14 +260,38 @@ export default function UserSearch() {
                   <Input
                     id="search-area"
                     value={location}
-                    onChange={(e) => persistLocation(e.target.value)}
+                    onChange={(e) => {
+                      persistLocation(e.target.value)
+                      // Typing a place switches off precise coordinates.
+                      setCoords(null)
+                      setGeoStatus('idle')
+                    }}
                     onKeyDown={(e) => e.key === 'Enter' && runSearch()}
-                    placeholder="City, ZIP code, postcode, or current location"
+                    placeholder="City, ZIP code, or postcode"
                     aria-label="Search area"
-                    className="h-11 rounded-xl pl-10"
+                    className="h-11 rounded-xl pl-10 pr-36"
                   />
+                  <button
+                    type="button"
+                    onClick={useMyLocation}
+                    disabled={geoStatus === 'loading'}
+                    className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-accent disabled:opacity-60"
+                  >
+                    {geoStatus === 'loading' ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <LocateFixed className="size-3.5" />
+                    )}
+                    Use my location
+                  </button>
                 </div>
-                {location ? (
+                {coords ? (
+                  <span className="flex items-center gap-1 text-xs font-semibold text-primary">
+                    <Navigation className="size-3.5" />
+                    Using your current location
+                    <Check className="size-3.5" />
+                  </span>
+                ) : location ? (
                   <span className="flex items-center gap-1 text-xs font-semibold text-primary">
                     <MapPin className="size-3.5" />
                     Location set
@@ -396,6 +473,105 @@ export default function UserSearch() {
               </>
             )}
           </section>
+
+          {/* Nearby pharmacies discovered on the web (outside the verified
+              network). Only shown once a location has been resolved. */}
+          {hasSearched && !loading && result?.internet?.origin && (
+            <section className="flex flex-col gap-4">
+              <div className="flex items-center gap-2.5">
+                <Globe className="size-4 text-primary" />
+                <h3 className="text-base font-bold text-foreground">More pharmacies near you (from the web)</h3>
+                {result.internet.pharmacies.length > 0 && (
+                  <Badge size="sm">{result.internet.pharmacies.length}</Badge>
+                )}
+              </div>
+
+              {result.internet.pharmacies.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border py-10 text-center">
+                  <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                    {result.internet.note || 'No additional pharmacies found on the web for this area.'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {result.internet.pharmacies.map((p, i) => (
+                      <motion.div
+                        key={p.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.28, delay: i * 0.04 }}
+                      >
+                        <Card className="flex h-full flex-col gap-3 p-5 transition-shadow hover:shadow-card">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex min-w-0 flex-col">
+                              <span className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+                                <Globe className="size-4 shrink-0 text-muted-foreground" />
+                                <span className="truncate">{p.name}</span>
+                              </span>
+                              {p.address && <span className="truncate text-xs text-muted-foreground">{p.address}</span>}
+                            </div>
+                            {p.openNow != null && (
+                              <StatusBadge tone={p.openNow ? 'good' : 'neutral'} size="sm">
+                                {p.openNow ? 'Open now' : 'Closed'}
+                              </StatusBadge>
+                            )}
+                          </div>
+
+                          <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-3 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground">Distance</span>
+                              <span className="font-semibold text-foreground tabular">
+                                {p.distance == null ? '—' : `${(p.distance / KM_PER_MILE).toFixed(1)} mi`}
+                              </span>
+                            </div>
+                            {p.rating != null && (
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1 text-muted-foreground">
+                                  <Star className="size-3" />
+                                  Rating
+                                </span>
+                                <span className="font-medium text-foreground">
+                                  {p.rating}
+                                  {p.userRatingCount != null && ` (${p.userRatingCount})`}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-auto flex gap-2 border-t border-border pt-3">
+                            {p.phone && (
+                              <Button variant="outline" size="sm" className="flex-1" asChild>
+                                <a href={telHref(p.phone)}>
+                                  <Phone className="size-3.5" />
+                                  Call
+                                </a>
+                              </Button>
+                            )}
+                            <Button size="sm" className="flex-1" asChild>
+                              <a
+                                href={p.mapsUri || mapsHref(`${p.name}, ${p.address || ''}`)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <Navigation className="size-3.5" />
+                                Directions
+                              </a>
+                            </Button>
+                          </div>
+                        </Card>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  <p className="flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
+                    <Info className="mt-0.5 size-3.5 shrink-0" />
+                    Found on the web by location and outside the ZoikoMeds verified network. Stock isn’t confirmed — please call ahead.
+                  </p>
+                </>
+              )}
+            </section>
+          )}
         </>
       )}
     </div>
