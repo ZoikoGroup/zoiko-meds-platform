@@ -118,6 +118,11 @@ async function main() {
     dosageForm: string;
     brandNames?: string[];
     rx: PrescriptionCategory;
+    atcCode?: string;
+    quality?: QualityState;
+    controlled?: boolean;
+    // External identifier mappings [system, value, qualityState?]
+    identifiers?: Array<[string, string, QualityState?]>;
     signals: Array<[string, AvailabilityConfidence, number]>; // [pharmacyName, confidence, ageMinutes]
   };
 
@@ -132,6 +137,11 @@ async function main() {
       dosageForm: 'Tablet',
       brandNames: ['Dolo 650'],
       rx: PrescriptionCategory.OTC,
+      atcCode: 'N02BE01',
+      identifiers: [
+        ['ATC', 'N02BE01', QualityState.VERIFIED],
+        ['RXCUI', '198440'],
+      ],
       signals: [
         ['Apollo Pharmacy', C.HIGH, 2],
         ['Netmeds Store', C.HIGH, 40],
@@ -160,6 +170,11 @@ async function main() {
       strength: '500 mg',
       dosageForm: 'Extended-release tablet',
       rx: PrescriptionCategory.PRESCRIPTION,
+      atcCode: 'A10BA02',
+      identifiers: [
+        ['ATC', 'A10BA02', QualityState.VERIFIED],
+        ['RXCUI', '860975'],
+      ],
       signals: [
         ['MedPlus', C.MODERATE, 180],
         ['Apollo Pharmacy', C.HIGH, 25],
@@ -240,15 +255,47 @@ async function main() {
       strength: '500 mg',
       dosageForm: 'Capsule',
       rx: PrescriptionCategory.PRESCRIPTION,
+      atcCode: 'J01CA04',
+      identifiers: [['ATC', 'J01CA04', QualityState.VERIFIED]],
       signals: [
         ['MedPlus', C.LOW, 300],
         ['Wellness Forever', C.UNKNOWN, 5000],
       ],
     },
+    {
+      // NEEDS_REVIEW: freshly ingested, not yet curator-verified. Still public.
+      canonicalName: 'Ibuprofen 400 mg',
+      genericName: 'Ibuprofen',
+      manufacturer: 'Abbott',
+      description: 'NSAID for pain, inflammation and fever.',
+      strength: '400 mg',
+      dosageForm: 'Tablet',
+      rx: PrescriptionCategory.OTC,
+      atcCode: 'M01AE01',
+      quality: QualityState.NEEDS_REVIEW,
+      identifiers: [['ATC', 'M01AE01', QualityState.INFERRED]],
+      signals: [['MedPlus', C.MODERATE, 150]],
+    },
+    {
+      // SUPPRESSED: must NEVER appear on public search / match / lookup surfaces.
+      canonicalName: 'Zolpidem 10 mg',
+      genericName: 'Zolpidem',
+      manufacturer: 'Sanofi',
+      description: 'Controlled sedative-hypnotic — suppressed on public surfaces.',
+      strength: '10 mg',
+      dosageForm: 'Tablet',
+      rx: PrescriptionCategory.CONTROLLED,
+      atcCode: 'N05CF02',
+      quality: QualityState.SUPPRESSED,
+      controlled: true,
+      identifiers: [['ATC', 'N05CF02', QualityState.VERIFIED]],
+      signals: [],
+    },
   ];
 
   let signalCount = 0;
   for (const m of medicineSeed) {
+    const quality = m.quality ?? QualityState.VERIFIED;
     const medicine = await prisma.medicineEntity.create({
       data: {
         canonicalName: m.canonicalName,
@@ -259,8 +306,20 @@ async function main() {
         dosageForm: m.dosageForm,
         brandNames: m.brandNames ?? [],
         activeIngredient: m.genericName,
+        atcCode: m.atcCode ?? null,
         prescriptionCategory: m.rx,
-        qualityState: QualityState.VERIFIED,
+        qualityState: quality,
+        isControlled: m.controlled ?? false,
+        isSuppressed: quality === QualityState.SUPPRESSED,
+        identifiers: m.identifiers?.length
+          ? {
+              create: m.identifiers.map(([system, value, qs]) => ({
+                system,
+                value,
+                qualityState: qs ?? QualityState.MAPPED,
+              })),
+            }
+          : undefined,
       },
     });
     for (const [pharmacyName, confidence, age] of m.signals) {
