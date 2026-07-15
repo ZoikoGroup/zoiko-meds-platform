@@ -1,0 +1,17 @@
+# ZoikoMeds — public pages are indexable; authenticated portals are not.
+User-agent: *
+Allow: /$
+Allow: /login
+Allow: /register
+
+# Governed / authenticated surfaces — never index (per the build plan).
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /search
+Disallow: /saved
+Disallow: /signal
+Disallow: /profile
+Disallow: /settings
+Disallow: /medicine
+
+Sitemap: https://app.zoikomeds.com/sitemap.xml

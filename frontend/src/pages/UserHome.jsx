@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search, MapPin, Mic, Bell, Info, ShieldCheck, Clock, Pill, Heart,
@@ -13,12 +13,13 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
 import { ConfidenceBadge } from '@/components/shared/status'
+import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
+import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
 import { AVAILABILITY, CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
 import { getUserOverview, listNearbyPharmacies } from '@/services/user-api'
 import { SignalWidget } from '@/features/signal/signal-widget'
 import { cn } from '@/lib/utils'
 
-const AUTOCOMPLETE = ['Paracetamol', 'Dolo 650', 'Cetirizine', 'Azithromycin', 'Insulin Glargine', 'Metformin', 'Amoxicillin', 'Pantoprazole']
 const QUICK_CHIPS = ['Dolo 650', 'Paracetamol', 'Cetirizine', 'Azithromycin', 'Metformin']
 
 // Icons / links for the four summary tiles; values come from the backend.
@@ -77,11 +78,27 @@ export default function UserHome() {
     return () => { alive = false }
   }, [])
 
-  const suggestions = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
-    return AUTOCOMPLETE.filter((a) => a.toLowerCase().includes(q)).slice(0, 6)
-  }, [query])
+  // Live MediBase™ autocomplete (debounced, backed by /medibase/match).
+  const { suggestions, loading: suggLoading, error: suggError } = useMedicineSuggestions(query, { limit: 6 })
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  useEffect(() => { setActiveIndex(-1) }, [query])
+
+  const onHeroKeyDown = (e) => {
+    if (!showSuggestions || suggestions.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex((i) => (i + 1) % suggestions.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length)
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault()
+      goSearch(suggestions[activeIndex].name)
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
 
   useEffect(() => {
     if (!localStorage.getItem('zoiko-loc-permission')) {
@@ -225,9 +242,16 @@ export default function UserHome() {
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => { setQuery(e.target.value); setShowSuggestions(true) }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setShowSuggestions(false)}
+                  onKeyDown={onHeroKeyDown}
                   placeholder="Search by medicine, brand, or generic — e.g. Dolo 650"
                   aria-label="Search medicines"
+                  autoComplete="off"
+                  role="combobox"
+                  aria-expanded={showSuggestions && (suggLoading || suggestions.length > 0)}
+                  aria-controls="home-medicine-suggestions"
                   className="h-12 rounded-xl pl-11 pr-11 text-sm"
                 />
                 <button
@@ -238,20 +262,17 @@ export default function UserHome() {
                 >
                   <Mic className="size-5" />
                 </button>
-                {suggestions.length > 0 && (
-                  <div className="absolute left-0 top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-elevated">
-                    {suggestions.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => goSearch(s)}
-                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent"
-                      >
-                        <Pill className="size-4 shrink-0 text-teal" />
-                        <span className="text-sm font-semibold text-foreground">{s}</span>
-                      </button>
-                    ))}
-                  </div>
+                {showSuggestions && (
+                  <MedicineSuggestions
+                    id="home-medicine-suggestions"
+                    query={query}
+                    suggestions={suggestions}
+                    loading={suggLoading}
+                    error={suggError}
+                    activeIndex={activeIndex}
+                    onHover={setActiveIndex}
+                    onSelect={(s) => goSearch(s.name)}
+                  />
                 )}
               </div>
             </form>

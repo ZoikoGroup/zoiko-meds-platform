@@ -40,6 +40,8 @@ const Settings = lazy(() => import('@/pages/Settings'))
 // User Portal page chunks
 const UserHome = lazy(() => import('@/pages/UserHome'))
 const UserSearch = lazy(() => import('@/pages/UserSearch'))
+const Availability = lazy(() => import('@/pages/Availability'))
+const MedicineDetail = lazy(() => import('@/pages/MedicineDetail'))
 const UserSaved = lazy(() => import('@/pages/UserSaved'))
 const UserSignal = lazy(() => import('@/pages/UserSignal'))
 const UserProfile = lazy(() => import('@/pages/UserProfile'))
@@ -102,6 +104,8 @@ export const router = createBrowserRouter([
         children: [
           { path: 'dashboard', element: <UserHome /> },
           { path: 'search', element: <UserSearch /> },
+          { path: 'availability', element: <Availability /> },
+          { path: 'medicine/:id', element: <MedicineDetail /> },
           { path: 'saved', element: <UserSaved /> },
           { path: 'signal', element: <UserSignal /> },
           // Legacy alerts route now lives inside ZoikoSignal.
