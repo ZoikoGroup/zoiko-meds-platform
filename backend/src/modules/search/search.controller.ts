@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { PublicSearchQuery } from './dto/public-search.query';
 import { SearchService } from './search.service';
 
 @ApiTags('search')
@@ -8,7 +9,7 @@ export class SearchController {
   constructor(private readonly search: SearchService) {}
 
   @Get()
-  run(@Query('q') q = '') {
-    return this.search.search(q);
+  run(@Query() query: PublicSearchQuery) {
+    return this.search.search(query);
   }
 }
