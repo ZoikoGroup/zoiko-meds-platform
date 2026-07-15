@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Home, Search, Heart, Radar, Settings, HelpCircle,
-  Menu, LogOut, Sun, Moon, Loader2, User,
+  Menu, LogOut, Sun, Moon, Loader2, User, ShieldCheck,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
@@ -20,6 +20,7 @@ const NAV_SECTIONS = [
     items: [
       { label: 'Home', to: '/dashboard', icon: Home },
       { label: 'Search Medicines', to: '/search', icon: Search },
+      { label: 'How Availability Works', to: '/availability', icon: ShieldCheck },
     ],
   },
   {
@@ -41,6 +42,7 @@ const NAV_SECTIONS = [
 const PAGE_TITLES = {
   '/dashboard': 'Home',
   '/search': 'Search Medicines',
+  '/availability': 'How Availability Works',
   '/saved': 'Saved Medicines',
   '/signal': 'ZoikoSignal™',
   '/profile': 'My Profile',
