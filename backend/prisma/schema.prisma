@@ -319,19 +319,73 @@ model AvailabilitySignal {
 // ZoikoSignal™ — aggregated, anonymized demand/shortage intelligence
 // ---------------------------------------------------------------------------
 
-model SignalAggregate {
-  id             String   @id @default(cuid())
-  medicineId     String?
-  jurisdictionId String?
-  periodStart    DateTime
-  periodEnd      DateTime
-  searchCount    Int      @default(0)
-  zeroResultCount Int     @default(0)
-  restockEvents  Int      @default(0)
-  // Aggregated only — no user-level or patient-level data.
-  createdAt      DateTime @default(now())
+// Category of an ingested intelligence event. Deliberately coarse: an event
+// records WHAT happened and (optionally) which governed medicine/jurisdiction
+// it concerned — NEVER who triggered it.
+enum SignalEventType {
+  SEARCH // a medicine search was performed
+  ZERO_RESULT // a search returned no governed identity
+  RESTOCK // a pharmacy reported a medicine back in stock
+  CONFIRMATION // an availability signal was confirmed
+}
 
+// Time granularity for a SignalAggregate cell.
+enum AggregateBucket {
+  HOUR
+  DAY
+  WEEK
+}
+
+// Raw, anonymized intelligence event. This is the ingestion substrate that the
+// aggregation job folds into time-bucketed SignalAggregate cells.
+//
+// GOVERNANCE: stores NO userId, session, IP, or any patient identifier. The
+// only free-text retained is a normalized, length-capped search term on
+// ZERO_RESULT events (used solely to surface unmet demand in aggregate, never
+// tied to a person). Raw events are pruned after a short retention window once
+// they have been aggregated.
+model SignalEvent {
+  id             String          @id @default(cuid())
+  type           SignalEventType
+  medicineId     String? // governed identity, when one was resolved
+  jurisdictionId String? // denormalized from the medicine at ingest, for scoped rollups
+  pharmacyId     String? // present for RESTOCK / CONFIRMATION; never exposed downstream
+  searchTerm     String? // normalized term for ZERO_RESULT demand analysis (no PII)
+  occurredAt     DateTime        @default(now())
+  // Set once the event has been folded into an aggregate. Null = pending.
+  aggregatedAt   DateTime?
+  createdAt      DateTime        @default(now())
+
+  @@index([aggregatedAt])
+  @@index([type, occurredAt])
+  @@index([medicineId, occurredAt])
+  @@index([type, aggregatedAt])
+}
+
+model SignalAggregate {
+  id                String          @id @default(cuid())
+  medicineId        String?
+  jurisdictionId    String?
+  bucket            AggregateBucket @default(DAY)
+  periodStart       DateTime
+  periodEnd         DateTime
+  searchCount       Int             @default(0)
+  zeroResultCount   Int             @default(0)
+  restockEvents     Int             @default(0)
+  confirmationCount Int             @default(0)
+  // Total events backing this cell — drives the k-anonymity suppression gate.
+  sampleSize        Int             @default(0)
+  // True when sampleSize is below the k-anonymity threshold: the cell exists
+  // but its counts must be masked before any output leaves the service.
+  suppressed        Boolean         @default(false)
+  // Aggregated only — no user-level or patient-level data.
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([medicineId, jurisdictionId, bucket, periodStart])
   @@index([medicineId, periodStart])
+  @@index([bucket, periodStart])
+  @@index([suppressed])
 }
 
 // ---------------------------------------------------------------------------
