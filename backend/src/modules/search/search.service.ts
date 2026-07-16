@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { MedibaseService } from '../medibase/medibase.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
+import { SignalIngestService } from '../signal/signal-ingest.service';
 import { PublicSearchQuery } from './dto/public-search.query';
 
 /**
@@ -17,11 +18,22 @@ export class SearchService {
     private readonly medibase: MedibaseService,
     private readonly availability: AvailabilityService,
     private readonly nearby: NearbyPharmacyService,
+    private readonly signal: SignalIngestService,
   ) {}
 
   async search(query: PublicSearchQuery) {
     const q = query.q ?? '';
     const candidates = await this.medibase.matchMedicines(q);
+
+    // Emit an anonymized ZoikoSignal™ event (fire-and-forget; the ingest
+    // service swallows its own errors and never blocks the response).
+    if (q.trim()) {
+      if (candidates.length > 0) {
+        void this.signal.recordSearch(candidates[0].id);
+      } else {
+        void this.signal.recordZeroResult(q);
+      }
+    }
 
     // In-database availability signals (ZoikoAvail confidence) per candidate.
     const withAvailability = await Promise.all(
