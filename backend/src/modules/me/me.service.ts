@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
+import { SignalIngestService } from '../signal/signal-ingest.service';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { UpdateAlertsDto } from './dto/update-alerts.dto';
 
@@ -49,6 +50,7 @@ export class MeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly nearby: NearbyPharmacyService,
+    private readonly signal: SignalIngestService,
   ) {}
 
   // --- Search --------------------------------------------------------------
@@ -78,6 +80,15 @@ export class MeService {
       include: { availabilitySignals: { include: { pharmacy: true } } },
       take: 50,
     });
+
+    // Emit an anonymized ZoikoSignal™ event for a real query (fire-and-forget).
+    if (q) {
+      if (medicines.length > 0) {
+        void this.signal.recordSearch(medicines[0].id);
+      } else {
+        void this.signal.recordZeroResult(q);
+      }
+    }
 
     // Group medicines by generic to compute "related identities".
     const byGeneric = new Map<string, MedicineEntity[]>();

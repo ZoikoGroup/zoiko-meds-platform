@@ -25,5 +25,6 @@ import { NotificationService } from './notification/notification.service';
     VerificationService,
     NotificationService,
   ],
+  exports: [AuditWriter],
 })
 export class AdminModule {}
