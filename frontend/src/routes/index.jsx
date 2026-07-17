@@ -2,7 +2,8 @@ import { lazy } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppLayout } from '@/layouts/app-layout'
 import { UserLayout } from '@/layouts/user-layout'
-import { AdminProtectedRoute, UserProtectedRoute, PublicRoute } from '@/routes/protected-route'
+import { PharmacyLayout } from '@/layouts/pharmacy-layout'
+import { AdminProtectedRoute, UserProtectedRoute, PharmacyProtectedRoute, PublicRoute } from '@/routes/protected-route'
 import { navSections, routeMeta } from '@/routes/navigation'
 
 // Prefix all Super Admin sidebar links dynamically at runtime with '/admin'
@@ -46,6 +47,18 @@ const UserSaved = lazy(() => import('@/pages/UserSaved'))
 const UserSignal = lazy(() => import('@/pages/UserSignal'))
 const UserProfile = lazy(() => import('@/pages/UserProfile'))
 const UserSettings = lazy(() => import('@/pages/UserSettings'))
+
+// Pharmacy Portal page chunks
+const PharmacyDashboard = lazy(() => import('@/pages/pharmacy/PharmacyDashboard'))
+const PharmacyInventory = lazy(() => import('@/pages/pharmacy/PharmacyInventory'))
+const PharmacyAvailability = lazy(() => import('@/pages/pharmacy/PharmacyAvailability'))
+const PharmacyUpload = lazy(() => import('@/pages/pharmacy/PharmacyUpload'))
+const PharmacyIntegration = lazy(() => import('@/pages/pharmacy/PharmacyIntegration'))
+const PharmacyParticipation = lazy(() => import('@/pages/pharmacy/PharmacyParticipation'))
+const PharmacyReports = lazy(() => import('@/pages/pharmacy/PharmacyReports'))
+const PharmacyNotifications = lazy(() => import('@/pages/pharmacy/PharmacyNotifications'))
+const PharmacyProfile = lazy(() => import('@/pages/pharmacy/PharmacyProfile'))
+const PharmacySettings = lazy(() => import('@/pages/pharmacy/PharmacySettings'))
 
 const Login = lazy(() => import('@/pages/Login'))
 const Register = lazy(() => import('@/pages/Register'))
@@ -112,6 +125,29 @@ export const router = createBrowserRouter([
           { path: 'alerts', element: <Navigate to="/signal" replace /> },
           { path: 'profile', element: <UserProfile /> },
           { path: 'settings', element: <UserSettings /> },
+        ],
+      },
+    ],
+  },
+  // Pharmacy Portal routes (under /pharmacy)
+  {
+    path: 'pharmacy',
+    element: <PharmacyProtectedRoute />,
+    children: [
+      {
+        element: <PharmacyLayout />,
+        children: [
+          { index: true, element: <Navigate to="dashboard" replace /> },
+          { path: 'dashboard', element: <PharmacyDashboard /> },
+          { path: 'inventory', element: <PharmacyInventory /> },
+          { path: 'availability', element: <PharmacyAvailability /> },
+          { path: 'upload', element: <PharmacyUpload /> },
+          { path: 'integration', element: <PharmacyIntegration /> },
+          { path: 'participation', element: <PharmacyParticipation /> },
+          { path: 'reports', element: <PharmacyReports /> },
+          { path: 'notifications', element: <PharmacyNotifications /> },
+          { path: 'profile', element: <PharmacyProfile /> },
+          { path: 'settings', element: <PharmacySettings /> },
         ],
       },
     ],

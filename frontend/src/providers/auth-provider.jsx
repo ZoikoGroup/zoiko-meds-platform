@@ -14,7 +14,12 @@ import {
   updateProfileRequest,
   changePasswordRequest,
 } from '@/services/auth-api'
-import { roleLabel, isSuperAdmin as roleIsSuperAdmin } from '@/lib/roles'
+import {
+  roleLabel,
+  isSuperAdmin as roleIsSuperAdmin,
+  isPharmacy as roleIsPharmacy,
+  portalHome,
+} from '@/lib/roles'
 
 const AuthContext = createContext(null)
 
@@ -39,6 +44,7 @@ function toClientUser(apiUser) {
     role: apiUser.role, // raw enum, e.g. 'SUPER_ADMIN' / 'PUBLIC'
     roleLabel: roleLabel(apiUser.role),
     isSuperAdmin: roleIsSuperAdmin(apiUser.role),
+    isPharmacy: roleIsPharmacy(apiUser.role),
     initials: getInitials(apiUser.fullName),
     isActive: apiUser.isActive,
   }
@@ -123,6 +129,9 @@ export function AuthProvider({ children }) {
       user,
       isAuthenticated: !!user,
       isSuperAdmin: !!user?.isSuperAdmin,
+      isPharmacy: !!user?.isPharmacy,
+      // Landing path for this user's portal (used by guards + post-login).
+      homePath: portalHome(user?.role),
       bootstrapping,
       login,
       register,
