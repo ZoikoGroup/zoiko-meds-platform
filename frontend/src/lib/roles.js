@@ -61,6 +61,18 @@ export function isSuperAdmin(role) {
   return role === ROLES.SUPER_ADMIN
 }
 
+/** True for pharmacy staff/manager roles (the Pharmacy Portal audience). */
+export function isPharmacy(role) {
+  return role === ROLES.PHARMACY_ADMIN || role === ROLES.PHARMACY_STAFF
+}
+
+/** The landing path for a role's portal — used for post-login + guard redirects. */
+export function portalHome(role) {
+  if (role === ROLES.SUPER_ADMIN) return '/admin'
+  if (isPharmacy(role)) return '/pharmacy'
+  return '/dashboard'
+}
+
 /**
  * True if `role` may access something restricted to `allowed`.
  * SUPER_ADMIN always passes; otherwise the role must be listed.

@@ -14,6 +14,7 @@ import {
   Terminal,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
+import { portalHome } from '@/lib/roles'
 import { AuthLayout } from '@/layouts/auth-layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,8 +43,9 @@ export default function Login() {
 
     try {
       const authedUser = await login(email, password)
-      // Route to the correct portal based on the resolved role.
-      navigate(authedUser?.isSuperAdmin ? '/admin' : '/dashboard')
+      // Route to the correct portal based on the resolved role
+      // (Super Admin → /admin, Pharmacy → /pharmacy, Patient → /dashboard).
+      navigate(portalHome(authedUser?.role))
     } catch (err) {
       setError(err.message || 'Authentication failed. Please verify credentials.')
     } finally {
@@ -199,6 +201,18 @@ export default function Login() {
                 }}
               >
                 Log In as Patient
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1 text-[10px] h-8 bg-card"
+                onClick={() => {
+                  setEmail('manager@zoikomeds.io')
+                  setPassword('Passw0rd!')
+                }}
+              >
+                Log In as Pharmacy
               </Button>
               <Button
                 type="button"
