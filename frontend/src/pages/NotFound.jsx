@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Radar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/providers/auth-provider'
 
 export default function NotFound() {
+  const { homePath } = useAuth()
+
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
       <span className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -19,7 +22,7 @@ export default function NotFound() {
         governed within your workspace.
       </p>
       <Button asChild className="mt-6">
-        <Link to="/dashboard">
+        <Link to={homePath || '/dashboard'}>
           <ArrowLeft />
           Back to dashboard
         </Link>

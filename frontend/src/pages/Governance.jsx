@@ -28,7 +28,7 @@ export default function Governance() {
             <BreadcrumbList>
               <BreadcrumbItem>
                 <BreadcrumbLink asChild>
-                  <Link to="/dashboard">ZoikoMeds</Link>
+                  <Link to="/admin">ZoikoMeds</Link>
                 </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
