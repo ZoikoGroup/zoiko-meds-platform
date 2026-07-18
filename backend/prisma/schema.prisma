@@ -48,6 +48,8 @@ model User {
   alertPreference  AlertPreference?
   searchHistory    SearchHistory[]
   passwordResets   PasswordResetToken[]
+  signalNotifications          SignalNotification[]
+  signalNotificationPreference SignalNotificationPreference?
 
   @@index([role])
 }
@@ -56,13 +58,26 @@ model User {
 // Patient portal — personal, non-PHI data (saved meds, alert prefs, history)
 // ---------------------------------------------------------------------------
 
+// Priority a patient assigns to a saved medicine — drives ordering + alert
+// emphasis on the ZoikoSignal™ patient surface.
+enum MedicinePriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
 model SavedMedicine {
-  id         String         @id @default(cuid())
+  id         String           @id @default(cuid())
   userId     String
-  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   medicineId String
-  medicine   MedicineEntity @relation(fields: [medicineId], references: [id], onDelete: Cascade)
-  createdAt  DateTime       @default(now())
+  medicine   MedicineEntity   @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  priority   MedicinePriority @default(MEDIUM)
+  // Last availability status a notification was generated for. Lets the signal
+  // generator detect transitions (e.g. running-low → back-in-stock) instead of
+  // re-emitting the same state. One of: available|limited|running-low|out-of-stock.
+  notifiedStatus String?
+  createdAt  DateTime         @default(now())
 
   @@unique([userId, medicineId])
   @@index([userId])
@@ -168,6 +183,7 @@ model MedicineEntity {
   availabilitySignals AvailabilitySignal[]
   savedByUsers       SavedMedicine[]
   changeLogs         MedicineChangeLog[]
+  signalNotifications SignalNotification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -319,19 +335,73 @@ model AvailabilitySignal {
 // ZoikoSignal™ — aggregated, anonymized demand/shortage intelligence
 // ---------------------------------------------------------------------------
 
-model SignalAggregate {
-  id             String   @id @default(cuid())
-  medicineId     String?
-  jurisdictionId String?
-  periodStart    DateTime
-  periodEnd      DateTime
-  searchCount    Int      @default(0)
-  zeroResultCount Int     @default(0)
-  restockEvents  Int      @default(0)
-  // Aggregated only — no user-level or patient-level data.
-  createdAt      DateTime @default(now())
+// Category of an ingested intelligence event. Deliberately coarse: an event
+// records WHAT happened and (optionally) which governed medicine/jurisdiction
+// it concerned — NEVER who triggered it.
+enum SignalEventType {
+  SEARCH // a medicine search was performed
+  ZERO_RESULT // a search returned no governed identity
+  RESTOCK // a pharmacy reported a medicine back in stock
+  CONFIRMATION // an availability signal was confirmed
+}
 
+// Time granularity for a SignalAggregate cell.
+enum AggregateBucket {
+  HOUR
+  DAY
+  WEEK
+}
+
+// Raw, anonymized intelligence event. This is the ingestion substrate that the
+// aggregation job folds into time-bucketed SignalAggregate cells.
+//
+// GOVERNANCE: stores NO userId, session, IP, or any patient identifier. The
+// only free-text retained is a normalized, length-capped search term on
+// ZERO_RESULT events (used solely to surface unmet demand in aggregate, never
+// tied to a person). Raw events are pruned after a short retention window once
+// they have been aggregated.
+model SignalEvent {
+  id             String          @id @default(cuid())
+  type           SignalEventType
+  medicineId     String? // governed identity, when one was resolved
+  jurisdictionId String? // denormalized from the medicine at ingest, for scoped rollups
+  pharmacyId     String? // present for RESTOCK / CONFIRMATION; never exposed downstream
+  searchTerm     String? // normalized term for ZERO_RESULT demand analysis (no PII)
+  occurredAt     DateTime        @default(now())
+  // Set once the event has been folded into an aggregate. Null = pending.
+  aggregatedAt   DateTime?
+  createdAt      DateTime        @default(now())
+
+  @@index([aggregatedAt])
+  @@index([type, occurredAt])
+  @@index([medicineId, occurredAt])
+  @@index([type, aggregatedAt])
+}
+
+model SignalAggregate {
+  id                String          @id @default(cuid())
+  medicineId        String?
+  jurisdictionId    String?
+  bucket            AggregateBucket @default(DAY)
+  periodStart       DateTime
+  periodEnd         DateTime
+  searchCount       Int             @default(0)
+  zeroResultCount   Int             @default(0)
+  restockEvents     Int             @default(0)
+  confirmationCount Int             @default(0)
+  // Total events backing this cell — drives the k-anonymity suppression gate.
+  sampleSize        Int             @default(0)
+  // True when sampleSize is below the k-anonymity threshold: the cell exists
+  // but its counts must be masked before any output leaves the service.
+  suppressed        Boolean         @default(false)
+  // Aggregated only — no user-level or patient-level data.
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([medicineId, jurisdictionId, bucket, periodStart])
   @@index([medicineId, periodStart])
+  @@index([bucket, periodStart])
+  @@index([suppressed])
 }
 
 // ---------------------------------------------------------------------------
@@ -466,4 +536,71 @@ model Notification {
 
   @@index([status])
   @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// ZoikoSignal™ — patient notifications (personal availability alerts)
+// ---------------------------------------------------------------------------
+
+// Kind of personal availability notification shown on the patient ZoikoSignal
+// surface. Availability kinds are derived from a saved medicine's confidence
+// band; RECALL / SAFETY are fanned out from dispatched platform broadcasts.
+enum SignalNotificationType {
+  RUNNING_LOW
+  BACK_IN_STOCK
+  LIMITED
+  NEARBY_RESTOCK
+  RECALL
+  SAFETY
+}
+
+// A single, per-user ZoikoSignal notification. Rows are (re)generated from the
+// user's saved-medicine availability signals and relevant platform broadcasts;
+// `dedupeKey` makes generation idempotent so read/archived/dismissed state is
+// preserved across regenerations. Personal to a user — never aggregate/PHI-free
+// intelligence (that is SignalAggregate).
+model SignalNotification {
+  id           String                 @id @default(cuid())
+  userId       String
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Stable identity for a logical notification (e.g. "med:<id>:running-low" or
+  // "broadcast:<id>") so regeneration upserts in place.
+  dedupeKey    String
+  type         SignalNotificationType
+  medicineId   String?
+  medicine     MedicineEntity?        @relation(fields: [medicineId], references: [id], onDelete: SetNull)
+  medicineName String
+  title        String
+  description  String
+  actionLabel  String?
+  actionKind   String?
+  actionQuery  String?
+  read         Boolean                @default(false)
+  archived     Boolean                @default(false)
+  dismissed    Boolean                @default(false)
+  occurredAt   DateTime               @default(now())
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, dismissed, archived])
+}
+
+// Patient notification-channel + category preferences. Mirrors the toggles on
+// the ZoikoSignal settings card. Distinct from AlertPreference (the availability
+// Alerts screen) so each surface owns its own vocabulary.
+model SignalNotificationPreference {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runningLow    Boolean  @default(true)
+  backInStock   Boolean  @default(true)
+  nearbyRestock Boolean  @default(true)
+  recall        Boolean  @default(true)
+  safety        Boolean  @default(true)
+  push          Boolean  @default(true)
+  email         Boolean  @default(false)
+  sms           Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
 }

@@ -106,11 +106,19 @@ returns `db: up`.
 
 **Goal:** aggregated, anonymized shortage/demand intelligence.
 
-- [ ] Event ingestion: searches, zero-results, restocks, confirmations.
-- [ ] Aggregation jobs → `SignalAggregate` (time-bucketed, jurisdiction-scoped).
-- [ ] Anonymization / k-anonymity thresholds before any output.
-- [ ] Intelligence query API (contract-scoped, no user/patient-level data).
-- [ ] Export pathways for approved enterprise/public-sector consumers.
+- [x] Event ingestion: searches, zero-results, restocks, confirmations.
+      (`SignalIngestService`, emitted fire-and-forget from public + patient search;
+      restock/confirmation hooks + admin backfill via `POST /signal/admin/events`.)
+- [x] Aggregation jobs → `SignalAggregate` (time-bucketed, jurisdiction-scoped).
+      (`SignalAggregationService` folds pending `SignalEvent`s into HOUR/DAY/WEEK
+      cells; guarded interval scheduler for scheduled recompute + on-demand admin run.)
+- [x] Anonymization / k-anonymity thresholds before any output.
+      (`SIGNAL_K_ANONYMITY`, default 5; sub-threshold cells masked, MediBase-suppressed
+      identities never named, zero-result terms surfaced only above threshold.)
+- [x] Intelligence query API (contract-scoped, no user/patient-level data).
+      (`GET /signal/intelligence` + `/summary`, gated to ENTERPRISE/GOVERNMENT/ADMIN.)
+- [x] Export pathways for approved enterprise/public-sector consumers.
+      (`GET /signal/intelligence/export` — JSON or CSV, masked cells omitted.)
 
 **Governance:** aggregate-only; suppress low-count cells; no re-identification surface.
 
