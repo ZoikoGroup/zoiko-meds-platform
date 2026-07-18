@@ -93,7 +93,7 @@ export default function UserProfile() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Contact details */}
-        <div className="lg:col-span-7">
+        <div className="flex flex-col gap-6 lg:col-span-7">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -102,26 +102,41 @@ export default function UserProfile() {
               </CardTitle>
               <CardDescription>Update how verified pharmacies and ZoikoMeds can reach you.</CardDescription>
             </CardHeader>
-            <CardContent className="pt-0">
-              <form onSubmit={saveProfile} className="flex flex-col gap-4">
+            <CardContent className="pt-5">
+              <form onSubmit={saveProfile} className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="name">Full name</Label>
                   <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" value={form.email} disabled />
+                    <Input
+                      id="email"
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => setForm({ ...form, email: e.target.value })}
+                      required
+                    />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="phone">Phone</Label>
                     <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
                   </div>
                 </div>
-                <Button type="submit" variant="teal" className="mt-1 w-fit">Save changes</Button>
+                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">Save changes</Button>
               </form>
             </CardContent>
           </Card>
+
+          {/* Privacy note (governance: no PHI by default) */}
+          <div className="flex items-start gap-3 rounded-2xl border border-teal/15 bg-teal/5 p-4">
+            <ShieldCheck className="mt-0.5 size-4.5 shrink-0 text-teal" />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              ZoikoMeds does not collect prescriptions or health records. We store
+              only the contact details you provide to power your alerts.
+            </p>
+          </div>
         </div>
 
         {/* Security + quick actions */}
@@ -134,8 +149,8 @@ export default function UserProfile() {
               </CardTitle>
               <CardDescription>Update your account password.</CardDescription>
             </CardHeader>
-            <CardContent className="pt-0">
-              <form onSubmit={savePassword} className="flex flex-col gap-4">
+            <CardContent className="pt-5">
+              <form onSubmit={savePassword} className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="current">Current password</Label>
                   <Input id="current" type="password" placeholder="••••••••" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} required />
@@ -144,16 +159,16 @@ export default function UserProfile() {
                   <Label htmlFor="next">New password</Label>
                   <Input id="next" type="password" placeholder="••••••••" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} required />
                 </div>
-                <Button type="submit" variant="teal" className="mt-1 w-fit">Update password</Button>
+                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">Update password</Button>
               </form>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="flex flex-col gap-1 py-4">
+            <CardContent className="py-4">
               <button
                 onClick={toggleTheme}
-                className="flex items-center justify-between rounded-lg px-2.5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-accent"
+                className="flex w-full items-center justify-between rounded-lg px-2.5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-accent cursor-pointer"
               >
                 <span className="flex items-center gap-2">
                   <Palette className="size-4 text-muted-foreground" />
@@ -164,24 +179,8 @@ export default function UserProfile() {
                   {theme}
                 </span>
               </button>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm font-semibold text-danger transition-colors hover:bg-danger/5"
-              >
-                <LogOut className="size-4" />
-                Sign out
-              </button>
             </CardContent>
           </Card>
-
-          {/* Privacy note (governance: no PHI by default) */}
-          <div className="flex items-start gap-3 rounded-2xl border border-teal/15 bg-teal/5 p-4">
-            <ShieldCheck className="mt-0.5 size-4.5 shrink-0 text-teal" />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              ZoikoMeds does not collect prescriptions or health records. We store
-              only the contact details you provide to power your alerts.
-            </p>
-          </div>
         </div>
       </div>
     </div>

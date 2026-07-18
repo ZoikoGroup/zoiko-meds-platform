@@ -73,7 +73,7 @@ export default function UserAlerts() {
           </CardTitle>
           <CardDescription>Alerts are based on availability confidence — never exact stock.</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-1 pt-0">
+        <CardContent className="flex flex-col gap-1 pt-5">
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />

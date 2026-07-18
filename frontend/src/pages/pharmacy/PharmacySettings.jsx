@@ -49,7 +49,7 @@ export default function PharmacySettings() {
             <CardTitle className="flex items-center gap-2"><User className="size-4 text-primary" /> Account</CardTitle>
             <CardDescription>Your sign-in identity for this pharmacy.</CardDescription>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
+          <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label>Name</Label>
               <Input value={user?.name || ''} readOnly />
@@ -67,13 +67,13 @@ export default function PharmacySettings() {
             <CardTitle className="flex items-center gap-2"><KeyRound className="size-4 text-primary" /> Password</CardTitle>
             <CardDescription>Choose a strong, unique password.</CardDescription>
           </CardHeader>
-          <CardContent className="pt-2">
-            <form onSubmit={changePassword} className="flex flex-col gap-4">
+          <CardContent className="pt-5">
+            <form onSubmit={changePassword} className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="pw-cur">Current password</Label>
                 <Input id="pw-cur" type="password" value={pwd.current} onChange={(e) => setPwd((p) => ({ ...p, current: e.target.value }))} />
               </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="pw-new">New password</Label>
                   <Input id="pw-new" type="password" value={pwd.next} onChange={(e) => setPwd((p) => ({ ...p, next: e.target.value }))} />
@@ -93,7 +93,7 @@ export default function PharmacySettings() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Bell className="size-4 text-primary" /> Notification preferences</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-1 pt-0">
+          <CardContent className="flex flex-col gap-1 pt-5">
             {NOTIF_PREFS.map((opt, i) => (
               <div key={opt.key} className={'flex items-center justify-between py-4 ' + (i < NOTIF_PREFS.length - 1 ? 'border-b border-border' : '')}>
                 <div className="flex flex-col gap-0.5">
@@ -112,7 +112,7 @@ export default function PharmacySettings() {
             <CardTitle className="flex items-center gap-2"><Terminal className="size-4 text-primary" /> API credentials</CardTitle>
             <CardDescription>Use this key to sync inventory from your POS / ERP.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3 pt-2">
+          <CardContent className="flex flex-col gap-5 pt-5">
             <div className="flex items-center gap-2">
               <Input value={apiKey} readOnly className="font-mono text-xs" />
               <Button variant="outline" size="icon-sm" aria-label="Copy API key" onClick={() => flash('API key copied')}>

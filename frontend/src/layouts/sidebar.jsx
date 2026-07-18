@@ -86,7 +86,7 @@ export function Sidebar({ collapsed = false, onNavigate, onToggleCollapse, showC
     const isActive = useActiveMatcher();
     return (<div className="flex h-full flex-col bg-sidebar">
       <div className={cn('flex h-16 items-center border-b border-sidebar-border px-4', collapsed ? 'justify-center' : 'justify-between')}>
-        <Link to="/dashboard" onClick={onNavigate} aria-label="ZoikoMeds home">
+        <Link to="/admin" onClick={onNavigate} aria-label="ZoikoMeds home">
           <Brand collapsed={collapsed}/>
         </Link>
         {showCollapseButton && !collapsed && (<Button variant="ghost" size="icon-sm" onClick={onToggleCollapse} aria-label="Collapse sidebar" className="text-muted-foreground">

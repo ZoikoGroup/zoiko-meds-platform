@@ -84,7 +84,7 @@ export default function PharmacyProfile() {
             </CardTitle>
             <CardDescription>Name and logo shown to patients across the network.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4 pt-2">
+          <CardContent className="flex flex-col gap-5 pt-5">
             <div className="flex items-center gap-4">
               <span className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary">
                 {profile.name?.slice(0, 2).toUpperCase()}
@@ -101,7 +101,7 @@ export default function PharmacyProfile() {
                 <Button type="button" variant="outline" size="sm">Upload logo</Button>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field id="p-name" label="Pharmacy name" value={profile.name} onChange={set('name')} />
               <Field id="p-license" label="Licence number" value={profile.licenseNumber} onChange={set('licenseNumber')} />
             </div>
@@ -113,7 +113,7 @@ export default function PharmacyProfile() {
           <CardHeader>
             <CardTitle>Contact details</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
+          <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
             <Field id="p-phone" label="Phone" value={profile.phone} onChange={set('phone')} />
             <Field id="p-email" label="Email" value={profile.email} onChange={set('email')} />
           </CardContent>
@@ -124,7 +124,7 @@ export default function PharmacyProfile() {
           <CardHeader>
             <CardTitle>Address</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
+          <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
             <Field id="p-addr" label="Address line" value={profile.addressLine1} onChange={set('addressLine1')} />
             <Field id="p-city" label="City" value={profile.city} onChange={set('city')} />
             <Field id="p-region" label="Region / State" value={profile.region} onChange={set('region')} />
@@ -139,7 +139,7 @@ export default function PharmacyProfile() {
               <Clock className="size-4 text-primary" /> Operating hours
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-1 pt-0">
+          <CardContent className="flex flex-col gap-1 pt-5">
             {profile.hours.map((h, i) => (
               <div
                 key={h.day}

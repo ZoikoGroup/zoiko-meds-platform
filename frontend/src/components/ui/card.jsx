@@ -3,7 +3,7 @@ export function Card({ className, ...props }) {
     return (<div data-slot="card" className={cn('flex flex-col rounded-2xl border border-border bg-card text-card-foreground shadow-soft', className)} {...props}/>);
 }
 export function CardHeader({ className, ...props }) {
-    return (<div data-slot="card-header" className={cn('flex flex-col gap-1.5 px-6 pt-5 pb-4 [&:has(+[data-slot=card-content])]:pb-0', className)} {...props}/>);
+    return (<div data-slot="card-header" className={cn('flex flex-col gap-2.5 px-6 pt-5 pb-4 [&:has(+[data-slot=card-content])]:pb-0', className)} {...props}/>);
 }
 export function CardTitle({ className, ...props }) {
     return (<div data-slot="card-title" className={cn('text-base font-semibold tracking-tight', className)} {...props}/>);

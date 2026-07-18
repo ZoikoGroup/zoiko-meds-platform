@@ -86,20 +86,21 @@ export function PharmacyLayout() {
   }, [location.pathname])
 
   const sidebarContent = (
-    <div className="flex h-full flex-col justify-between border-r border-border bg-sidebar p-4 text-sidebar-foreground">
-      <div className="flex flex-col gap-6">
+    <div className="flex h-full flex-col border-r border-border bg-sidebar p-4 text-sidebar-foreground">
+      {/* Top logo header */}
+      <div className="flex items-center px-2 py-1.5 shrink-0">
         <Link
           to="/pharmacy/dashboard"
-          className="flex items-center gap-2 px-2 py-1.5"
+          className="flex items-center"
           aria-label="ZoikoMeds pharmacy home"
         >
-          <Brand />
-          <Badge variant="info" size="sm" className="font-bold uppercase tracking-wide">
-            Pharmacy
-          </Badge>
+          <Brand size="large" />
         </Link>
+      </div>
 
-        <nav className="flex flex-col gap-5" aria-label="Pharmacy portal">
+      {/* Scrollable middle navigation */}
+      <nav className="my-6 flex-1 overflow-y-auto pr-1 shrink-0 lg:shrink" aria-label="Pharmacy portal">
+        <div className="flex flex-col gap-5">
           {NAV_SECTIONS.map((section) => (
             <div key={section.heading ?? 'primary'} className="flex flex-col gap-1">
               {section.heading && (
@@ -129,10 +130,11 @@ export function PharmacyLayout() {
               })}
             </div>
           ))}
-        </nav>
-      </div>
+        </div>
+      </nav>
 
-      <div className="flex flex-col gap-1 border-t border-border pt-4">
+      {/* Pinned bottom section */}
+      <div className="mt-auto flex shrink-0 flex-col gap-1 border-t border-border pt-4">
         <a
           href="mailto:partners@zoikomeds.com"
           className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -142,7 +144,7 @@ export function PharmacyLayout() {
         </a>
         <button
           onClick={handleLogout}
-          className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-danger transition-colors hover:bg-danger/5"
+          className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-danger cursor-pointer transition-colors hover:bg-danger/5"
         >
           <LogOut className="size-5 shrink-0" />
           Sign Out
@@ -232,11 +234,7 @@ export function PharmacyLayout() {
                     Settings
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="danger" onSelect={handleLogout}>
-                  <LogOut />
-                  Sign out
-                </DropdownMenuItem>
+
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

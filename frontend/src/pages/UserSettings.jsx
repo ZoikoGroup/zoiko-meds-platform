@@ -38,7 +38,7 @@ export default function UserSettings() {
             </CardTitle>
             <CardDescription>Choose your preferred interface language.</CardDescription>
           </CardHeader>
-          <CardContent className="pt-2">
+          <CardContent className="pt-5">
             <div className="flex flex-wrap items-center gap-3">
               <select
                 value={language}
@@ -67,7 +67,7 @@ export default function UserSettings() {
             </CardTitle>
             <CardDescription>Make the interface easier to read and use.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-1 pt-0">
+          <CardContent className="flex flex-col gap-1 pt-5">
             <div className="flex items-center justify-between border-b border-border py-4">
               <div className="flex flex-col gap-0.5">
                 <span className="text-sm font-semibold text-foreground">Larger text</span>
@@ -94,7 +94,7 @@ export default function UserSettings() {
             </CardTitle>
             <CardDescription>Clear the location saved on this device.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4 pt-0">
+          <CardContent className="flex flex-col gap-4 pt-5">
             <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
               We store your preferred location only on this device to surface
               nearby verified pharmacies. Clearing it prompts a fresh location
