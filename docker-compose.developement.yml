@@ -57,7 +57,7 @@ services:
       - zoikomeds-dev-backend-node-modules:/app/node_modules
     ports:
       - "8000:4000"
-    command: sh -c "apk add --no-cache openssl libc6-compat && npm ci && npx prisma generate && npx prisma db push --skip-generate && npx prisma db seed && npm run start:dev"
+    command: sh -c "apk add --no-cache openssl libc6-compat && npm ci && npx prisma generate && npx prisma db push --skip-generate --accept-data-loss && npx prisma db seed && npm run start:dev"
 
   frontend:
     image: node:22-alpine
