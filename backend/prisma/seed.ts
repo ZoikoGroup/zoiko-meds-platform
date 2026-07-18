@@ -11,6 +11,7 @@
 import {
   AuditSeverity,
   AvailabilityConfidence,
+  MedicinePriority,
   NotificationStatus,
   NotificationTarget,
   NotificationType,
@@ -59,7 +60,12 @@ async function main() {
     'Super@123',
     UserRole.SUPER_ADMIN,
   );
-  await upsertUser('john@example.com', 'Naveen', 'User@123', UserRole.PUBLIC);
+  const patient = await upsertUser(
+    'john@example.com',
+    'Naveen',
+    'User@123',
+    UserRole.PUBLIC,
+  );
 
   // --- A spread of role demo users ---------------------------------------
   const demoUsers: Array<[string, string, UserRole]> = [
@@ -349,6 +355,35 @@ async function main() {
     `✔ ${medicineSeed.length} medicines + ${signalCount} availability signals ready`,
   );
 
+  // --- Patient saved medicines (ZoikoSignal™ personal surface) ------------
+  // Give the demo patient a spread of statuses so the patient ZoikoSignal page
+  // has real, dynamic content. `notifiedStatus` seeds a prior state so the
+  // generator emits a "back in stock" transition on first load.
+  // [canonicalName, priority, notifiedStatus?]
+  const savedSeed: Array<[string, MedicinePriority, string?]> = [
+    ['Amoxicillin 500 mg', MedicinePriority.HIGH],
+    ['Insulin Glargine', MedicinePriority.HIGH],
+    ['Pantoprazole 40 mg', MedicinePriority.MEDIUM],
+    ['Dolo 650', MedicinePriority.MEDIUM, 'out-of-stock'], // → back in stock
+    ['Metformin 500 mg', MedicinePriority.LOW],
+  ];
+  await prisma.savedMedicine.deleteMany({ where: { userId: patient.id } });
+  let savedCount = 0;
+  for (const [name, priority, notifiedStatus] of savedSeed) {
+    const med = medicineByName[name];
+    if (!med) continue;
+    await prisma.savedMedicine.create({
+      data: {
+        userId: patient.id,
+        medicineId: med.id,
+        priority,
+        notifiedStatus: notifiedStatus ?? null,
+      },
+    });
+    savedCount++;
+  }
+  console.log(`✔ ${savedCount} saved medicines ready for ${patient.email}`);
+
   // --- ZoikoSignal™ intelligence -----------------------------------------
   // Time-bucketed, jurisdiction-scoped aggregate cells + a pool of raw
   // zero-result events. Cells with sampleSize below the k-anonymity threshold
@@ -463,6 +498,10 @@ async function main() {
       { title: 'Platform v2.3 released', message: 'New availability engine is live.', type: NotificationType.PLATFORM_UPDATE, target: NotificationTarget.ALL_USERS, status: NotificationStatus.DISPATCHED, createdBy: superEmail },
       { title: 'Scheduled maintenance', message: 'Downtime Sunday 02:00–03:00 UTC.', type: NotificationType.MAINTENANCE, target: NotificationTarget.PHARMACY_MANAGERS, status: NotificationStatus.DISPATCHED, createdBy: superEmail },
       { title: 'Shortage alert: amoxicillin', message: 'Elevated shortage pressure in APAC.', type: NotificationType.EMERGENCY_ALERT, target: NotificationTarget.GOVERNMENT_PARTNERS, status: NotificationStatus.DRAFT, createdBy: superEmail },
+      // Dispatched patient-facing broadcasts — fanned out to every patient's
+      // ZoikoSignal feed as SAFETY / RECALL notifications.
+      { title: 'Government safety advisory', message: 'A national health advisory has been issued for a medicine class you follow. Review the guidance.', type: NotificationType.EMERGENCY_ALERT, target: NotificationTarget.ALL_USERS, status: NotificationStatus.DISPATCHED, createdBy: superEmail },
+      { title: 'Recall notice for batch #A2231', message: 'A manufacturer recall affects certain batches. Please check the batch number on your packaging.', type: NotificationType.EMERGENCY_ALERT, target: NotificationTarget.ALL_USERS, status: NotificationStatus.DISPATCHED, createdBy: superEmail },
     ],
   });
   console.log('✔ Notifications ready');
