@@ -43,19 +43,34 @@ export default function PharmacyInventory() {
     setDialogOpen(true)
   }
 
+  const [submitting, setSubmitting] = useState(false)
+
   const submitForm = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) { flash('Medicine name is required'); return }
-    if (editingId) {
-      setRows((rs) => rs.map((m) => (m.id === editingId ? { ...m, ...form, updated: 'just now' } : m)))
-      flash(`Updated ${form.name}`)
-    } else {
-      const med = { id: `inv-${Date.now()}`, ...form, confidence: 'high', updated: 'just now' }
-      setRows((rs) => [med, ...rs])
-      await addMedicine(med)
-      flash(`Added ${form.name}`)
+    setSubmitting(true)
+    try {
+      if (editingId) {
+        const updated = await updateAvailability(editingId, form.status)
+        setRows((rs) => rs.map((m) => (m.id === editingId ? { ...m, ...form, ...updated, updated: 'just now' } : m)))
+        flash(`Updated ${form.name}`)
+      } else {
+        const created = await addMedicine({
+          name: form.name,
+          generic: form.generic,
+          strength: form.strength,
+          dosageForm: form.dosageForm,
+          status: form.status,
+        })
+        setRows((rs) => [created, ...rs])
+        flash(`Added ${form.name}`)
+      }
+      setDialogOpen(false)
+    } catch (err) {
+      flash(err.message || 'Failed to save medicine')
+    } finally {
+      setSubmitting(false)
     }
-    setDialogOpen(false)
   }
 
   const setAvailability = async (m, status) => {
@@ -214,8 +229,11 @@ export default function PharmacyInventory() {
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button type="submit">{editingId ? 'Save changes' : 'Add medicine'}</Button>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting && <Loader2 className="size-4 animate-spin" />}
+                {editingId ? 'Save changes' : 'Add medicine'}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

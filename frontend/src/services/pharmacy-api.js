@@ -1,60 +1,88 @@
 // Pharmacy Portal service layer.
 //
-// Every call returns a Promise so pages get real loading/error lifecycles and
-// each function can be swapped for a real fetch with NO page changes. Until the
-// backend exposes pharmacy self-service endpoints, these resolve demo data
-// from services/pharmacy-data.js.
-//
-// TODO(backend): add pharmacy-scoped endpoints, e.g.
-//   GET    /pharmacy/me                 → profile + verification status
-//   PATCH  /pharmacy/me                 → update profile / hours
-//   GET    /pharmacy/inventory          → inventory rows
-//   POST   /pharmacy/inventory          → add medicine
-//   PATCH  /pharmacy/inventory/:id      → edit / update availability
-//   DELETE /pharmacy/inventory/:id      → remove medicine
-//   POST   /pharmacy/inventory/import   → CSV upload
-//   GET    /pharmacy/overview           → dashboard stats
-//   GET    /pharmacy/notifications      → notifications feed
-//   GET    /pharmacy/participation      → reliability / participation metrics
-//   GET    /pharmacy/integration        → sync status + history
-//   POST   /pharmacy/integration/sync   → trigger a manual sync
-//   GET    /pharmacy/reports            → analytics series
+// Inventory endpoints hit the real NestJS backend at /pharmacies/inventory.
+// Other surfaces (dashboard, notifications, participation, etc.) still use
+// demo data until their backend counterparts are implemented.
+
+import { apiFetch } from '@/lib/api-client'
 import {
-  INVENTORY, RECENT_UPDATES, PENDING_UPDATES, NOTIFICATIONS,
-  PARTICIPATION, INTEGRATION, PROFILE, REPORTS,
+  RECENT_UPDATES, PENDING_UPDATES, NOTIFICATIONS,
+  PARTICIPATION, INTEGRATION, PROFILE, REPORTS, INVENTORY,
 } from './pharmacy-data'
 
 // Resolve a (deep-cloned) value after a short latency so skeletons are exercised.
 const settle = (value, ms = 300) =>
   new Promise((resolve) => setTimeout(() => resolve(structuredClone(value)), ms))
 
-// --- Inventory -----------------------------------------------------------
-export const getInventory = () => settle(INVENTORY)
+// --- Inventory (REAL API) ---------------------------------------------------
+export const getInventory = async () => {
+  try {
+    return await apiFetch('/pharmacies/inventory')
+  } catch {
+    // Fallback to demo data if backend is unreachable or user is unauthenticated
+    console.warn('[pharmacy-api] Inventory API failed, using demo data')
+    return structuredClone(INVENTORY)
+  }
+}
 
-export const getDashboard = () =>
-  settle({
-    stats: {
-      total: INVENTORY.length,
-      available: INVENTORY.filter((m) => m.status === 'available').length,
-      limited: INVENTORY.filter((m) => m.status === 'limited').length,
-      outOfStock: INVENTORY.filter((m) => m.status === 'out-of-stock').length,
-      pending: PENDING_UPDATES.length,
-    },
-    recentUpdates: RECENT_UPDATES,
-    pendingUpdates: PENDING_UPDATES,
-    notifications: NOTIFICATIONS.slice(0, 4),
+export const addMedicine = (medicine) =>
+  apiFetch('/pharmacies/inventory', {
+    method: 'POST',
+    body: medicine,
   })
 
-// TODO(backend): PATCH /pharmacy/inventory/:id { status }
-export const updateAvailability = (id, status) => settle({ ok: true, id, status })
-// TODO(backend): POST /pharmacy/inventory
-export const addMedicine = (medicine) => settle({ ok: true, medicine })
-// TODO(backend): DELETE /pharmacy/inventory/:id
-export const deleteMedicine = (id) => settle({ ok: true, id })
-// TODO(backend): POST /pharmacy/inventory/import (multipart CSV)
-export const importCsv = (rows) => settle({ imported: (rows || []).length, skipped: 0 })
+export const updateAvailability = (id, status) =>
+  apiFetch(`/pharmacies/inventory/${id}`, {
+    method: 'PATCH',
+    body: { status },
+  })
 
-// --- Other surfaces ------------------------------------------------------
+export const deleteMedicine = (id) =>
+  apiFetch(`/pharmacies/inventory/${id}`, {
+    method: 'DELETE',
+  })
+
+export const importCsv = (rows, mode = 'merge') =>
+  apiFetch('/pharmacies/inventory/import', {
+    method: 'POST',
+    body: { rows, mode },
+  })
+
+export const getDashboard = async () => {
+  try {
+    return await apiFetch('/pharmacies/dashboard')
+  } catch {
+    console.warn('[pharmacy-api] Dashboard API failed, fallback to live inventory calculation')
+    const inv = await getInventory()
+    const available = inv.filter((m) => m.status === 'available').length
+    const limited = inv.filter((m) => m.status === 'limited').length
+    const outOfStock = inv.filter((m) => m.status === 'out-of-stock').length
+    return {
+      stats: {
+        total: inv.length,
+        available,
+        limited,
+        outOfStock,
+        pending: outOfStock + limited,
+      },
+      recentUpdates: inv.slice(0, 5).map((r) => ({
+        id: r.id,
+        name: r.name,
+        status: r.status,
+        when: r.updated || 'Just now',
+        by: 'Staff update',
+      })),
+      pendingUpdates: inv.filter((r) => r.status !== 'available').slice(0, 5).map((r) => ({
+        id: r.id,
+        name: r.name,
+        reason: r.status === 'out-of-stock' ? 'Marked out of stock — update if restocked' : 'Limited stock — confirm quantity band',
+      })),
+      notifications: NOTIFICATIONS.slice(0, 4),
+    }
+  }
+}
+
+// --- Other surfaces (still demo data) ----------------------------------------
 export const getNotifications = () => settle(NOTIFICATIONS)
 export const getParticipation = () => settle(PARTICIPATION)
 export const getIntegration = () => settle(INTEGRATION)

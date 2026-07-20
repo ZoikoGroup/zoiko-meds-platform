@@ -16,6 +16,7 @@ export interface AuthenticatedUser {
   email: string;
   fullName: string;
   role: UserRole;
+  pharmacyId: string | null;
 }
 
 @Injectable()
@@ -45,6 +46,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: user.email,
       fullName: user.fullName,
       role: user.role,
+      pharmacyId: user.pharmacyId,
     };
   }
 }
