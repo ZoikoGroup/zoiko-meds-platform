@@ -17,6 +17,66 @@ const SEVERITY_VARIANT = {
   SECURITY_ALERT: 'destructive',
 }
 
+function formatLogDetails(row) {
+  if (!row.details) return '—'
+
+  let data = null
+  if (typeof row.details === 'object') {
+    data = row.details
+  } else if (typeof row.details === 'string') {
+    const trimmed = row.details.trim()
+    if (!trimmed) return '—'
+    try {
+      data = JSON.parse(trimmed)
+    } catch {
+      return row.details
+    }
+  }
+
+  if (!data || typeof data !== 'object') return String(row.details || '—')
+
+  // Role changes
+  if (data.to && data.from) {
+    return `Role changed from ${data.from} → ${data.to}`
+  }
+  if (data.to) {
+    return `Role updated to ${data.to}`
+  }
+
+  // Bulk actions
+  if (data.status && Array.isArray(data.ids)) {
+    const count = data.ids.length
+    return `Bulk action on ${count} ${count === 1 ? 'item' : 'items'} (Status: ${data.status})`
+  }
+
+  // Pharmacy / Entity status changes
+  if (data.pharmacy && data.status) {
+    return `${data.pharmacy} — Status set to ${data.status}`
+  }
+
+  // User creation / modification
+  if (data.email && data.role) {
+    return `Created user ${data.email} (${data.role})`
+  }
+  if (data.email) {
+    return `Target email: ${data.email}`
+  }
+
+  // Generic fallback format
+  const keys = Object.keys(data)
+  if (keys.length === 0) return '—'
+
+  return keys
+    .map((k) => {
+      const val = data[k]
+      const label = k.replace(/([A-Z])/g, ' $1').toLowerCase()
+      if (Array.isArray(val)) return `${label}: ${val.length} items`
+      if (typeof val === 'object' && val !== null) return `${label}: ${JSON.stringify(val)}`
+      return `${label}: ${val}`
+    })
+    .join(' · ')
+}
+
 export default function AuditLogs() {
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -111,9 +171,14 @@ export default function AuditLogs() {
     {
       key: 'details',
       header: 'Log Summary Details',
-      cell: (row) => (
-        <span className="text-muted-foreground leading-normal">{row.details}</span>
-      ),
+      cell: (row) => {
+        const text = row.summary || formatLogDetails(row)
+        return (
+          <span className="text-xs font-medium text-foreground leading-normal" title={row.details || undefined}>
+            {text}
+          </span>
+        )
+      },
     },
   ]
 

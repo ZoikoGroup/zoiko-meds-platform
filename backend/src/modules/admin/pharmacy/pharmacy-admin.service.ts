@@ -103,6 +103,7 @@ export class PharmacyAdminService {
       `admin.pharmacy.${status.toLowerCase()}`,
       'Pharmacy',
       id,
+      { name: pharmacy.name, status },
     );
     return this.toDto(pharmacy);
   }

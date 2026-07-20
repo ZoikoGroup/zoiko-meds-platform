@@ -272,6 +272,7 @@ export class AdminService {
       actorId,
       isActive ? 'admin.user.activate' : 'admin.user.deactivate',
       id,
+      { email: user.email, isActive },
     );
     return this.toPublicUser(user);
   }
@@ -302,17 +303,21 @@ export class AdminService {
       }),
       this.prisma.auditLog.count(),
     ]);
-    // Shape for the admin console: timestamp / action / actor / module / severity / ip / details.
-    const items = rows.map((r) => ({
-      id: r.id,
-      timestamp: r.createdAt,
-      action: r.action,
-      actor: r.actorEmail || r.actorId || 'system',
-      module: r.entityType || 'System',
-      severity: r.severity,
-      ip: r.ipAddress || '—',
-      details: r.metadata ? JSON.stringify(r.metadata) : '',
-    }));
+    // Shape for the admin console: timestamp / action / actor / module / severity / ip / details / summary.
+    const items = rows.map((r) => {
+      const meta = r.metadata as Record<string, any> | null;
+      return {
+        id: r.id,
+        timestamp: r.createdAt,
+        action: r.action,
+        actor: r.actorEmail || r.actorId || 'system',
+        module: r.entityType || 'System',
+        severity: r.severity,
+        ip: r.ipAddress || '—',
+        details: meta ? JSON.stringify(meta) : '',
+        summary: this.formatAuditSummary(r.action, r.entityType, meta),
+      };
+    });
     return {
       items,
       total,
@@ -320,6 +325,73 @@ export class AdminService {
       pageSize: size,
       pageCount: Math.max(1, Math.ceil(total / size)),
     };
+  }
+
+  private formatAuditSummary(
+    action: string,
+    entityType: string | null,
+    metadata: Record<string, any> | null,
+  ): string {
+    const meta = metadata || {};
+
+    if (meta.to && meta.from) {
+      return `Role changed from ${meta.from} → ${meta.to}`;
+    }
+    if (meta.to) {
+      return `Role updated to ${meta.to}`;
+    }
+    if (meta.status && Array.isArray(meta.ids)) {
+      const count = meta.ids.length;
+      return `Bulk action on ${count} ${count === 1 ? 'item' : 'items'} (Status: ${meta.status})`;
+    }
+    if (meta.pharmacy && meta.status) {
+      return `${meta.pharmacy} — Status set to ${meta.status}`;
+    }
+    if (meta.name && meta.status) {
+      return `${meta.name} — Status set to ${meta.status}`;
+    }
+    if (meta.name) {
+      return `${meta.name} (${entityType || 'Entity'})`;
+    }
+    if (meta.email && meta.role) {
+      return `Created user ${meta.email} (${meta.role})`;
+    }
+    if (meta.email && meta.isActive !== undefined) {
+      return `${meta.email} — Account ${meta.isActive ? 'activated' : 'deactivated'}`;
+    }
+    if (meta.email) {
+      return `Target email: ${meta.email}`;
+    }
+
+    const actionMap: Record<string, string> = {
+      'admin.pharmacy.verified': 'Pharmacy verified',
+      'admin.pharmacy.suspended': 'Pharmacy suspended',
+      'admin.user.activate': 'User account activated',
+      'admin.user.deactivate': 'User account deactivated',
+      'admin.seed': 'System data initialized',
+      'auth.login': 'User logged in',
+    };
+
+    if (actionMap[action]) {
+      return actionMap[action];
+    }
+
+    const keys = Object.keys(meta);
+    if (keys.length === 0) {
+      const formattedAction = action
+        .replace(/^admin\./, '')
+        .replace(/\./g, ' ')
+        .replace(/_/g, ' ');
+      return `${formattedAction.charAt(0).toUpperCase() + formattedAction.slice(1)} (${entityType || 'System'})`;
+    }
+
+    return keys
+      .map((k) => {
+        const val = meta[k];
+        if (Array.isArray(val)) return `${k}: ${val.length} items`;
+        return `${k}: ${val}`;
+      })
+      .join(' · ');
   }
 
   // --- helpers -------------------------------------------------------------

@@ -42,9 +42,25 @@ async function bootstrap() {
   SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
 
   const port = config.get<number>('PORT', 8000);
-  await app.listen(port);
-  // eslint-disable-next-line no-console
-  console.log(`ZoikoMeds API listening on http://localhost:${port}/${apiPrefix}`);
+  try {
+    await app.listen(port);
+    // eslint-disable-next-line no-console
+    console.log(`ZoikoMeds API listening on http://localhost:${port}/${apiPrefix}`);
+  } catch (err: unknown) {
+    const error = err as { code?: string };
+    if (error?.code === 'EADDRINUSE') {
+      // eslint-disable-next-line no-console
+      console.error(
+        `\n❌ [Port Conflict] Port ${port} is already in use.\n` +
+          `• If Docker container 'zoikomeds-api' is running, your API is ALREADY ACTIVE at http://localhost:${port}/${apiPrefix}\n` +
+          `• To run locally outside Docker, stop the container first: docker stop zoikomeds-api\n`,
+      );
+    } else {
+      // eslint-disable-next-line no-console
+      console.error('Failed to start application:', err);
+    }
+    process.exit(1);
+  }
 }
 
 bootstrap();
