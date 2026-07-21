@@ -8,6 +8,7 @@ governance, and operational references.
 
 | Document | Description |
 |----------|-------------|
+| [zoikomeds-master-build-reference.md](./zoikomeds-master-build-reference.md) | Consolidated Tier-0 strategic, product, and wireframe reference (source of record). Parts 0–6 (index, MediBase™, ZoikoAvail™ API, ZoikoSignal™, Enterprise, Government & Public Health, Health Systems) + Appendix A (backend contract extractions). |
 | [backend-build-plan.md](./backend-build-plan.md) | Phased build plan for the NestJS + Prisma + PostgreSQL API. |
 | [frontend-build-plan.md](./frontend-build-plan.md) | Phased build plan for the Next.js public app, portals, and enterprise pages. |
 
