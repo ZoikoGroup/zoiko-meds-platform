@@ -186,49 +186,6 @@ export default function Login() {
             </Button>
           </form>
 
-          {/* Quick Demo Logins for Testing */}
-          <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/40 p-3 text-xs">
-            <span className="font-semibold text-muted-foreground">Demo Accounts (One-Click Auto-Fill):</span>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="flex-1 text-[10px] h-8 bg-card"
-                onClick={() => {
-                  setEmail('john@example.com')
-                  setPassword('User@123')
-                }}
-              >
-                Log In as Patient
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="flex-1 text-[10px] h-8 bg-card"
-                onClick={() => {
-                  setEmail('manager@zoikomeds.io')
-                  setPassword('Passw0rd!')
-                }}
-              >
-                Log In as Pharmacy
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="flex-1 text-[10px] h-8 bg-card"
-                onClick={() => {
-                  setEmail('super@zoikogroup.com')
-                  setPassword('Super@123')
-                }}
-              >
-                Log In as Admin
-              </Button>
-            </div>
-          </div>
-
           {/* Governance Notice */}
           <div className="flex gap-2 rounded-lg bg-teal/5 border border-teal/10 p-3 text-[11px] leading-relaxed text-muted-foreground">
             <Shield className="size-4.5 shrink-0 text-teal mt-0.5" />
