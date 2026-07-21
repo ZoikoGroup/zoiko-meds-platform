@@ -10,6 +10,7 @@ import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { AuditWriter } from '../admin/audit.writer';
 import { roleLabel } from './roles';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -33,9 +34,10 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly mail: MailService,
+    private readonly auditWriter: AuditWriter,
   ) {}
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, ipAddress?: string, userAgent?: string) {
     const email = this.normalizeEmail(dto.email);
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -53,27 +55,140 @@ export class AuthService {
         role: UserRole.PUBLIC,
       },
     });
+
     // Best-effort welcome; never blocks account creation.
     void this.mail.sendWelcome({ to: user.email, fullName: user.fullName });
+
+    await this.auditWriter.write(
+      user.id,
+      'auth.register',
+      'User',
+      user.id,
+      {
+        module: 'Authentication',
+        action: 'Register',
+        status: 'Success',
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.fullName,
+        userRole: user.role,
+        userAgent,
+      },
+      ipAddress,
+    );
+
     return this.issueSession(user);
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, ipAddress?: string, userAgent?: string) {
     const email = this.normalizeEmail(dto.email);
     const user = await this.prisma.user.findUnique({ where: { email } });
-    // Uniform failure for missing user / SSO-only account / bad password to
-    // avoid leaking which emails exist.
+
     if (!user || !user.passwordHash) {
+      await this.auditWriter.write(
+        null,
+        'auth.login_failed',
+        'User',
+        null,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          attemptedEmail: email,
+          reason: 'User not found or missing password',
+          userAgent,
+        },
+        ipAddress,
+      );
       throw new UnauthorizedException('Invalid email or password');
     }
+
     if (!user.isActive) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.login_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          userEmail: user.email,
+          userName: user.fullName,
+          userRole: user.role,
+          reason: 'Account deactivated',
+          userAgent,
+        },
+        ipAddress,
+      );
       throw new UnauthorizedException('This account has been deactivated');
     }
+
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.login_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          userEmail: user.email,
+          userName: user.fullName,
+          userRole: user.role,
+          reason: 'Invalid credentials',
+          userAgent,
+        },
+        ipAddress,
+      );
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    await this.auditWriter.write(
+      user.id,
+      'auth.login',
+      'User',
+      user.id,
+      {
+        module: 'Authentication',
+        action: 'Login',
+        status: 'Success',
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.fullName,
+        userRole: user.role,
+        userAgent,
+      },
+      ipAddress,
+    );
+
     return this.issueSession(user);
+  }
+
+  async logout(userId: string, ipAddress?: string, userAgent?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (user) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.logout',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Logout',
+          status: 'Success',
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.fullName,
+          userRole: user.role,
+          userAgent,
+        },
+        ipAddress,
+      );
+    }
+    return { message: 'Logged out successfully' };
   }
 
   async me(userId: string) {
@@ -95,7 +210,12 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
-  async changePassword(userId: string, dto: ChangePasswordDto) {
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException();
@@ -107,6 +227,23 @@ export class AuthService {
     }
     const valid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
     if (!valid) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.change_password_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed Password Change',
+          status: 'Failed',
+          userEmail: user.email,
+          userName: user.fullName,
+          userRole: user.role,
+          reason: 'Current password incorrect',
+          userAgent,
+        },
+        ipAddress,
+      );
       throw new UnauthorizedException('Current password is incorrect');
     }
     const passwordHash = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
@@ -114,6 +251,25 @@ export class AuthService {
       where: { id: userId },
       data: { passwordHash },
     });
+
+    await this.auditWriter.write(
+      user.id,
+      'auth.change_password',
+      'User',
+      user.id,
+      {
+        module: 'Authentication',
+        action: 'Password Change',
+        status: 'Success',
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.fullName,
+        userRole: user.role,
+        userAgent,
+      },
+      ipAddress,
+    );
+
     return { message: 'Password changed successfully' };
   }
 
@@ -123,7 +279,7 @@ export class AuthService {
    * Start a reset. Always returns the same response whether or not the email
    * exists, so we never reveal which addresses are registered.
    */
-  async forgotPassword(dto: ForgotPasswordDto) {
+  async forgotPassword(dto: ForgotPasswordDto, ipAddress?: string, userAgent?: string) {
     const email = this.normalizeEmail(dto.email);
     const user = await this.prisma.user.findUnique({ where: { email } });
     const generic = {
@@ -139,11 +295,30 @@ export class AuthService {
       fullName: user.fullName,
       token,
     });
+
+    await this.auditWriter.write(
+      user.id,
+      'auth.forgot_password',
+      'User',
+      user.id,
+      {
+        module: 'Authentication',
+        action: 'Password Reset Request',
+        status: 'Success',
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.fullName,
+        userRole: user.role,
+        userAgent,
+      },
+      ipAddress,
+    );
+
     return generic;
   }
 
   /** Complete a reset (or invite set-password). Consumes the token. */
-  async resetPassword(dto: ResetPasswordDto) {
+  async resetPassword(dto: ResetPasswordDto, ipAddress?: string, userAgent?: string) {
     const tokenHash = this.hashToken(dto.token);
     const record = await this.prisma.passwordResetToken.findUnique({
       where: { tokenHash },
@@ -171,6 +346,27 @@ export class AuthService {
         data: { usedAt: new Date() },
       }),
     ]);
+
+    if (record.user) {
+      await this.auditWriter.write(
+        record.user.id,
+        'auth.reset_password',
+        'User',
+        record.user.id,
+        {
+          module: 'Authentication',
+          action: 'Password Reset Complete',
+          status: 'Success',
+          userId: record.user.id,
+          userEmail: record.user.email,
+          userName: record.user.fullName,
+          userRole: record.user.role,
+          userAgent,
+        },
+        ipAddress,
+      );
+    }
+
     return { message: 'Your password has been set. You can now sign in.' };
   }
 

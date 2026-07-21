@@ -31,18 +31,24 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
-      PORT: 4000
+      PORT: 8000
       API_PREFIX: api
-      CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000
+      CORS_ORIGIN: https://zoiko-meds-platform.vercel.app,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,http://localhost:8080
       DATABASE_URL: postgresql://postgres:postgres@db:5432/zoikomeds?schema=public
-      JWT_SECRET: change-me-in-production
+      JWT_SECRET: jwtsecretishere
+      JWT_EXPIRES_IN: 3600s
       THROTTLE_TTL: 60
       THROTTLE_LIMIT: 100
       EXPOSE_EXACT_STOCK: "false"
+      SUPER_ADMIN_EMAIL: superadmin@zoikomeds.io
+      SUPER_ADMIN_PASSWORD: ChangeMe!SuperAdmin1
+      SUPER_ADMIN_NAME: ZoikoMeds Super Admin
     ports:
-      - "8000:4000"
+      - "8000:8000"
 
 volumes:
   zoikomeds-db-data:

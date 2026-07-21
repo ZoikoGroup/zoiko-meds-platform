@@ -2,7 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
+  Ip,
   Patch,
   Post,
   UseGuards,
@@ -25,14 +27,36 @@ export class AuthController {
 
   @Post('register')
   @ApiOperation({ summary: 'Create a public account and receive a JWT' })
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto);
+  register(
+    @Body() dto: RegisterDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.register(dto, ipAddress, userAgent);
   }
 
   @Post('login')
+  @HttpCode(200)
   @ApiOperation({ summary: 'Exchange credentials for a JWT' })
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto);
+  login(
+    @Body() dto: LoginDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.login(dto, ipAddress, userAgent);
+  }
+
+  @Post('logout')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Log out and record audit event' })
+  logout(
+    @CurrentUser('id') userId: string,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.logout(userId, ipAddress, userAgent);
   }
 
   @Get('me')
@@ -61,21 +85,32 @@ export class AuthController {
   changePassword(
     @CurrentUser('id') userId: string,
     @Body() dto: ChangePasswordDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
   ) {
-    return this.auth.changePassword(userId, dto);
+    return this.auth.changePassword(userId, dto, ipAddress, userAgent);
   }
 
   @Post('forgot-password')
   @HttpCode(200)
   @ApiOperation({ summary: 'Request a password reset link by email' })
-  forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.auth.forgotPassword(dto);
+  forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.forgotPassword(dto, ipAddress, userAgent);
   }
 
   @Post('reset-password')
   @HttpCode(200)
   @ApiOperation({ summary: 'Set a new password using a reset/invite token' })
-  resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.auth.resetPassword(dto);
+  resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.resetPassword(dto, ipAddress, userAgent);
   }
 }
+

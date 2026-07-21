@@ -17,6 +17,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ListUsersQuery } from './dto/list-users.query';
+import { ListAuditLogsQuery } from './dto/list-audit-logs.query';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -107,14 +108,8 @@ export class AdminController {
   }
 
   @Get('audit-logs')
-  @ApiOperation({ summary: 'Read the platform audit trail (paginated)' })
-  auditLogs(
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-  ) {
-    return this.admin.listAuditLogs(
-      page ? Number(page) : 1,
-      pageSize ? Number(pageSize) : 50,
-    );
+  @ApiOperation({ summary: 'Read the platform audit trail (paginated & filtered)' })
+  auditLogs(@Query() query: ListAuditLogsQuery) {
+    return this.admin.listAuditLogs(query);
   }
 }

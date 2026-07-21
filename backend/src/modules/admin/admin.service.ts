@@ -15,6 +15,7 @@ import { AuditWriter } from './audit.writer';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ListUsersQuery } from './dto/list-users.query';
+import { ListAuditLogsQuery } from './dto/list-audit-logs.query';
 
 const SALT_ROUNDS = 12;
 const DEFAULT_PAGE_SIZE = 20;
@@ -293,16 +294,90 @@ export class AdminService {
 
   // --- Audit trail ---------------------------------------------------------
 
-  async listAuditLogs(page = 1, pageSize = 50) {
+  async listAuditLogs(query: ListAuditLogsQuery = {}) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 50;
     const size = Math.min(Math.max(pageSize, 1), 200);
+
+    const conditions: Prisma.AuditLogWhereInput[] = [];
+
+    if (query.module && query.module !== 'All') {
+      conditions.push({
+        OR: [
+          { entityType: { equals: query.module, mode: 'insensitive' } },
+          { metadata: { path: ['module'], equals: query.module } },
+        ],
+      });
+    }
+
+    if (query.severity) {
+      conditions.push({ severity: query.severity });
+    }
+
+    if (query.action && query.action !== 'All') {
+      conditions.push({ action: { contains: query.action, mode: 'insensitive' } });
+    }
+
+    if (query.user) {
+      conditions.push({
+        OR: [
+          { actorEmail: { contains: query.user, mode: 'insensitive' } },
+          { actorId: { contains: query.user, mode: 'insensitive' } },
+          { metadata: { path: ['userName'], string_contains: query.user } },
+          { metadata: { path: ['userEmail'], string_contains: query.user } },
+        ],
+      });
+    }
+
+    if (query.pharmacy) {
+      conditions.push({
+        OR: [
+          { metadata: { path: ['pharmacyName'], string_contains: query.pharmacy } },
+          { metadata: { path: ['pharmacyId'], string_contains: query.pharmacy } },
+        ],
+      });
+    }
+
+    if (query.search) {
+      const term = query.search.trim();
+      if (term) {
+        conditions.push({
+          OR: [
+            { action: { contains: term, mode: 'insensitive' } },
+            { actorEmail: { contains: term, mode: 'insensitive' } },
+            { entityType: { contains: term, mode: 'insensitive' } },
+            { metadata: { path: ['medicineName'], string_contains: term } },
+            { metadata: { path: ['pharmacyName'], string_contains: term } },
+            { metadata: { path: ['userName'], string_contains: term } },
+          ],
+        });
+      }
+    }
+
+    if (query.startDate || query.endDate) {
+      const dateFilter: Prisma.DateTimeFilter = {};
+      if (query.startDate) dateFilter.gte = new Date(query.startDate);
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.lte = end;
+      }
+      conditions.push({ createdAt: dateFilter });
+    }
+
+    const where: Prisma.AuditLogWhereInput =
+      conditions.length > 0 ? { AND: conditions } : {};
+
     const [rows, total] = await Promise.all([
       this.prisma.auditLog.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * size,
         take: size,
       }),
-      this.prisma.auditLog.count(),
+      this.prisma.auditLog.count({ where }),
     ]);
+
     // Shape for the admin console: timestamp / action / actor / module / severity / ip / details / summary.
     const items = rows.map((r) => {
       const meta = r.metadata as Record<string, any> | null;
@@ -311,7 +386,7 @@ export class AdminService {
         timestamp: r.createdAt,
         action: r.action,
         actor: r.actorEmail || r.actorId || 'system',
-        module: r.entityType || 'System',
+        module: r.entityType || meta?.module || 'System',
         severity: r.severity,
         ip: r.ipAddress || '—',
         details: meta ? JSON.stringify(meta) : '',
@@ -333,6 +408,52 @@ export class AdminService {
     metadata: Record<string, any> | null,
   ): string {
     const meta = metadata || {};
+
+    if (action === 'auth.login') {
+      const email = meta.userEmail || meta.attemptedEmail || 'user';
+      const role = meta.userRole ? ` (${meta.userRole})` : '';
+      return `User ${email}${role} logged in successfully`;
+    }
+    if (action === 'auth.login_failed') {
+      const email = meta.userEmail || meta.attemptedEmail || 'unknown';
+      const reason = meta.reason ? ` (${meta.reason})` : '';
+      return `Failed login attempt for ${email}${reason}`;
+    }
+    if (action === 'auth.logout') {
+      const email = meta.userEmail || 'user';
+      return `User ${email} logged out`;
+    }
+    if (action === 'auth.register') {
+      const email = meta.userEmail || 'user';
+      return `New user account registered for ${email}`;
+    }
+    if (action === 'auth.change_password') {
+      const email = meta.userEmail || 'user';
+      return `User ${email} changed account password`;
+    }
+    if (action === 'auth.forgot_password') {
+      const email = meta.userEmail || meta.email || 'user';
+      return `Password reset link requested for ${email}`;
+    }
+    if (action === 'auth.reset_password') {
+      const email = meta.userEmail || meta.email || 'user';
+      return `Password reset completed for ${email}`;
+    }
+
+    if (action === 'pharmacy.inventory.create') {
+      return `Added medicine '${meta.medicineName || 'item'}' to inventory (${meta.pharmacyName || 'Pharmacy'})`;
+    }
+    if (action === 'pharmacy.inventory.update') {
+      const prevStr = meta.previousValues?.status ? ` [was: ${meta.previousValues.status}]` : '';
+      const newStr = meta.newValues?.status || meta.status || '';
+      return `Updated '${meta.medicineName || 'inventory item'}' status to ${newStr}${prevStr}`;
+    }
+    if (action === 'pharmacy.inventory.delete') {
+      return `Deleted medicine '${meta.medicineName || 'item'}' from inventory (${meta.pharmacyName || 'Pharmacy'})`;
+    }
+    if (action === 'pharmacy.inventory.import') {
+      return `Imported inventory CSV (${meta.imported ?? 0} added, ${meta.updated ?? 0} updated)`;
+    }
 
     if (meta.to && meta.from) {
       return `Role changed from ${meta.from} → ${meta.to}`;
@@ -379,7 +500,7 @@ export class AdminService {
     const keys = Object.keys(meta);
     if (keys.length === 0) {
       const formattedAction = action
-        .replace(/^admin\./, '')
+        .replace(/^(admin|pharmacy)\./, '')
         .replace(/\./g, ' ')
         .replace(/_/g, ' ');
       return `${formattedAction.charAt(0).toUpperCase() + formattedAction.slice(1)} (${entityType || 'System'})`;
@@ -389,6 +510,7 @@ export class AdminService {
       .map((k) => {
         const val = meta[k];
         if (Array.isArray(val)) return `${k}: ${val.length} items`;
+        if (typeof val === 'object' && val !== null) return `${k}: ${JSON.stringify(val)}`;
         return `${k}: ${val}`;
       })
       .join(' · ');

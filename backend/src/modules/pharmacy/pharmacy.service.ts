@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { AvailabilityConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditWriter } from '../admin/audit.writer';
+import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 
@@ -36,7 +38,10 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
  */
 @Injectable()
 export class PharmacyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditWriter: AuditWriter,
+  ) {}
 
   // ---------------------------------------------------------------------------
   // Public pharmacy queries (existing)
@@ -224,13 +229,27 @@ export class PharmacyService {
     };
   }
 
+  private async getPharmacyName(pharmacyId: string): Promise<string> {
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id: pharmacyId },
+      select: { name: true },
+    });
+    return pharmacy?.name || 'Pharmacy';
+  }
+
   /**
    * Add a medicine to the pharmacy's inventory.
    * 1. Find or create the MedicineEntity.
    * 2. Create an InventorySignal (raw intake).
    * 3. Upsert an AvailabilitySignal (public-safe derived signal).
+   * 4. Audit-log the operation.
    */
-  async addInventoryItem(pharmacyId: string, dto: AddInventoryDto) {
+  async addInventoryItem(
+    pharmacyId: string,
+    dto: AddInventoryDto,
+    user?: AuthenticatedUser,
+    ipAddress?: string,
+  ) {
     // 1. Find or create the medicine entity
     let medicine = await this.prisma.medicineEntity.findFirst({
       where: {
@@ -284,6 +303,35 @@ export class PharmacyService {
       },
     });
 
+    // 4. Audit log entry
+    const pharmacyName = await this.getPharmacyName(pharmacyId);
+    await this.auditWriter.write(
+      user?.id ?? null,
+      'pharmacy.inventory.create',
+      'Medicine Inventory',
+      avail.id,
+      {
+        userId: user?.id,
+        userEmail: user?.email,
+        userName: user?.fullName || 'Pharmacy Admin',
+        userRole: user?.role || 'PHARMACY_ADMIN',
+        pharmacyId,
+        pharmacyName,
+        module: 'Inventory',
+        action: 'Create',
+        entityType: 'Medicine Inventory',
+        entityId: avail.id,
+        medicineId: medicine.id,
+        medicineName: medicine.canonicalName,
+        genericName: medicine.genericName || '',
+        strength: medicine.strength || '',
+        dosageForm: medicine.dosageForm || 'Tablet',
+        newValues: { status, confidence: confidence.toLowerCase() },
+        status: 'Success',
+      },
+      ipAddress,
+    );
+
     return {
       id: avail.id,
       medicineId: medicine.id,
@@ -304,6 +352,8 @@ export class PharmacyService {
     pharmacyId: string,
     signalId: string,
     dto: UpdateInventoryDto,
+    user?: AuthenticatedUser,
+    ipAddress?: string,
   ) {
     const signal = await this.prisma.availabilitySignal.findUnique({
       where: { id: signalId },
@@ -313,6 +363,7 @@ export class PharmacyService {
       throw new NotFoundException('Inventory item not found');
     }
 
+    const oldStatus = CONFIDENCE_TO_STATUS[signal.confidence] || 'out-of-stock';
     const status = dto.status || 'available';
     const confidence = STATUS_TO_CONFIDENCE[status] || AvailabilityConfidence.HIGH;
 
@@ -330,6 +381,36 @@ export class PharmacyService {
         },
       },
     });
+
+    // Audit log entry
+    const pharmacyName = await this.getPharmacyName(pharmacyId);
+    await this.auditWriter.write(
+      user?.id ?? null,
+      'pharmacy.inventory.update',
+      'Medicine Inventory',
+      signalId,
+      {
+        userId: user?.id,
+        userEmail: user?.email,
+        userName: user?.fullName || 'Pharmacy Admin',
+        userRole: user?.role || 'PHARMACY_ADMIN',
+        pharmacyId,
+        pharmacyName,
+        module: 'Inventory',
+        action: 'Update',
+        entityType: 'Medicine Inventory',
+        entityId: signalId,
+        medicineId: updated.medicineId,
+        medicineName: updated.medicine.canonicalName,
+        genericName: updated.medicine.genericName || '',
+        strength: updated.medicine.strength || '',
+        dosageForm: updated.medicine.dosageForm || 'Tablet',
+        previousValues: { status: oldStatus, confidence: signal.confidence.toLowerCase() },
+        newValues: { status, confidence: confidence.toLowerCase() },
+        status: 'Success',
+      },
+      ipAddress,
+    );
 
     return {
       id: updated.id,
@@ -349,7 +430,13 @@ export class PharmacyService {
    * Mode: 'merge' (default — keeps existing inventory, updates matching, adds new)
    * Mode: 'replace' (updates/adds, and prunes unlisted inventory for the pharmacy)
    */
-  async importCsv(pharmacyId: string, input: string | any[], mode: 'merge' | 'replace' = 'merge') {
+  async importCsv(
+    pharmacyId: string,
+    input: string | any[],
+    mode: 'merge' | 'replace' = 'merge',
+    user?: AuthenticatedUser,
+    ipAddress?: string,
+  ) {
     let rawRows: any[] = [];
 
     if (typeof input === 'string') {
@@ -361,12 +448,11 @@ export class PharmacyService {
       if (!headers.includes('name')) {
         throw new BadRequestException('CSV file missing required "name" header column.');
       }
-
       for (let i = 1; i < lines.length; i++) {
-        const cells = lines[i].split(',');
+        const parts = lines[i].split(',').map((p) => p.trim());
         const row: Record<string, string> = {};
         headers.forEach((h, idx) => {
-          row[h] = (cells[idx] || '').trim();
+          row[h] = parts[idx] || '';
         });
         rawRows.push(row);
       }
@@ -380,72 +466,49 @@ export class PharmacyService {
     let totalProcessed = 0;
     const processedSignalIds = new Set<string>();
 
-    console.log(`[CSV Import] Pharmacy ${pharmacyId} [Mode: ${mode}]: Received CSV containing ${rawRows.length} rows.`);
-
-    for (const rawRow of rawRows) {
+    for (const row of rawRows) {
       totalProcessed++;
-      const name = (rawRow.name || rawRow.Name || '').trim();
+      const name = row.name || row.canonicalName || row.medicineName;
       if (!name) {
         skipped++;
-        console.log(`[CSV Import] Row ${totalProcessed}: Skipped (missing name).`);
         continue;
       }
-
-      const generic = (rawRow.generic || rawRow.Generic || '').trim();
-      const strength = (rawRow.strength || rawRow.Strength || '').trim();
-      const dosageForm = (rawRow.dosageform || rawRow.dosageForm || rawRow.DosageForm || 'Tablet').trim();
-      let rawStatus = (rawRow.status || rawRow.Status || 'available').trim().toLowerCase();
-
-      if (rawStatus === 'in-stock' || rawStatus === 'in stock') rawStatus = 'available';
-      if (rawStatus === 'out of stock' || rawStatus === 'unavailable') rawStatus = 'out-of-stock';
-      if (rawStatus === 'limited stock') rawStatus = 'limited';
-
-      const validStatuses = ['available', 'limited', 'out-of-stock'];
-      const status = validStatuses.includes(rawStatus) ? rawStatus : 'available';
-      const confidence = STATUS_TO_CONFIDENCE[status] || AvailabilityConfidence.HIGH;
-      const reportedInStock = status !== 'out-of-stock';
+      const generic = row.generic || row.genericName || '';
+      const strength = row.strength || '';
+      const dosageForm = row.dosageForm || row.form || 'Tablet';
+      const statusRaw = (row.status || row.availability || 'available').toLowerCase();
+      const confidence = STATUS_TO_CONFIDENCE[statusRaw] || AvailabilityConfidence.HIGH;
+      const reportedInStock = statusRaw !== 'out-of-stock';
 
       try {
-        // 1. Find or create MedicineEntity (unique by canonicalName, strength, dosageForm)
         let medicine = await this.prisma.medicineEntity.findFirst({
           where: {
             canonicalName: { equals: name, mode: 'insensitive' },
-            strength: strength ? { equals: strength, mode: 'insensitive' } : null,
-            dosageForm: dosageForm ? { equals: dosageForm, mode: 'insensitive' } : null,
+            strength: strength || undefined,
           },
         });
 
-        if (medicine) {
-          if (generic && medicine.genericName !== generic) {
-            await this.prisma.medicineEntity.update({
-              where: { id: medicine.id },
-              data: { genericName: generic },
-            });
-          }
-        } else {
+        if (!medicine) {
           medicine = await this.prisma.medicineEntity.create({
             data: {
               canonicalName: name,
               genericName: generic || null,
               strength: strength || null,
-              dosageForm: dosageForm || 'Tablet',
+              dosageForm,
             },
           });
         }
 
-        // 2. Create raw InventorySignal intake
         await this.prisma.inventorySignal.create({
           data: {
             pharmacyId,
             medicineId: medicine.id,
             uploadMethod: 'CSV',
             reportedInStock,
-            quantityOnHand: null,
           },
         });
 
-        // 3. Check if AvailabilitySignal exists for (medicineId, pharmacyId)
-        const existing = await this.prisma.availabilitySignal.findUnique({
+        const existingSignal = await this.prisma.availabilitySignal.findUnique({
           where: {
             medicineId_pharmacyId: {
               medicineId: medicine.id,
@@ -454,9 +517,9 @@ export class PharmacyService {
           },
         });
 
-        if (existing) {
+        if (existingSignal) {
           const updatedSignal = await this.prisma.availabilitySignal.update({
-            where: { id: existing.id },
+            where: { id: existingSignal.id },
             data: {
               confidence,
               computedAt: new Date(),
@@ -477,11 +540,9 @@ export class PharmacyService {
         }
       } catch (err: any) {
         skipped++;
-        console.error(`[CSV Import Error] Row ${totalProcessed} (${name}):`, err?.message || err);
       }
     }
 
-    // 4. If mode is 'replace', prune unlisted availability signals for this pharmacy
     if (mode === 'replace') {
       const allPharmacySignals = await this.prisma.availabilitySignal.findMany({
         where: { pharmacyId },
@@ -496,12 +557,33 @@ export class PharmacyService {
         await this.prisma.availabilitySignal.deleteMany({
           where: { id: { in: idsToDelete } },
         });
-        console.log(`[CSV Import Prune] Mode 'replace' pruned ${idsToDelete.length} unlisted signals for pharmacy ${pharmacyId}.`);
       }
     }
 
-    console.log(
-      `[CSV Import Summary] Pharmacy ${pharmacyId} [${mode}]: Total: ${totalProcessed}, Imported: ${imported}, Updated: ${updated}, Skipped: ${skipped}`,
+    const pharmacyName = await this.getPharmacyName(pharmacyId);
+    await this.auditWriter.write(
+      user?.id ?? null,
+      'pharmacy.inventory.import',
+      'Medicine Inventory',
+      null,
+      {
+        userId: user?.id,
+        userEmail: user?.email,
+        userName: user?.fullName || 'Pharmacy Admin',
+        userRole: user?.role || 'PHARMACY_ADMIN',
+        pharmacyId,
+        pharmacyName,
+        module: 'Inventory',
+        action: 'Import',
+        entityType: 'Medicine Inventory',
+        imported,
+        updated,
+        skipped,
+        totalProcessed,
+        mode,
+        status: 'Success',
+      },
+      ipAddress,
     );
 
     return {
@@ -516,9 +598,25 @@ export class PharmacyService {
   /**
    * Remove an inventory item (AvailabilitySignal) from the pharmacy.
    */
-  async deleteInventoryItem(pharmacyId: string, signalId: string) {
+  async deleteInventoryItem(
+    pharmacyId: string,
+    signalId: string,
+    user?: AuthenticatedUser,
+    ipAddress?: string,
+  ) {
     const signal = await this.prisma.availabilitySignal.findUnique({
       where: { id: signalId },
+      include: {
+        medicine: {
+          select: {
+            id: true,
+            canonicalName: true,
+            genericName: true,
+            strength: true,
+            dosageForm: true,
+          },
+        },
+      },
     });
 
     if (!signal || signal.pharmacyId !== pharmacyId) {
@@ -526,6 +624,34 @@ export class PharmacyService {
     }
 
     await this.prisma.availabilitySignal.delete({ where: { id: signalId } });
+
+    const pharmacyName = await this.getPharmacyName(pharmacyId);
+    await this.auditWriter.write(
+      user?.id ?? null,
+      'pharmacy.inventory.delete',
+      'Medicine Inventory',
+      signalId,
+      {
+        userId: user?.id,
+        userEmail: user?.email,
+        userName: user?.fullName || 'Pharmacy Admin',
+        userRole: user?.role || 'PHARMACY_ADMIN',
+        pharmacyId,
+        pharmacyName,
+        module: 'Inventory',
+        action: 'Delete',
+        entityType: 'Medicine Inventory',
+        entityId: signalId,
+        medicineId: signal.medicineId,
+        medicineName: signal.medicine?.canonicalName || 'Unknown',
+        genericName: signal.medicine?.genericName || '',
+        strength: signal.medicine?.strength || '',
+        dosageForm: signal.medicine?.dosageForm || 'Tablet',
+        status: 'Success',
+      },
+      ipAddress,
+    );
+
     return { id: signalId, deleted: true };
   }
 
