@@ -19,6 +19,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { OAuthProfile } from './oauth-profile';
 
 const SALT_ROUNDS = 12;
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -155,6 +156,83 @@ export class AuthService {
         module: 'Authentication',
         action: 'Login',
         status: 'Success',
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.fullName,
+        userRole: user.role,
+        userAgent,
+      },
+      ipAddress,
+    );
+
+    return this.issueSession(user);
+  }
+
+  /**
+   * Sign in (or provision on first use) via an external OAuth provider.
+   * Accounts created this way are password-less — they can only sign in through
+   * their identity provider, never grant an elevated role, and follow the same
+   * active-account and audit rules as password login.
+   */
+  async oauthLogin(
+    profile: OAuthProfile,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    if (!profile.email) {
+      throw new UnauthorizedException(
+        'Your identity provider did not share an email address, which is required to sign in.',
+      );
+    }
+    const email = this.normalizeEmail(profile.email);
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    const isNew = !user;
+
+    if (!user) {
+      // Self-service OAuth registration can never grant an elevated role.
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          fullName: profile.fullName,
+          role: UserRole.PUBLIC,
+          // passwordHash stays null — this is an IdP-backed account.
+        },
+      });
+      void this.mail.sendWelcome({ to: user.email, fullName: user.fullName });
+    }
+
+    if (!user.isActive) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.oauth_login_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed OAuth Login',
+          status: 'Failed',
+          provider: profile.provider,
+          userEmail: user.email,
+          userName: user.fullName,
+          userRole: user.role,
+          reason: 'Account deactivated',
+          userAgent,
+        },
+        ipAddress,
+      );
+      throw new UnauthorizedException('This account has been deactivated');
+    }
+
+    await this.auditWriter.write(
+      user.id,
+      isNew ? 'auth.oauth_register' : 'auth.oauth_login',
+      'User',
+      user.id,
+      {
+        module: 'Authentication',
+        action: isNew ? 'OAuth Register' : 'OAuth Login',
+        status: 'Success',
+        provider: profile.provider,
         userId: user.id,
         userEmail: user.email,
         userName: user.fullName,

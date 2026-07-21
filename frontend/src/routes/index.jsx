@@ -64,6 +64,7 @@ const Login = lazy(() => import('@/pages/Login'))
 const Register = lazy(() => import('@/pages/Register'))
 const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
 const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
+const AuthCallback = lazy(() => import('@/pages/AuthCallback'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
 export const router = createBrowserRouter([
@@ -102,6 +103,10 @@ export const router = createBrowserRouter([
       },
     ],
   },
+  // OAuth landing — adopts the token minted by the backend callback and
+  // forwards to the right portal. Deliberately outside PublicRoute so it runs
+  // during the brief window before the session is hydrated.
+  { path: 'auth/callback', element: <AuthCallback /> },
   // Root: the login page is the front door.
   // PublicRoute forwards an already-signed-in user on to their portal.
   {

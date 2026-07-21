@@ -100,6 +100,22 @@ export function AuthProvider({ children }) {
     return clientUser
   }, [])
 
+  // Adopt a token minted by an OAuth callback: store it, then hydrate the user
+  // from /auth/me. Returns the client user, or throws if the token is invalid.
+  const loginWithToken = useCallback(async (token) => {
+    setToken(token)
+    try {
+      const apiUser = await meRequest()
+      const clientUser = toClientUser(apiUser)
+      setUser(clientUser)
+      return clientUser
+    } catch (err) {
+      setToken(null)
+      setUser(null)
+      throw err
+    }
+  }, [])
+
   const logout = useCallback(() => {
     setToken(null)
     setUser(null)
@@ -134,12 +150,22 @@ export function AuthProvider({ children }) {
       homePath: portalHome(user?.role),
       bootstrapping,
       login,
+      loginWithToken,
       register,
       logout,
       updateProfile,
       changePassword,
     }),
-    [user, bootstrapping, login, register, logout, updateProfile, changePassword]
+    [
+      user,
+      bootstrapping,
+      login,
+      loginWithToken,
+      register,
+      logout,
+      updateProfile,
+      changePassword,
+    ]
   )
 
   return <AuthContext value={value}>{children}</AuthContext>

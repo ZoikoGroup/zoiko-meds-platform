@@ -7,9 +7,13 @@ import {
   Ip,
   Patch,
   Post,
+  Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
+import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -18,12 +22,17 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GoogleOAuthGuard, MicrosoftOAuthGuard } from './guards/oauth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { OAuthProfile } from './oauth-profile';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Post('register')
   @ApiOperation({ summary: 'Create a public account and receive a JWT' })
@@ -44,6 +53,77 @@ export class AuthController {
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.login(dto, ipAddress, userAgent);
+  }
+
+  // --- OAuth (Google, Microsoft) ------------------------------------------
+  // Full-page browser flow: the SPA navigates the browser to /auth/<provider>,
+  // the provider redirects back to /auth/<provider>/callback, and we bounce the
+  // browser to the frontend with a short-lived JWT in the query string.
+
+  @Get('google')
+  @UseGuards(GoogleOAuthGuard)
+  @ApiOperation({ summary: 'Begin Google OAuth sign-in (browser redirect)' })
+  googleAuth() {
+    // The guard redirects to Google; this body never runs.
+  }
+
+  @Get('google/callback')
+  @UseGuards(GoogleOAuthGuard)
+  @ApiExcludeEndpoint()
+  async googleCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    await this.completeOAuth(req, res, ipAddress, userAgent);
+  }
+
+  @Get('microsoft')
+  @UseGuards(MicrosoftOAuthGuard)
+  @ApiOperation({ summary: 'Begin Microsoft OAuth sign-in (browser redirect)' })
+  microsoftAuth() {
+    // The guard redirects to Microsoft; this body never runs.
+  }
+
+  @Get('microsoft/callback')
+  @UseGuards(MicrosoftOAuthGuard)
+  @ApiExcludeEndpoint()
+  async microsoftCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    await this.completeOAuth(req, res, ipAddress, userAgent);
+  }
+
+  /** Shared callback tail: issue a session and redirect back to the SPA. */
+  private async completeOAuth(
+    req: Request,
+    res: Response,
+    ipAddress: string,
+    userAgent: string,
+  ) {
+    const frontend = this.config
+      .get<string>('APP_BASE_URL', 'http://localhost:5173')
+      .replace(/\/$/, '');
+    try {
+      const profile = req.user as OAuthProfile | undefined;
+      if (!profile) throw new Error('No OAuth profile on request');
+      const { accessToken } = await this.auth.oauthLogin(
+        profile,
+        ipAddress,
+        userAgent,
+      );
+      const target = this.config.get<string>(
+        'OAUTH_SUCCESS_REDIRECT',
+        `${frontend}/auth/callback`,
+      );
+      res.redirect(`${target}?token=${encodeURIComponent(accessToken)}`);
+    } catch {
+      res.redirect(`${frontend}/login?error=oauth`);
+    }
   }
 
   @Post('logout')

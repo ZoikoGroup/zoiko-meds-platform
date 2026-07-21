@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   LogIn,
   UserPlus,
@@ -20,10 +20,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { OAuthButtons } from '@/components/shared/oauth-buttons'
 
 export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   // Form states
   const [email, setEmail] = useState('')
@@ -33,7 +35,11 @@ export default function Login() {
 
   // Feedback states
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(
+    searchParams.get('error') === 'oauth'
+      ? 'Social sign-in could not be completed. Please try again or use your email and password.'
+      : ''
+  )
 
   // Handle Form Submission
   const handleSubmit = async (e) => {
@@ -185,6 +191,9 @@ export default function Login() {
               )}
             </Button>
           </form>
+
+          {/* Social sign-in (Google, Microsoft) */}
+          <OAuthButtons />
 
           {/* Governance Notice */}
           <div className="flex gap-2 rounded-lg bg-teal/5 border border-teal/10 p-3 text-[11px] leading-relaxed text-muted-foreground">
