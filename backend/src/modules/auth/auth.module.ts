@@ -5,6 +5,8 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
+import { MicrosoftStrategy } from './strategies/microsoft.strategy';
 import { AuditWriter } from '../admin/audit.writer';
 
 @Module({
@@ -22,7 +24,16 @@ import { AuditWriter } from '../admin/audit.writer';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, AuditWriter],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    // OAuth strategies self-guard construction with placeholder credentials,
+    // so registering them never crashes boot; the OAuth guards return 503 when
+    // a provider is not actually configured.
+    GoogleStrategy,
+    MicrosoftStrategy,
+    AuditWriter,
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}

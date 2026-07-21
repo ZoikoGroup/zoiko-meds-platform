@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { OAuthButtons } from '@/components/shared/oauth-buttons'
 
 export default function Register() {
   const { register } = useAuth()
@@ -285,6 +286,9 @@ export default function Register() {
               )}
             </Button>
           </form>
+
+          {/* Social sign-in (Google, Microsoft) */}
+          <OAuthButtons label="Or sign up with" />
 
           {/* Privacy Disclaimer */}
           <div className="text-center text-[10px] text-muted-foreground leading-relaxed">

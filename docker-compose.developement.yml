@@ -48,6 +48,16 @@ services:
       SUPER_ADMIN_NAME: ZoikoMeds Super Admin
       # Links in outbound email point here.
       APP_BASE_URL: http://localhost:5173
+      # OAuth / social sign-in. Empty client id/secret = provider disabled
+      # (buttons render, endpoint returns 503). Fill in to enable end-to-end.
+      GOOGLE_CLIENT_ID: ""
+      GOOGLE_CLIENT_SECRET: ""
+      GOOGLE_CALLBACK_URL: http://localhost:8000/api/auth/google/callback
+      MICROSOFT_CLIENT_ID: ""
+      MICROSOFT_CLIENT_SECRET: ""
+      MICROSOFT_CALLBACK_URL: http://localhost:8000/api/auth/microsoft/callback
+      MICROSOFT_TENANT: common
+      OAUTH_SUCCESS_REDIRECT: http://localhost:5173/auth/callback
       # SMTP credentials are intentionally NOT set here (no secrets committed).
       # They are read from the mounted backend/.env (ConfigModule). If that file
       # has no SMTP_HOST, the backend falls back to a log-only mailer and prints

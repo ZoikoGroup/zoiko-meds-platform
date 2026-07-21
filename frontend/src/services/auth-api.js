@@ -1,6 +1,18 @@
-import { apiFetch } from '@/lib/api-client'
+import { apiFetch, apiBaseUrl } from '@/lib/api-client'
 
 // Auth endpoints exposed by the NestJS backend (see modules/auth).
+
+// OAuth providers that map to backend /auth/<provider> redirect endpoints.
+export const OAUTH_PROVIDERS = ['google', 'microsoft']
+
+/**
+ * Full backend URL that begins an OAuth flow. This is a full-page browser
+ * navigation (not fetch): the backend redirects to the provider and, on
+ * success, back to the SPA /auth/callback with a token.
+ */
+export function oauthUrl(provider) {
+  return `${apiBaseUrl()}/auth/${provider}`
+}
 
 export function loginRequest(email, password) {
   return apiFetch('/auth/login', {
