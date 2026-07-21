@@ -1,4 +1,42 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: zoikomeds-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zoikomeds
+    ports:
+      - "5432:5432"
+    volumes:
+      - zoikomeds-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d zoikomeds"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: zoikomeds-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 8000
+      API_PREFIX: api
+      CORS_ORIGIN: https://zoiko-meds-platform.vercel.app,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,http://localhost:8080
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/zoikomeds?schema=public
+    ports:
+      - "8000:8000"
+
   frontend:
     build:
       context: .
@@ -7,3 +45,7 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+
+volumes:
+  zoikomeds-db-data:
+

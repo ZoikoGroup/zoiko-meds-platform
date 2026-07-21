@@ -31,7 +31,8 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 RUN apk add --no-cache libc6-compat openssl
 ENV NODE_ENV=production
-ENV PORT=4000
+ENV PORT=8000
+ENV API_PREFIX=api
 
 # Run as non-root
 RUN addgroup -g 1001 nodejs && adduser -S -u 1001 -G nodejs nestjs
@@ -42,8 +43,8 @@ COPY --from=build /app/prisma ./prisma
 COPY package.json ./
 
 USER nestjs
-EXPOSE 4000
+EXPOSE 8000
 
-# Apply migrations then start. For local/dev without migrations, swap
-# `migrate deploy` for `db push`.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# Deploy migrations or sync DB schema, then start main app
+CMD ["sh", "-c", "npx prisma migrate deploy || npx prisma db push && node dist/main.js"]
+

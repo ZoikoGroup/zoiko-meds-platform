@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   Patch,
   Post,
@@ -13,6 +14,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PharmacyService } from './pharmacy.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 
@@ -50,10 +52,11 @@ export class PharmacyController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk import medicines from CSV rows or text into pharmacy inventory' })
   async importCsv(
-    @CurrentUser('pharmacyId') pharmacyId: string | null,
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
     @Body() body: { rows?: any[]; csvText?: string; mode?: 'merge' | 'replace' },
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(pharmacyId);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
     let input: string | any[] = '';
     if (body && body.csvText) {
       input = body.csvText;
@@ -63,7 +66,7 @@ export class PharmacyController {
       throw new BadRequestException('Please provide valid CSV rows or text to import.');
     }
     const mode = body?.mode === 'replace' ? 'replace' : 'merge';
-    return this.pharmacy.importCsv(resolvedId, input, mode);
+    return this.pharmacy.importCsv(resolvedId, input, mode, user, ipAddress);
   }
 
   @Post('inventory')
@@ -71,11 +74,12 @@ export class PharmacyController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Add a medicine to the pharmacy inventory' })
   async addInventory(
-    @CurrentUser('pharmacyId') pharmacyId: string | null,
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
     @Body() dto: AddInventoryDto,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(pharmacyId);
-    return this.pharmacy.addInventoryItem(resolvedId, dto);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    return this.pharmacy.addInventoryItem(resolvedId, dto, user, ipAddress);
   }
 
   @Patch('inventory/:id')
@@ -83,12 +87,13 @@ export class PharmacyController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update availability of an inventory item' })
   async updateInventory(
-    @CurrentUser('pharmacyId') pharmacyId: string | null,
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
     @Param('id') id: string,
     @Body() dto: UpdateInventoryDto,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(pharmacyId);
-    return this.pharmacy.updateInventoryItem(resolvedId, id, dto);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    return this.pharmacy.updateInventoryItem(resolvedId, id, dto, user, ipAddress);
   }
 
   @Delete('inventory/:id')
@@ -96,11 +101,12 @@ export class PharmacyController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Remove an inventory item' })
   async deleteInventory(
-    @CurrentUser('pharmacyId') pharmacyId: string | null,
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
     @Param('id') id: string,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(pharmacyId);
-    return this.pharmacy.deleteInventoryItem(resolvedId, id);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    return this.pharmacy.deleteInventoryItem(resolvedId, id, user, ipAddress);
   }
 
   // --- Public routes (no auth required) ------------------------------------

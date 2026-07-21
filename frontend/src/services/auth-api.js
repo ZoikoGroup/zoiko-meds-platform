@@ -51,3 +51,11 @@ export function resetPasswordRequest(token, newPassword) {
     auth: false,
   })
 }
+
+export function logoutRequest() {
+  return apiFetch('/auth/logout', {
+    method: 'POST',
+  })
+}
+
+
