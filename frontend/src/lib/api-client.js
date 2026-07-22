@@ -1,8 +1,25 @@
 // Thin fetch wrapper for the ZoikoMeds API. Handles the base URL, JSON
 // encoding, bearer-token auth, and normalizing Nest error responses.
 
-const BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
+// Resolve the API base URL. Vite inlines env at build time, so a missing
+// VITE_API_BASE_URL in a production build must NOT silently ship a localhost
+// URL to users. In production we warn loudly and fall back to same-origin
+// "/api" (correct when the SPA is served from the same domain as the API);
+// only local dev defaults to the dev server.
+function resolveApiBaseUrl() {
+  const configured = import.meta.env.VITE_API_BASE_URL
+  if (configured) return configured
+  if (import.meta.env.PROD) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[ZoikoMeds] VITE_API_BASE_URL was not set at build time. Falling back to same-origin "/api". Set VITE_API_BASE_URL to your API URL when building for production.'
+    )
+    return '/api'
+  }
+  return 'http://localhost:8000/api'
+}
+
+const BASE_URL = resolveApiBaseUrl()
 const TOKEN_KEY = 'zoiko-token'
 
 /** Absolute API base, e.g. for full-page redirects (OAuth). */

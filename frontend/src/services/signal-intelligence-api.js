@@ -1,12 +1,11 @@
-import { apiFetch, getToken } from '@/lib/api-client'
+import { apiFetch, apiBaseUrl, getToken } from '@/lib/api-client'
 
 // ZoikoSignal™ intelligence — the governed, aggregate-only demand & shortage
 // surface (backend: modules/signal). Contract-scoped: requires an ENTERPRISE,
 // GOVERNMENT or ADMIN role (SUPER_ADMIN satisfies). Everything here is
 // k-anonymity-safe aggregate data — never user-level or exact stock.
 
-const BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
+const BASE_URL = apiBaseUrl()
 
 function qs(params = {}) {
   const search = new URLSearchParams()
