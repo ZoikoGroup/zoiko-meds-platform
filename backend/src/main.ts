@@ -4,10 +4,21 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { AppLogger } from './common/logger/app-logger.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const logger = new AppLogger();
+  logger.setContext('Bootstrap');
+  app.useLogger(logger);
   const config = app.get(ConfigService);
+  const isProd = config.get<string>('NODE_ENV') === 'production';
+
+  // Behind a proxy/load balancer (Cloud Run, nginx), trust X-Forwarded-* so
+  // req.ip and rate-limiting key off the real client address.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   const apiPrefix = config.get<string>('API_PREFIX', 'api');
   app.setGlobalPrefix(apiPrefix);
@@ -32,32 +43,35 @@ async function bootstrap() {
     }),
   );
 
-  // API docs — gate/noindex in non-dev environments per the API spec.
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('ZoikoMeds API')
-    .setDescription('Governed medicine availability infrastructure API')
-    .setVersion('0.1.0')
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
+  // Standardized error envelope (no stack/DB leakage) + structured access logs.
+  app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalInterceptors(new LoggingInterceptor());
+
+  // API docs — exposed only outside production so the full API surface is not
+  // published to the internet on the live deployment.
+  if (!isProd) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('ZoikoMeds API')
+      .setDescription('Governed medicine availability infrastructure API')
+      .setVersion('0.1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
+  }
 
   const port = config.get<number>('PORT', 8000);
   try {
     await app.listen(port);
-    // eslint-disable-next-line no-console
-    console.log(`ZoikoMeds API listening on http://localhost:${port}/${apiPrefix}`);
+    logger.log(`ZoikoMeds API listening on port ${port} (prefix /${apiPrefix})`);
   } catch (err: unknown) {
     const error = err as { code?: string };
     if (error?.code === 'EADDRINUSE') {
-      // eslint-disable-next-line no-console
-      console.error(
-        `\n❌ [Port Conflict] Port ${port} is already in use.\n` +
-          `• If Docker container 'zoikomeds-api' is running, your API is ALREADY ACTIVE at http://localhost:${port}/${apiPrefix}\n` +
-          `• To run locally outside Docker, stop the container first: docker stop zoikomeds-api\n`,
+      logger.error(
+        `Port ${port} is already in use. If the 'zoikomeds-api' container is running, the API is already active on that port; stop it with 'docker stop zoikomeds-api' to run locally.`,
       );
     } else {
-      // eslint-disable-next-line no-console
-      console.error('Failed to start application:', err);
+      logger.error('Failed to start application', (err as Error)?.stack);
     }
     process.exit(1);
   }

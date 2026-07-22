@@ -41,7 +41,7 @@ jobs:
         run: npm run build
 
       - name: Test
-        run: npx jest --passWithNoTests
+        run: npm test -- --ci --coverage
 
   frontend:
     name: Frontend · lint · build

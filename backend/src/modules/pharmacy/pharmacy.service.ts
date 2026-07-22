@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -69,23 +70,16 @@ export class PharmacyService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Resolve the pharmacyId for the current user. If the user doesn't have one,
-   * fall back to the first pharmacy in the database (development convenience).
+   * Resolve the pharmacyId for the current user. The caller MUST be linked to a
+   * pharmacy — there is no fallback. Returning some other pharmacy's id when the
+   * user has none would let any authenticated account read and mutate a
+   * pharmacy's inventory, so a missing link is a hard authorization failure.
    */
   async resolvePharmacyId(userPharmacyId: string | null): Promise<string> {
     if (userPharmacyId) return userPharmacyId;
-
-    // Fallback: grab the first pharmacy (useful during dev / super-admin testing)
-    const first = await this.prisma.pharmacy.findFirst({
-      select: { id: true },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (!first) {
-      throw new BadRequestException(
-        'No pharmacy is linked to your account and no pharmacies exist in the system.',
-      );
-    }
-    return first.id;
+    throw new ForbiddenException(
+      'Your account is not linked to a pharmacy. Ask a platform administrator to associate your account with a pharmacy.',
+    );
   }
 
   /**

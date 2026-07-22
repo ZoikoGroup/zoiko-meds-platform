@@ -41,25 +41,39 @@ async function upsertUser(
 }
 
 async function main() {
+  const isProd = process.env.NODE_ENV === 'production';
+  // Demo data (sample pharmacies, medicines, demo logins) is DESTRUCTIVE — it
+  // clears and reseeds tables. It only runs outside production, and can be
+  // disabled anywhere by setting SEED_DEMO_DATA=false. Production seeding only
+  // ever ensures the SUPER_ADMIN exists and never touches existing rows.
+  const seedDemo = !isProd && process.env.SEED_DEMO_DATA !== 'false';
+
   // --- Super admin (from env) --------------------------------------------
   const superEmail = (process.env.SUPER_ADMIN_EMAIL ?? 'superadmin@zoikomeds.io')
     .trim()
     .toLowerCase();
+  const superPassword = process.env.SUPER_ADMIN_PASSWORD ?? '';
+  if (isProd && (!superPassword || superPassword === 'ChangeMe!SuperAdmin1')) {
+    throw new Error(
+      'SUPER_ADMIN_PASSWORD must be set to a unique, strong value before seeding production.',
+    );
+  }
   const superAdmin = await upsertUser(
     superEmail,
     process.env.SUPER_ADMIN_NAME ?? 'ZoikoMeds Super Admin',
-    process.env.SUPER_ADMIN_PASSWORD ?? 'ChangeMe!SuperAdmin1',
+    superPassword || 'ChangeMe!SuperAdmin1',
     UserRole.SUPER_ADMIN,
   );
   console.log(`✔ Super admin ready: ${superAdmin.email}`);
 
-  // --- Demo accounts (match the frontend login quick-fill buttons) --------
-  await upsertUser(
-    'super@zoikogroup.com',
-    'Platform Super Administrator',
-    'Super@123',
-    UserRole.SUPER_ADMIN,
-  );
+  if (!seedDemo) {
+    console.log(
+      '• Skipping demo data (production or SEED_DEMO_DATA=false). Super admin ensured; no tables were cleared.',
+    );
+    return;
+  }
+
+  // --- Demo accounts (non-production only) --------------------------------
   const patient = await upsertUser(
     'john@example.com',
     'Naveen',

@@ -16,7 +16,9 @@ import { AuditWriter } from '../admin/audit.writer';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'change-me-in-production'),
+        // JWT_SECRET presence/strength is enforced at boot by validateEnv, so
+        // by the time this runs it is guaranteed to be a safe value.
+        secret: config.getOrThrow<string>('JWT_SECRET'),
         signOptions: {
           expiresIn: config.get<string>('JWT_EXPIRES_IN', '3600s'),
         },

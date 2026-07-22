@@ -1,6 +1,9 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { validateEnv } from './config/env.validation';
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { PrismaModule } from './prisma/prisma.module';
 import { MailModule } from './modules/mail/mail.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -16,7 +19,7 @@ import { EnterpriseModule } from './modules/enterprise/enterprise.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ThrottlerModule.forRoot([
       {
         ttl: Number(process.env.THROTTLE_TTL ?? 60) * 1000,
@@ -37,5 +40,16 @@ import { EnterpriseModule } from './modules/enterprise/enterprise.module';
     PharmacyModule, // Pharmacy verification & participation
     EnterpriseModule, // Enterprise inquiries / lead capture
   ],
+  providers: [
+    // Enforce the configured rate limit globally. Without this the
+    // ThrottlerModule config above is inert. Public read/search routes opt out
+    // with @SkipThrottle; sensitive auth routes tighten it with @Throttle.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Assign a request id to every request before anything else runs.
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}

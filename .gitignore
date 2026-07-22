@@ -1,2 +1,33 @@
+# Environment / secrets — never commit these anywhere in the repo
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+**/coverage/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Tooling
 postman
 .claude/settings.local.json
