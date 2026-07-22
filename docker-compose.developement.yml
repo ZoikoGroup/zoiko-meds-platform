@@ -37,7 +37,8 @@ services:
       API_PREFIX: api
       CORS_ORIGIN: http://localhost:5173
       DATABASE_URL: postgresql://postgres:postgres@db:5432/zoikomeds?schema=public
-      JWT_SECRET: change-me-in-production
+      # Local-dev only. Real deployments inject JWT_SECRET from a secrets manager.
+      JWT_SECRET: dev-local-1qXpZ7yv3rN8kLmWfBtCsGhJ4dUe6aRo2nQ
       JWT_EXPIRES_IN: 3600s
       THROTTLE_TTL: 60
       THROTTLE_LIMIT: 100

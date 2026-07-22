@@ -45,6 +45,11 @@ COPY package.json ./
 USER nestjs
 EXPOSE 8000
 
-# Deploy migrations or sync DB schema, then start main app
-CMD ["sh", "-c", "npx prisma migrate deploy || npx prisma db push && node dist/main.js"]
+# Container-level health probe (liveness). Node 22 ships a global fetch.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8000)+'/'+(process.env.API_PREFIX||'api')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# Apply committed migrations, then start. Fails fast if migrations fail — we
+# never fall back to `db push` in production (that risks silent schema drift).
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
 
