@@ -11,12 +11,16 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { PharmacyService } from './pharmacy.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
+import { ImportInventoryDto } from './dto/import-inventory.dto';
 
 @ApiTags('pharmacy')
 @Controller('pharmacies')
@@ -24,9 +28,15 @@ export class PharmacyController {
   constructor(private readonly pharmacy: PharmacyService) {}
 
   // --- Authenticated inventory & dashboard routes (MUST be declared before :id) ---------
+  //
+  // Every route below is scoped to the caller's own pharmacy. Access is limited
+  // to pharmacy staff/managers (SUPER_ADMIN bypasses via RolesGuard), and the
+  // target pharmacy is always the one linked to the JWT — never a guessed
+  // fallback — so one pharmacy can never read or mutate another's inventory.
 
   @Get('dashboard')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get dashboard summary for the logged-in pharmacy' })
   async getDashboard(
@@ -37,7 +47,8 @@ export class PharmacyController {
   }
 
   @Get('inventory')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List inventory for the logged-in pharmacy' })
   async getInventory(
@@ -48,29 +59,31 @@ export class PharmacyController {
   }
 
   @Post('inventory/import')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk import medicines from CSV rows or text into pharmacy inventory' })
   async importCsv(
     @CurrentUser() user: AuthenticatedUser,
     @Ip() ipAddress: string,
-    @Body() body: { rows?: any[]; csvText?: string; mode?: 'merge' | 'replace' },
+    @Body() body: ImportInventoryDto,
   ) {
     const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
-    let input: string | any[] = '';
-    if (body && body.csvText) {
+    let input: string | Record<string, string>[] = '';
+    if (body.csvText) {
       input = body.csvText;
-    } else if (body && Array.isArray(body.rows)) {
+    } else if (Array.isArray(body.rows) && body.rows.length > 0) {
       input = body.rows;
     } else {
       throw new BadRequestException('Please provide valid CSV rows or text to import.');
     }
-    const mode = body?.mode === 'replace' ? 'replace' : 'merge';
+    const mode = body.mode === 'replace' ? 'replace' : 'merge';
     return this.pharmacy.importCsv(resolvedId, input, mode, user, ipAddress);
   }
 
   @Post('inventory')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Add a medicine to the pharmacy inventory' })
   async addInventory(
@@ -83,7 +96,8 @@ export class PharmacyController {
   }
 
   @Patch('inventory/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update availability of an inventory item' })
   async updateInventory(
@@ -97,7 +111,8 @@ export class PharmacyController {
   }
 
   @Delete('inventory/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Remove an inventory item' })
   async deleteInventory(
