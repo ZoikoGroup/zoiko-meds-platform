@@ -33,6 +33,9 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOrigins,
     credentials: true,
+    // Expose the request id so browser clients (e.g. the ZoikoAvail sandbox)
+    // can read it and surface a trace id for each request.
+    exposedHeaders: ['X-Request-Id'],
   });
 
   app.useGlobalPipes(
