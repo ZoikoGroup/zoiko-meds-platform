@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
-import { User, Lock, LogOut, Palette, ShieldCheck, Sun, Moon } from 'lucide-react'
+import { User, Lock, LogOut, Palette, ShieldCheck, Sun, Moon, Eye, EyeOff } from 'lucide-react'
 
 export default function UserProfile() {
   const { user, logout, updateProfile, changePassword } = useAuth()
@@ -24,9 +24,14 @@ export default function UserProfile() {
     email: user?.email || '',
     phone: user?.phone || '',
   })
-  const [pwd, setPwd] = useState({ current: '', next: '' })
+  const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
+  const [showPwd, setShowPwd] = useState({ current: false, next: false, confirm: false })
 
   const isDark = theme === 'dark'
+
+  const isPasswordTooShort = Boolean(pwd.next && pwd.next.length < 8)
+  const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
+  const isPasswordFormInvalid = !pwd.current || !pwd.next || !pwd.confirm || pwd.next !== pwd.confirm || pwd.next.length < 8
 
   const saveProfile = async (e) => {
     e.preventDefault()
@@ -42,13 +47,18 @@ export default function UserProfile() {
   const savePassword = async (e) => {
     e.preventDefault()
     setError('')
+    if (pwd.next !== pwd.confirm) {
+      setError('New passwords do not match.')
+      return
+    }
     if (pwd.next.length < 8) {
       setError('New password must be at least 8 characters.')
       return
     }
     try {
       await changePassword(pwd.current, pwd.next)
-      setPwd({ current: '', next: '' })
+      setPwd({ current: '', next: '', confirm: '' })
+      setShowPwd({ current: false, next: false, confirm: false })
       flash('Password updated')
     } catch (err) {
       setError(err.message || 'Could not update password')
@@ -153,13 +163,90 @@ export default function UserProfile() {
               <form onSubmit={savePassword} className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="current">Current password</Label>
-                  <Input id="current" type="password" placeholder="••••••••" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} required />
+                  <div className="relative flex items-center">
+                    <Input
+                      id="current"
+                      type={showPwd.current ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={pwd.current}
+                      onChange={(e) => setPwd({ ...pwd, current: e.target.value })}
+                      className="pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((prev) => ({ ...prev, current: !prev.current }))}
+                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      tabIndex={-1}
+                      aria-label={showPwd.current ? 'Hide current password' : 'Show current password'}
+                    >
+                      {showPwd.current ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
                 </div>
+
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="next">New password</Label>
-                  <Input id="next" type="password" placeholder="••••••••" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} required />
+                  <div className="relative flex items-center">
+                    <Input
+                      id="next"
+                      type={showPwd.next ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={pwd.next}
+                      onChange={(e) => setPwd({ ...pwd, next: e.target.value })}
+                      className={`pr-10 ${isPasswordTooShort ? 'border-danger focus-visible:ring-danger/30' : ''}`}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((prev) => ({ ...prev, next: !prev.next }))}
+                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      tabIndex={-1}
+                      aria-label={showPwd.next ? 'Hide new password' : 'Show new password'}
+                    >
+                      {showPwd.next ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {isPasswordTooShort && (
+                    <p className="text-xs font-medium text-danger">Password must be at least 8 characters long.</p>
+                  )}
                 </div>
-                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">Update password</Button>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="confirm">Confirm new password</Label>
+                  <div className="relative flex items-center">
+                    <Input
+                      id="confirm"
+                      type={showPwd.confirm ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={pwd.confirm}
+                      onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })}
+                      className={`pr-10 ${passwordsMismatch ? 'border-danger focus-visible:ring-danger/30' : ''}`}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((prev) => ({ ...prev, confirm: !prev.confirm }))}
+                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      tabIndex={-1}
+                      aria-label={showPwd.confirm ? 'Hide confirm password' : 'Show confirm password'}
+                    >
+                      {showPwd.confirm ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {passwordsMismatch && (
+                    <p className="text-xs font-medium text-danger">Passwords do not match.</p>
+                  )}
+                </div>
+
+                <Button
+                  type="submit"
+                  variant="teal"
+                  className="mt-1 w-fit cursor-pointer"
+                  disabled={isPasswordFormInvalid}
+                >
+                  Update password
+                </Button>
               </form>
             </CardContent>
           </Card>
