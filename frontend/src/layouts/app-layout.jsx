@@ -187,7 +187,7 @@ export function AppLayout() {
               ].map((p, idx) => (
                 <Link
                   key={idx}
-                  to="/verification"
+                  to="/admin/verification"
                   className="rounded-lg border border-border/80 p-3 text-xs flex items-center justify-between hover:bg-accent transition-colors"
                 >
                   <div className="flex flex-col">
