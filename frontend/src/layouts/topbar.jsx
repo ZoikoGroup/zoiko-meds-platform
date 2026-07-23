@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, AlertTriangle, Bell, Check, CheckCircle2, ChevronsUpDown, LogOut, Menu, Moon, Plus, Search, Settings, Sun, UserCog, XCircle, Activity, CheckSquare, Send, RefreshCw } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Bell, Check, CheckCircle2, ChevronsUpDown, LogOut, Menu, Moon, Plus, RefreshCw, Search, Settings, Sun, UserCog, XCircle, Activity, CheckSquare, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -54,12 +54,6 @@ function QuickActions() {
         <DropdownMenuLabel>Platform Actions</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/medibase" className="flex items-center gap-2">
-            <Plus className="size-4 text-muted-foreground"/>
-            Add New Medicine
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
           <Link to="/verification" className="flex items-center gap-2">
             <CheckSquare className="size-4 text-muted-foreground"/>
             Review Verification Queue
@@ -69,6 +63,12 @@ function QuickActions() {
           <Link to="/notifications" className="flex items-center gap-2">
             <Send className="size-4 text-muted-foreground"/>
             Broadcast Update
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/settings" className="flex items-center gap-2">
+            <Settings className="size-4 text-muted-foreground"/>
+            Configure Settings
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
