@@ -54,19 +54,19 @@ function QuickActions() {
         <DropdownMenuLabel>Platform Actions</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/verification" className="flex items-center gap-2">
+          <Link to="/admin/verification" className="flex items-center gap-2">
             <CheckSquare className="size-4 text-muted-foreground"/>
             Review Verification Queue
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/notifications" className="flex items-center gap-2">
+          <Link to="/admin/notifications" className="flex items-center gap-2">
             <Send className="size-4 text-muted-foreground"/>
             Broadcast Update
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/settings" className="flex items-center gap-2">
+          <Link to="/admin/settings" className="flex items-center gap-2">
             <Settings className="size-4 text-muted-foreground"/>
             Configure Settings
           </Link>
@@ -132,7 +132,7 @@ function NotificationsMenu() {
           })}
         </div>
         <Separator />
-        <Link to="/reports" className="flex items-center justify-center py-2.5 text-xs font-medium text-primary hover:underline">
+        <Link to="/admin/reports" className="flex items-center justify-center py-2.5 text-xs font-medium text-primary hover:underline">
           View all activity
         </Link>
       </PopoverContent>
