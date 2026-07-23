@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -9,12 +9,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
-import { useTheme } from '@/providers/theme-provider'
-import { User, Lock, LogOut, Palette, ShieldCheck, Sun, Moon, Eye, EyeOff } from 'lucide-react'
+import { User, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react'
 
 export default function UserProfile() {
   const { user, logout, updateProfile, changePassword } = useAuth()
-  const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [flashMsg, flash] = useFlash()
   const [error, setError] = useState('')
@@ -24,10 +22,19 @@ export default function UserProfile() {
     email: user?.email || '',
     phone: user?.phone || '',
   })
+
+  useEffect(() => {
+    if (user) {
+      setForm({
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.phone || '',
+      })
+    }
+  }, [user])
+
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
   const [showPwd, setShowPwd] = useState({ current: false, next: false, confirm: false })
-
-  const isDark = theme === 'dark'
 
   const isPasswordTooShort = Boolean(pwd.next && pwd.next.length < 8)
   const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
@@ -84,8 +91,8 @@ export default function UserProfile() {
             <AvatarFallback className="text-lg">{user?.initials || 'ZM'}</AvatarFallback>
           </Avatar>
           <div className="flex flex-col gap-1">
-            <span className="text-lg font-bold text-foreground">{form.name}</span>
-            <span className="text-sm text-muted-foreground">{form.email}</span>
+            <span className="text-lg font-bold text-foreground">{user?.name || ''}</span>
+            <span className="text-sm text-muted-foreground">{user?.email || ''}</span>
           </div>
           <Badge variant="teal" className="gap-1.5 sm:ml-auto">
             <ShieldCheck className="size-3.5" />
@@ -248,24 +255,6 @@ export default function UserProfile() {
                   Update password
                 </Button>
               </form>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="py-4">
-              <button
-                onClick={toggleTheme}
-                className="flex w-full items-center justify-between rounded-lg px-2.5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-accent cursor-pointer"
-              >
-                <span className="flex items-center gap-2">
-                  <Palette className="size-4 text-muted-foreground" />
-                  Interface theme
-                </span>
-                <span className="flex items-center gap-1 text-xs uppercase text-muted-foreground">
-                  {isDark ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}
-                  {theme}
-                </span>
-              </button>
             </CardContent>
           </Card>
         </div>

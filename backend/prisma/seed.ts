@@ -125,6 +125,15 @@ async function main() {
   const pharmacyByName = Object.fromEntries(pharmacies.map((p) => [p.name, p]));
   console.log(`✔ ${pharmacies.length} pharmacies ready`);
 
+  // Associate demo pharmacy users (manager & pharmacist) with Apollo Pharmacy
+  const apollo = pharmacyByName['Apollo Pharmacy'];
+  if (apollo) {
+    await prisma.user.updateMany({
+      where: { email: { in: ['manager@zoikomeds.io', 'pharmacist@zoikomeds.io'] } },
+      data: { pharmacyId: apollo.id },
+    });
+  }
+
   // --- MediBase™ medicines + ZoikoAvail™ signals -------------------------
   // Confidence bands (HIGH/MODERATE/LOW) are the public-safe signal — never
   // exact stock. computedAt drives the "last confirmed" freshness display.
