@@ -11,6 +11,7 @@ import {
   Webhook,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { SectionHeading } from '@/components/shared/section-heading'
 import { StatTile } from '@/components/shared/stat-tile'
@@ -30,6 +31,7 @@ import {
 import { TrendChart } from '@/components/charts/trend-chart'
 import { cn } from '@/lib/utils'
 import { formatMs } from '@/utils/format'
+import { apiBaseUrl } from '@/lib/api-client'
 import {
   apiHealth,
   authSteps,
@@ -68,6 +70,7 @@ const HEALTH = [
 ]
 
 export default function ZoikoAvail() {
+  const navigate = useNavigate()
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
@@ -86,11 +89,14 @@ export default function ZoikoAvail() {
         }
         actions={
           <>
-            <Button variant="outline">
+            <Button
+              variant="outline"
+              onClick={() => window.open(`${apiBaseUrl()}/docs`, '_blank', 'noopener')}
+            >
               <BookOpen />
               Documentation
             </Button>
-            <Button>
+            <Button onClick={() => navigate('/admin/zoikoavail/sandbox')}>
               <Terminal />
               Open sandbox
             </Button>

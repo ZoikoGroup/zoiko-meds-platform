@@ -32,6 +32,7 @@ const UsersRoles = lazy(() => import('@/pages/UsersRoles'))
 const VerificationCenter = lazy(() => import('@/pages/VerificationCenter'))
 const ZoikoSignal = lazy(() => import('@/pages/ZoikoSignal'))
 const ZoikoAvail = lazy(() => import('@/pages/ZoikoAvail'))
+const ZoikoAvailSandbox = lazy(() => import('@/pages/ZoikoAvailSandbox'))
 const MediBase = lazy(() => import('@/pages/MediBase'))
 const Reports = lazy(() => import('@/pages/Reports'))
 const Notifications = lazy(() => import('@/pages/Notifications'))
@@ -94,6 +95,7 @@ export const router = createBrowserRouter([
           { path: 'verification', element: <VerificationCenter /> },
           { path: 'zoikosignal', element: <ZoikoSignal /> },
           { path: 'zoikoavail', element: <ZoikoAvail /> },
+          { path: 'zoikoavail/sandbox', element: <ZoikoAvailSandbox /> },
           { path: 'medibase', element: <MediBase /> },
           { path: 'reports', element: <Reports /> },
           { path: 'notifications', element: <Notifications /> },
