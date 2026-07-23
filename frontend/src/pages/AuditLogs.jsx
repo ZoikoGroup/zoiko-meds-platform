@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -155,33 +155,59 @@ export default function AuditLogs() {
   const [actionFilter, setActionFilter] = useState('All')
   const [userFilter, setUserFilter] = useState('')
   const [pharmacyFilter, setPharmacyFilter] = useState('')
+  const [debouncedUserFilter, setDebouncedUserFilter] = useState('')
+  const [debouncedPharmacyFilter, setDebouncedPharmacyFilter] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedUserFilter(userFilter)
+    }, 300)
+    return () => clearTimeout(handler)
+  }, [userFilter])
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedPharmacyFilter(pharmacyFilter)
+    }, 300)
+    return () => clearTimeout(handler)
+  }, [pharmacyFilter])
+
+  const load = useCallback(async (isInitial = false) => {
+    if (isInitial) {
+      setLoading(true)
+    }
     setError('')
     try {
       const params = { pageSize: 200 }
       if (moduleFilter !== 'All') params.module = moduleFilter
       if (severityFilter !== 'All') params.severity = severityFilter
       if (actionFilter !== 'All') params.action = actionFilter
-      if (userFilter.trim()) params.user = userFilter.trim()
-      if (pharmacyFilter.trim()) params.pharmacy = pharmacyFilter.trim()
+      if (debouncedUserFilter.trim()) params.user = debouncedUserFilter.trim()
+      if (debouncedPharmacyFilter.trim()) params.pharmacy = debouncedPharmacyFilter.trim()
       if (startDate) params.startDate = startDate
       if (endDate) params.endDate = endDate
 
       const res = await admin.listAuditLogs(params)
-      setLogs(res.items)
+      setLogs(res.items || [])
     } catch (err) {
       setError(err.message || 'Failed to load audit logs')
     } finally {
-      setLoading(false)
+      if (isInitial) {
+        setLoading(false)
+      }
     }
-  }, [severityFilter, moduleFilter, actionFilter, userFilter, pharmacyFilter, startDate, endDate])
+  }, [severityFilter, moduleFilter, actionFilter, debouncedUserFilter, debouncedPharmacyFilter, startDate, endDate])
 
+  const initialLoaded = useRef(false)
   useEffect(() => {
-    load()
+    if (!initialLoaded.current) {
+      initialLoaded.current = true
+      load(true)
+    } else {
+      load(false)
+    }
   }, [load])
 
   const modules = useMemo(() => {
