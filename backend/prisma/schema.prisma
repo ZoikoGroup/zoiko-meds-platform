@@ -604,3 +604,57 @@ model SignalNotificationPreference {
   updatedAt     DateTime @updatedAt
   createdAt     DateTime @default(now())
 }
+
+// ---------------------------------------------------------------------------
+// Reports — saved & scheduled governed exports surfaced in the admin console
+// ---------------------------------------------------------------------------
+
+enum ReportType {
+  EXECUTIVE_BRIEFING
+  REGIONAL_DIGEST
+  GOVERNANCE_EXPORT
+  NETWORK_REPORT
+  OPERATIONS
+  DATA_QUALITY
+  FORECAST
+}
+
+enum ReportFormat {
+  PDF
+  CSV
+  XLSX
+  JSON
+}
+
+// The intelligence surface a report draws from — mirrors the export-center scope.
+enum ReportScope {
+  ALL
+  SIGNAL
+  JURISDICTION
+  NETWORK
+}
+
+enum ReportStatus {
+  READY
+  SCHEDULED
+  RUNNING
+  FAILED
+}
+
+model Report {
+  id        String       @id @default(cuid())
+  name      String
+  type      ReportType   @default(EXECUTIVE_BRIEFING)
+  format    ReportFormat @default(PDF)
+  scope     ReportScope  @default(ALL)
+  status    ReportStatus @default(READY)
+  owner     String // denormalized creator label (email) for fast display
+  createdBy String // actor email that generated the report
+  // Human-readable cadence for scheduled reports (e.g. "Daily · 06:00"); null for one-off.
+  schedule  String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([status])
+  @@index([type])
+}

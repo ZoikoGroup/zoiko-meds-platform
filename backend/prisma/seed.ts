@@ -18,6 +18,10 @@ import {
   PrescriptionCategory,
   PrismaClient,
   QualityState,
+  ReportFormat,
+  ReportScope,
+  ReportStatus,
+  ReportType,
   UserRole,
   VerificationRequestStatus,
   VerificationStatus,
@@ -528,6 +532,21 @@ async function main() {
     ],
   });
   console.log('✔ Notifications ready');
+
+  // --- Reports ------------------------------------------------------------
+  await prisma.report.deleteMany({});
+  await prisma.report.createMany({
+    data: [
+      { name: 'Q2 Access-Resilience Briefing', type: ReportType.EXECUTIVE_BRIEFING, format: ReportFormat.PDF, scope: ReportScope.ALL, status: ReportStatus.READY, owner: superEmail, createdBy: superEmail },
+      { name: 'APAC Shortage-Pressure Digest', type: ReportType.REGIONAL_DIGEST, format: ReportFormat.PDF, scope: ReportScope.JURISDICTION, status: ReportStatus.SCHEDULED, schedule: 'Daily · 06:00', owner: superEmail, createdBy: superEmail },
+      { name: 'Jurisdiction Compliance Export', type: ReportType.GOVERNANCE_EXPORT, format: ReportFormat.CSV, scope: ReportScope.JURISDICTION, status: ReportStatus.READY, owner: superEmail, createdBy: superEmail },
+      { name: 'Partner Participation Rollup', type: ReportType.NETWORK_REPORT, format: ReportFormat.XLSX, scope: ReportScope.NETWORK, status: ReportStatus.SCHEDULED, schedule: 'Weekly · Mon', owner: superEmail, createdBy: superEmail },
+      { name: 'Signal Freshness SLA Report', type: ReportType.OPERATIONS, format: ReportFormat.JSON, scope: ReportScope.SIGNAL, status: ReportStatus.RUNNING, owner: superEmail, createdBy: superEmail },
+      { name: 'MediBase Normalization Audit', type: ReportType.DATA_QUALITY, format: ReportFormat.CSV, scope: ReportScope.ALL, status: ReportStatus.READY, owner: superEmail, createdBy: superEmail },
+      { name: 'Access-Risk Forecast (draft)', type: ReportType.FORECAST, format: ReportFormat.PDF, scope: ReportScope.SIGNAL, status: ReportStatus.FAILED, owner: superEmail, createdBy: superEmail },
+    ],
+  });
+  console.log('✔ Reports ready');
 
   // --- Seed a few audit-log entries --------------------------------------
   await prisma.auditLog.createMany({
