@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import {
   Card,
@@ -20,6 +20,10 @@ import {
   MessageSquare,
   Loader2,
   AlertTriangle,
+  Clock,
+  CheckCircle,
+  XCircle,
+  ListFilter,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
 
@@ -31,6 +35,7 @@ const STATUS_LABEL = {
   REJECTED: 'Rejected',
   REQUEST_INFO: 'Request Info',
 }
+
 const STATUS_VARIANT = {
   PENDING: 'secondary',
   UNDER_REVIEW: 'info',
@@ -40,33 +45,76 @@ const STATUS_VARIANT = {
   REQUEST_INFO: 'warning',
 }
 
+const PENDING_STATUSES = ['PENDING', 'UNDER_REVIEW', 'ESCALATED', 'REQUEST_INFO']
+
 export default function VerificationCenter() {
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [activeId, setActiveId] = useState(null)
+  const [queueTab, setQueueTab] = useState('PENDING')
   const [reviewNote, setReviewNote] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const counts = useMemo(() => {
+    return {
+      PENDING: requests.filter((r) => PENDING_STATUSES.includes(r.status)).length,
+      APPROVED: requests.filter((r) => r.status === 'APPROVED').length,
+      REJECTED: requests.filter((r) => r.status === 'REJECTED').length,
+      ALL: requests.length,
+    }
+  }, [requests])
+
+  const filteredRequests = useMemo(() => {
+    return requests.filter((r) => {
+      if (queueTab === 'PENDING') return PENDING_STATUSES.includes(r.status)
+      if (queueTab === 'APPROVED') return r.status === 'APPROVED'
+      if (queueTab === 'REJECTED') return r.status === 'REJECTED'
+      return true
+    })
+  }, [requests, queueTab])
+
+  const load = useCallback(async (isSilent = false) => {
+    if (!isSilent) setLoading(true)
     setError('')
     try {
       const items = await admin.listVerifications()
       setRequests(items)
-      setActiveId((prev) => prev || items[0]?.id || null)
     } catch (err) {
       setError(err.message || 'Failed to load verification requests')
     } finally {
-      setLoading(false)
+      if (!isSilent) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     load()
+
+    const handleSync = () => load(true)
+    window.addEventListener('pharmacy-status-updated', handleSync)
+    window.addEventListener('focus', handleSync)
+    return () => {
+      window.removeEventListener('pharmacy-status-updated', handleSync)
+      window.removeEventListener('focus', handleSync)
+    }
   }, [load])
 
-  const activeRequest = requests.find((r) => r.id === activeId)
+  // Automatically keep activeId set to a valid item in the filtered list
+  useEffect(() => {
+    if (filteredRequests.length > 0) {
+      const existsInFiltered = filteredRequests.some((r) => r.id === activeId)
+      if (!existsInFiltered) {
+        setActiveId(filteredRequests[0].id)
+      }
+    } else {
+      setActiveId(null)
+    }
+  }, [filteredRequests, activeId])
+
+  const activeRequest = useMemo(
+    () => requests.find((r) => r.id === activeId),
+    [requests, activeId]
+  )
 
   const handleAction = async (status) => {
     if (!activeRequest) return
@@ -78,7 +126,8 @@ export default function VerificationCenter() {
         note: reviewNote || undefined,
       })
       setReviewNote('')
-      await load()
+      window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+      await load(true)
     } catch (err) {
       setError(err.message || 'Action failed')
     } finally {
@@ -90,7 +139,7 @@ export default function VerificationCenter() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Verification Center"
-        description="Verify uploaded licenses, inspect regulatory documents, and approve pharmacy sources."
+        subtitle="Verify uploaded licenses, inspect regulatory documents, and approve pharmacy sources."
       />
 
       {error && (
@@ -106,49 +155,105 @@ export default function VerificationCenter() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* Left: queue */}
+          {/* Left: queue + tab filters */}
           <div className="lg:col-span-5 flex flex-col gap-4">
             <Card className="border-border/70 bg-card flex-1">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base font-semibold">Verification Queue</CardTitle>
-                <CardDescription>Awaiting compliance officer validation</CardDescription>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base font-semibold">Verification Queue</CardTitle>
+                  <Badge variant="outline" className="text-xs font-medium">
+                    {counts.PENDING} Pending
+                  </Badge>
+                </div>
+                <CardDescription>Filter requests by compliance status</CardDescription>
+
+                {/* Queue Filter Tabs */}
+                <div className="flex flex-wrap gap-1 pt-3 border-t mt-2">
+                  <button
+                    onClick={() => setQueueTab('PENDING')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      queueTab === 'PENDING'
+                        ? 'bg-primary text-white'
+                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <Clock className="size-3" />
+                    Pending ({counts.PENDING})
+                  </button>
+                  <button
+                    onClick={() => setQueueTab('APPROVED')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      queueTab === 'APPROVED'
+                        ? 'bg-success text-white'
+                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <CheckCircle className="size-3" />
+                    Approved ({counts.APPROVED})
+                  </button>
+                  <button
+                    onClick={() => setQueueTab('REJECTED')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      queueTab === 'REJECTED'
+                        ? 'bg-danger text-white'
+                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <XCircle className="size-3" />
+                    Rejected ({counts.REJECTED})
+                  </button>
+                  <button
+                    onClick={() => setQueueTab('ALL')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      queueTab === 'ALL'
+                        ? 'bg-foreground text-background'
+                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <ListFilter className="size-3" />
+                    All ({counts.ALL})
+                  </button>
+                </div>
               </CardHeader>
-              <CardContent className="flex flex-col gap-2 p-3">
-                {requests.length === 0 && (
-                  <p className="p-4 text-sm text-muted-foreground text-center">
-                    No verification requests.
-                  </p>
+
+              <CardContent className="flex flex-col gap-2 p-3 max-h-[600px] overflow-y-auto">
+                {filteredRequests.length === 0 ? (
+                  <div className="p-8 text-sm text-muted-foreground text-center flex flex-col items-center justify-center gap-2">
+                    <CheckCircle className="size-8 text-success/70" />
+                    <span>No {queueTab.toLowerCase()} verification requests.</span>
+                  </div>
+                ) : (
+                  filteredRequests.map((r) => {
+                    const isActive = r.id === activeId
+                    return (
+                      <button
+                        key={r.id}
+                        onClick={() => {
+                          setActiveId(r.id)
+                          setReviewNote('')
+                        }}
+                        className={`w-full text-left rounded-lg p-3.5 border transition-all flex flex-col gap-1.5 ${
+                          isActive
+                            ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                            : 'border-border/80 hover:bg-accent/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-sm text-foreground truncate max-w-[180px]">
+                            {r.pharmacy}
+                          </span>
+                          <Badge variant={STATUS_VARIANT[r.status] || 'secondary'}>
+                            {STATUS_LABEL[r.status] || r.status}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>License: {r.licenseNumber}</span>
+                          <span>{new Date(r.date).toLocaleDateString()}</span>
+                        </div>
+                      </button>
+                    )
+                  })
                 )}
-                {requests.map((r) => {
-                  const isActive = r.id === activeId
-                  return (
-                    <button
-                      key={r.id}
-                      onClick={() => {
-                        setActiveId(r.id)
-                        setReviewNote('')
-                      }}
-                      className={`w-full text-left rounded-lg p-3.5 border transition-all flex flex-col gap-1.5 ${
-                        isActive
-                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                          : 'border-border/80 hover:bg-accent/50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-sm text-foreground truncate max-w-[180px]">
-                          {r.pharmacy}
-                        </span>
-                        <Badge variant={STATUS_VARIANT[r.status] || 'secondary'}>
-                          {STATUS_LABEL[r.status] || r.status}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>License: {r.licenseNumber}</span>
-                        <span>{new Date(r.date).toLocaleDateString()}</span>
-                      </div>
-                    </button>
-                  )
-                })}
               </CardContent>
             </Card>
           </div>
@@ -161,7 +266,12 @@ export default function VerificationCenter() {
                   <CardHeader className="border-b pb-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <CardTitle className="text-lg font-semibold">{activeRequest.pharmacy}</CardTitle>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-lg font-semibold">{activeRequest.pharmacy}</CardTitle>
+                          <Badge variant={STATUS_VARIANT[activeRequest.status] || 'secondary'}>
+                            {STATUS_LABEL[activeRequest.status] || activeRequest.status}
+                          </Badge>
+                        </div>
                         <CardDescription>License validation request #{activeRequest.id.slice(-6)}</CardDescription>
                       </div>
                       <Badge variant="outline" className="h-fit">
@@ -234,7 +344,7 @@ export default function VerificationCenter() {
                   <div className="flex items-center justify-end gap-3.5">
                     <Button
                       variant="outline"
-                      disabled={busy}
+                      disabled={busy || activeRequest.status === 'REJECTED'}
                       className="border-danger/30 text-danger hover:bg-danger/5"
                       onClick={() => handleAction('REJECTED')}
                     >
@@ -252,7 +362,7 @@ export default function VerificationCenter() {
                     </Button>
                     <Button
                       className="bg-success text-white hover:bg-success/95"
-                      disabled={busy}
+                      disabled={busy || activeRequest.status === 'APPROVED'}
                       onClick={() => handleAction('APPROVED')}
                     >
                       {busy ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 shrink-0" />}
