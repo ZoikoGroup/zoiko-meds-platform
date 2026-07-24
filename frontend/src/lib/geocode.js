@@ -1,4 +1,4 @@
-// Client-side reverse geocoding (coordinates → human-readable place name).
+gbh// Client-side reverse geocoding (coordinates → human-readable place name).
 //
 // Uses BigDataCloud's keyless `reverse-geocode-client` endpoint so no API key
 // or backend change is required. Returns a short label like "Bachupally,
