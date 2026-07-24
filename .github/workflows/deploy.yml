@@ -1,0 +1,27 @@
+name: Deploy Backend to GCP VM
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USER }}
+          key: ${{ secrets.GCP_VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/zoiko-meds-platform
+            git pull origin main
+            cd backend
+            docker compose up -d --build
+            docker compose exec -T api npx prisma migrate deploy
+
