@@ -25,12 +25,20 @@ export class VerificationService {
   }
 
   async create(actorId: string, dto: CreateVerificationDto) {
+    let pharmacyId = dto.pharmacyId || null;
+    if (!pharmacyId && dto.licenseNumber) {
+      const match = await this.prisma.pharmacy.findFirst({
+        where: { licenseNumber: dto.licenseNumber },
+      });
+      if (match) pharmacyId = match.id;
+    }
+
     const req = await this.prisma.verificationRequest.create({
       data: {
         pharmacyName: dto.pharmacyName,
         licenseNumber: dto.licenseNumber,
         submittedBy: dto.submittedBy,
-        pharmacyId: dto.pharmacyId || null,
+        pharmacyId,
         docName: dto.docName || null,
         docUrl: dto.docUrl || null,
       },
@@ -46,42 +54,82 @@ export class VerificationService {
   }
 
   async update(actorId: string, id: string, dto: UpdateVerificationDto) {
-    const existing = await this.require(id);
-    const data: Prisma.VerificationRequestUpdateInput = {};
-    if (dto.status !== undefined) data.status = dto.status;
-    if (dto.reviewer !== undefined) data.reviewer = dto.reviewer;
-    if (dto.note) {
-      const stamped = `${new Date().toISOString()}: ${dto.note}`;
-      data.notes = existing.notes ? `${existing.notes}\n${stamped}` : stamped;
-    }
+    const result = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.verificationRequest.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('Verification request not found');
 
-    const req = await this.prisma.verificationRequest.update({
-      where: { id },
-      data,
-    });
+      const data: Prisma.VerificationRequestUpdateInput = {};
+      if (dto.status !== undefined) data.status = dto.status;
+      if (dto.reviewer !== undefined) data.reviewer = dto.reviewer;
+      if (dto.note) {
+        const stamped = `${new Date().toISOString()}: ${dto.note}`;
+        data.notes = existing.notes ? `${existing.notes}\n${stamped}` : stamped;
+      }
 
-    // Approving a request verifies its linked pharmacy.
-    if (
-      dto.status === VerificationRequestStatus.APPROVED &&
-      req.pharmacyId
-    ) {
-      await this.prisma.pharmacy.update({
-        where: { id: req.pharmacyId },
-        data: {
-          verificationStatus: VerificationStatus.VERIFIED,
-          isParticipating: true,
-        },
+      let pharmacyId = existing.pharmacyId;
+      if (!pharmacyId && existing.licenseNumber) {
+        const matchedPharmacy = await tx.pharmacy.findFirst({
+          where: { licenseNumber: existing.licenseNumber },
+        });
+        if (matchedPharmacy) {
+          pharmacyId = matchedPharmacy.id;
+          data.pharmacy = { connect: { id: pharmacyId } };
+        }
+      }
+
+      const req = await tx.verificationRequest.update({
+        where: { id },
+        data,
       });
-    }
+
+      if (dto.status !== undefined && pharmacyId) {
+        let targetStatus: VerificationStatus | null = null;
+        let targetParticipating: boolean | undefined = undefined;
+
+        switch (dto.status) {
+          case VerificationRequestStatus.APPROVED:
+            targetStatus = VerificationStatus.VERIFIED;
+            targetParticipating = true;
+            break;
+          case VerificationRequestStatus.REJECTED:
+            targetStatus = VerificationStatus.REJECTED;
+            targetParticipating = false;
+            break;
+          case VerificationRequestStatus.REQUEST_INFO:
+          case VerificationRequestStatus.UNDER_REVIEW:
+          case VerificationRequestStatus.ESCALATED:
+          case VerificationRequestStatus.PENDING:
+            targetStatus = VerificationStatus.PENDING;
+            targetParticipating = false;
+            break;
+        }
+
+        if (targetStatus !== null) {
+          const updateData: Prisma.PharmacyUpdateInput = {
+            verificationStatus: targetStatus,
+            updatedAt: new Date(),
+          };
+          if (targetParticipating !== undefined) {
+            updateData.isParticipating = targetParticipating;
+          }
+          await tx.pharmacy.update({
+            where: { id: pharmacyId },
+            data: updateData,
+          });
+        }
+      }
+
+      return req;
+    });
 
     await this.audit.write(
       actorId,
       `admin.verification.${(dto.status ?? 'update').toLowerCase()}`,
       'VerificationRequest',
       id,
-      { pharmacy: req.pharmacyName, status: req.status },
+      { pharmacy: result.pharmacyName, status: result.status },
     );
-    return this.toDto(req);
+    return this.toDto(result);
   }
 
   private async require(id: string): Promise<VerificationRequest> {
@@ -108,3 +156,4 @@ export class VerificationService {
     };
   }
 }
+
