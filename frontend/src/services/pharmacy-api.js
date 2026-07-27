@@ -82,8 +82,29 @@ export const getDashboard = async () => {
   }
 }
 
-// --- Other surfaces (still demo data) ----------------------------------------
-export const getNotifications = () => settle(NOTIFICATIONS)
+import { listNotifications } from './admin-api'
+
+export const getNotifications = async () => {
+  let announcements = []
+  try {
+    const raw = await listNotifications()
+    announcements = (raw || [])
+      .filter(
+        (n) => n.target === 'ALL_USERS' || n.target === 'PHARMACY_MANAGERS' || !n.target
+      )
+      .map((n) => ({
+        id: `broadcast-${n.id}`,
+        type: n.type === 'MAINTENANCE' ? 'system' : n.type === 'EMERGENCY_ALERT' ? 'verification' : 'system',
+        title: n.title,
+        message: n.message,
+        when: n.date ? new Date(n.date).toLocaleDateString() : 'Just now',
+        unread: true,
+      }))
+  } catch {
+    // fallback gracefully
+  }
+  return [...announcements, ...NOTIFICATIONS]
+}
 export const getParticipation = () => settle(PARTICIPATION)
 export const getIntegration = () => settle(INTEGRATION)
 // TODO(backend): POST /pharmacy/integration/sync
