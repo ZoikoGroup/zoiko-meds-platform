@@ -1,4 +1,4 @@
-bggb/**
+/**
  * ZoikoAvail™ availability model — governed presentation helpers.
  *
  * Per the ZoikoMeds build reference, availability is expressed as a
