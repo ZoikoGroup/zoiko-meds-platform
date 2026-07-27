@@ -81,7 +81,7 @@ export default function PharmacyNotifications() {
             className={
               'rounded-full border px-3 py-1 text-xs font-semibold transition-colors ' +
               (filter === f.value
-                ? 'border-primary bg-primary/10 text-primary'
+                ? 'border-[#2563EB] bg-blue-50 text-[#2563EB] dark:bg-blue-950/50 dark:text-[#3B82F6]'
                 : 'border-border bg-card text-muted-foreground hover:text-foreground')
             }
           >
@@ -98,14 +98,14 @@ export default function PharmacyNotifications() {
             const meta = TYPE_META[n.type] ?? TYPE_META.system
             const Icon = meta.icon
             return (
-              <Card key={n.id} className={'flex items-start gap-3 p-4 ' + (n.unread ? 'border-primary/30 bg-primary/5' : '')}>
-                <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Icon className="size-4.5" />
+              <Card key={n.id} className={'flex items-start gap-3 p-4 ' + (n.unread ? 'border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20' : '')}>
+                <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-100 dark:border-blue-900/50 text-[#2563EB] dark:text-[#3B82F6]">
+                  <Icon className="size-4.5 text-[#2563EB] dark:text-[#3B82F6]" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-foreground">{n.title}</span>
-                    {n.unread && <span className="size-2 rounded-full bg-primary" aria-label="Unread" />}
+                    {n.unread && <span className="size-2 rounded-full bg-[#2563EB] dark:bg-[#3B82F6]" aria-label="Unread" />}
                   </div>
                   <span className="text-sm leading-relaxed text-muted-foreground">{n.message}</span>
                   <span className="mt-1 text-xs text-muted-foreground">{n.when}</span>
