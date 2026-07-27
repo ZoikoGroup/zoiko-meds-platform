@@ -6,6 +6,7 @@ import { validateEnv } from './config/env.validation';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { PrismaModule } from './prisma/prisma.module';
 import { MailModule } from './modules/mail/mail.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { MeModule } from './modules/me/me.module';
@@ -28,6 +29,7 @@ import { EnterpriseModule } from './modules/enterprise/enterprise.module';
     ]),
     PrismaModule,
     MailModule, // Transactional email (credentials, invites, resets)
+    NotificationsModule, // ZM-NOT-EMAIL-02 governed notification dispatch
     HealthModule,
     AuthModule, // Authentication, JWT sessions & role-based access
     AdminModule, // SUPER_ADMIN platform administration
