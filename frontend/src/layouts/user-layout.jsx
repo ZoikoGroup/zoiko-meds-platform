@@ -1,9 +1,9 @@
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState, useEffect, useCallback } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Home, Search, Heart, Radar, Settings, HelpCircle,
-  Menu, LogOut, Sun, Moon, Loader2, User, ShieldCheck,
+  Menu, LogOut, Sun, Moon, Loader2, User, ShieldCheck, Bell,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { getSignalDigest } from '@/services/signal-api'
+import { getPatientNotifications } from '@/services/patient-notifications-api'
 
 const NAV_SECTIONS = [
   {
@@ -40,6 +41,7 @@ const NAV_SECTIONS = [
   {
     heading: 'Account',
     items: [
+      { label: 'Notifications', to: '/notifications', icon: Bell },
       { label: 'My Profile', to: '/profile', icon: User },
       { label: 'Settings', to: '/settings', icon: Settings },
     ],
@@ -52,6 +54,7 @@ const PAGE_TITLES = {
   '/availability': 'How Availability Works',
   '/saved': 'Saved Medicines',
   '/signal': 'ZoikoSignal™',
+  '/notifications': 'Notifications',
   '/profile': 'My Profile',
   '/settings': 'Settings',
 }
@@ -63,14 +66,29 @@ export function UserLayout() {
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [signalUnread, setSignalUnread] = useState(0)
+  const [notifUnread, setNotifUnread] = useState(0)
 
-  // Live unread count for the ZoikoSignal nav badge; refreshes on navigation
-  // so it stays in sync after alerts are read on the ZoikoSignal page.
-  useEffect(() => {
+  const refreshUnreadCounts = useCallback(() => {
     let alive = true
     getSignalDigest().then((d) => alive && setSignalUnread(d.unread)).catch(() => {})
+    getPatientNotifications().then((list) => {
+      if (alive) {
+        setNotifUnread((list || []).filter((n) => n.unread).length)
+      }
+    }).catch(() => {})
     return () => { alive = false }
-  }, [location.pathname])
+  }, [])
+
+  useEffect(() => {
+    refreshUnreadCounts()
+    const handleSync = () => refreshUnreadCounts()
+    window.addEventListener('broadcast-dispatched', handleSync)
+    window.addEventListener('focus', handleSync)
+    return () => {
+      window.removeEventListener('broadcast-dispatched', handleSync)
+      window.removeEventListener('focus', handleSync)
+    }
+  }, [location.pathname, refreshUnreadCounts])
 
   const isDark = theme === 'dark'
   const currentTitle = PAGE_TITLES[location.pathname] ?? 'Home'
@@ -130,6 +148,11 @@ export function UserLayout() {
                     {link.to === '/signal' && signalUnread > 0 && (
                       <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
                         {signalUnread}
+                      </span>
+                    )}
+                    {link.to === '/notifications' && notifUnread > 0 && (
+                      <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
+                        {notifUnread}
                       </span>
                     )}
                   </Link>
@@ -203,6 +226,23 @@ export function UserLayout() {
           </div>
 
           <div className="flex items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              asChild
+              className="relative rounded-full text-muted-foreground hover:text-foreground"
+              aria-label={`Notifications${notifUnread > 0 ? `, ${notifUnread} unread` : ''}`}
+            >
+              <Link to="/notifications">
+                <Bell className="size-4.5" />
+                {notifUnread > 0 && (
+                  <span className="absolute top-1 right-1 flex size-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                    <span className="relative inline-flex size-2.5 rounded-full bg-primary" />
+                  </span>
+                )}
+              </Link>
+            </Button>
             <Button
               variant="ghost"
               size="icon-sm"

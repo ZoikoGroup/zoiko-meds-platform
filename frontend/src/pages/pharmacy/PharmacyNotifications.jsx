@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -18,14 +18,33 @@ export default function PharmacyNotifications() {
   const [items, setItems] = useState(null)
   const [filter, setFilter] = useState('all')
 
-  useEffect(() => {
-    let alive = true
-    getNotifications().then((n) => alive && setItems(n)).catch(() => alive && setItems([]))
-    return () => { alive = false }
+  const fetchItems = useCallback(async () => {
+    try {
+      const data = await getNotifications()
+      setItems(data)
+    } catch {
+      setItems([])
+    }
   }, [])
 
-  const markRead = (id) => setItems((rows) => rows.map((n) => (n.id === id ? { ...n, unread: false } : n)))
-  const markAllRead = () => setItems((rows) => rows.map((n) => ({ ...n, unread: false })))
+  useEffect(() => {
+    fetchItems()
+
+    const handleSync = () => fetchItems()
+    window.addEventListener('broadcast-dispatched', handleSync)
+    window.addEventListener('focus', handleSync)
+
+    const interval = setInterval(handleSync, 10000)
+
+    return () => {
+      window.removeEventListener('broadcast-dispatched', handleSync)
+      window.removeEventListener('focus', handleSync)
+      clearInterval(interval)
+    }
+  }, [fetchItems])
+
+  const markRead = (id) => setItems((rows) => (rows || []).map((n) => (n.id === id ? { ...n, unread: false } : n)))
+  const markAllRead = () => setItems((rows) => (rows || []).map((n) => ({ ...n, unread: false })))
 
   if (!items) {
     return (
