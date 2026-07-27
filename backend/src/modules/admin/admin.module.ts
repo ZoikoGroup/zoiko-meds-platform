@@ -9,6 +9,8 @@ import { VerificationController } from './verification/verification.controller';
 import { VerificationService } from './verification/verification.service';
 import { NotificationController } from './notification/notification.controller';
 import { NotificationService } from './notification/notification.service';
+import { ReportsController } from './reports/reports.controller';
+import { ReportsService } from './reports/reports.service';
 
 @Module({
   imports: [AuthModule],
@@ -17,6 +19,7 @@ import { NotificationService } from './notification/notification.service';
     PharmacyAdminController,
     VerificationController,
     NotificationController,
+    ReportsController,
   ],
   providers: [
     AuditWriter,
@@ -24,6 +27,7 @@ import { NotificationService } from './notification/notification.service';
     PharmacyAdminService,
     VerificationService,
     NotificationService,
+    ReportsService,
   ],
   exports: [AuditWriter],
 })
