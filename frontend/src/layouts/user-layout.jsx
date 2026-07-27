@@ -142,7 +142,16 @@ export function UserLayout() {
                     )}
                   >
                     <span className="flex w-5 justify-center shrink-0">
-                      <Icon className={cn('size-5 transition-colors duration-200', active ? 'text-primary' : 'text-muted-foreground')} />
+                      <Icon
+                        className={cn(
+                          'size-5 transition-colors duration-200',
+                          link.to === '/notifications'
+                            ? 'text-[#2563EB] dark:text-[#3B82F6]'
+                            : active
+                            ? 'text-primary'
+                            : 'text-muted-foreground'
+                        )}
+                      />
                     </span>
                     <span>{link.label}</span>
                     {link.to === '/signal' && signalUnread > 0 && (
@@ -234,11 +243,11 @@ export function UserLayout() {
               aria-label={`Notifications${notifUnread > 0 ? `, ${notifUnread} unread` : ''}`}
             >
               <Link to="/notifications">
-                <Bell className="size-4.5" />
+                <Bell className="size-4.5 transition-colors text-[#2563EB] dark:text-[#3B82F6]" />
                 {notifUnread > 0 && (
                   <span className="absolute top-1 right-1 flex size-2.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                    <span className="relative inline-flex size-2.5 rounded-full bg-primary" />
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2563EB] dark:bg-[#3B82F6] opacity-75" />
+                    <span className="relative inline-flex size-2.5 rounded-full bg-[#2563EB] dark:bg-[#3B82F6]" />
                   </span>
                 )}
               </Link>
