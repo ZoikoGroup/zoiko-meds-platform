@@ -31,23 +31,23 @@ enum UserRole {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  fullName     String
-  phone        String? // optional, for SMS availability alerts
-  role         UserRole @default(PUBLIC)
-  passwordHash String? // null for SSO/IdP-backed accounts
-  pharmacyId   String?
-  pharmacy     Pharmacy? @relation(fields: [pharmacyId], references: [id])
-  isActive     Boolean  @default(true)
-  mustChangePassword Boolean @default(false) // set when an admin provisions an account
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  fullName           String
+  phone              String? // optional, for SMS availability alerts
+  role               UserRole  @default(PUBLIC)
+  passwordHash       String? // null for SSO/IdP-backed accounts
+  pharmacyId         String?
+  pharmacy           Pharmacy? @relation(fields: [pharmacyId], references: [id])
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false) // set when an admin provisions an account
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  savedMedicines   SavedMedicine[]
-  alertPreference  AlertPreference?
-  searchHistory    SearchHistory[]
-  passwordResets   PasswordResetToken[]
+  savedMedicines               SavedMedicine[]
+  alertPreference              AlertPreference?
+  searchHistory                SearchHistory[]
+  passwordResets               PasswordResetToken[]
   signalNotifications          SignalNotification[]
   signalNotificationPreference SignalNotificationPreference?
 
@@ -67,17 +67,17 @@ enum MedicinePriority {
 }
 
 model SavedMedicine {
-  id         String           @id @default(cuid())
-  userId     String
-  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  medicineId String
-  medicine   MedicineEntity   @relation(fields: [medicineId], references: [id], onDelete: Cascade)
-  priority   MedicinePriority @default(MEDIUM)
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  medicineId     String
+  medicine       MedicineEntity   @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  priority       MedicinePriority @default(MEDIUM)
   // Last availability status a notification was generated for. Lets the signal
   // generator detect transitions (e.g. running-low → back-in-stock) instead of
   // re-emitting the same state. One of: available|limited|running-low|out-of-stock.
   notifiedStatus String?
-  createdAt  DateTime         @default(now())
+  createdAt      DateTime         @default(now())
 
   @@unique([userId, medicineId])
   @@index([userId])
@@ -179,10 +179,10 @@ model MedicineEntity {
   jurisdictionId String?
   jurisdiction   Jurisdiction? @relation(fields: [jurisdictionId], references: [id])
 
-  identifiers        IdentifierMapping[]
+  identifiers         IdentifierMapping[]
   availabilitySignals AvailabilitySignal[]
-  savedByUsers       SavedMedicine[]
-  changeLogs         MedicineChangeLog[]
+  savedByUsers        SavedMedicine[]
+  changeLogs          MedicineChangeLog[]
   signalNotifications SignalNotification[]
 
   createdAt DateTime @default(now())
@@ -221,15 +221,15 @@ model MedicineChangeLog {
 
 // Maps a medicine entity to external identifiers (NDC, RxCUI, GTIN, DIN, dm+d, EAN/UPC, local codes)
 model IdentifierMapping {
-  id           String       @id @default(cuid())
+  id           String         @id @default(cuid())
   medicineId   String
   medicine     MedicineEntity @relation(fields: [medicineId], references: [id], onDelete: Cascade)
   system       String // e.g. "NDC", "RXCUI", "GTIN", "DIN", "DMD", "ATC", "LOCAL"
   value        String
-  qualityState QualityState @default(MAPPED)
+  qualityState QualityState   @default(MAPPED)
   source       String?
   licenseScope String?
-  createdAt    DateTime     @default(now())
+  createdAt    DateTime       @default(now())
 
   @@unique([system, value, medicineId])
   @@index([system, value])
@@ -274,9 +274,9 @@ model Pharmacy {
   jurisdictionId String?
   jurisdiction   Jurisdiction? @relation(fields: [jurisdictionId], references: [id])
 
-  users              User[]
-  inventorySignals   InventorySignal[]
-  availabilitySignals AvailabilitySignal[]
+  users                User[]
+  inventorySignals     InventorySignal[]
+  availabilitySignals  AvailabilitySignal[]
   verificationRequests VerificationRequest[]
 
   createdAt DateTime @default(now())
@@ -288,16 +288,16 @@ model Pharmacy {
 
 // Raw inventory signal uploaded by a pharmacy. NEVER exposed publicly as exact stock.
 model InventorySignal {
-  id           String       @id @default(cuid())
-  pharmacyId   String
-  pharmacy     Pharmacy     @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
-  medicineId   String
-  uploadMethod UploadMethod @default(MANUAL)
+  id              String       @id @default(cuid())
+  pharmacyId      String
+  pharmacy        Pharmacy     @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+  medicineId      String
+  uploadMethod    UploadMethod @default(MANUAL)
   // Confidential — internal only. Public surfaces use derived AvailabilitySignal.
-  quantityOnHand Int?
-  reportedInStock Boolean   @default(true)
-  reportedAt   DateTime     @default(now())
-  createdAt    DateTime     @default(now())
+  quantityOnHand  Int?
+  reportedInStock Boolean      @default(true)
+  reportedAt      DateTime     @default(now())
+  createdAt       DateTime     @default(now())
 
   @@index([pharmacyId, medicineId])
   @@index([reportedAt])
@@ -316,15 +316,15 @@ enum AvailabilityConfidence {
 }
 
 model AvailabilitySignal {
-  id            String                 @id @default(cuid())
-  medicineId    String
-  medicine      MedicineEntity         @relation(fields: [medicineId], references: [id], onDelete: Cascade)
-  pharmacyId    String
-  pharmacy      Pharmacy               @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
-  confidence    AvailabilityConfidence @default(UNKNOWN)
-  freshnessMinutes Int? // age of the underlying signal
-  requiresConfirmation Boolean         @default(false)
-  computedAt    DateTime               @default(now())
+  id                   String                 @id @default(cuid())
+  medicineId           String
+  medicine             MedicineEntity         @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  pharmacyId           String
+  pharmacy             Pharmacy               @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+  confidence           AvailabilityConfidence @default(UNKNOWN)
+  freshnessMinutes     Int? // age of the underlying signal
+  requiresConfirmation Boolean                @default(false)
+  computedAt           DateTime               @default(now())
 
   @@unique([medicineId, pharmacyId])
   @@index([medicineId])
@@ -486,7 +486,7 @@ enum VerificationRequestStatus {
 model VerificationRequest {
   id            String                    @id @default(cuid())
   pharmacyId    String?
-  pharmacy      Pharmacy?                  @relation(fields: [pharmacyId], references: [id])
+  pharmacy      Pharmacy?                 @relation(fields: [pharmacyId], references: [id])
   pharmacyName  String // denormalized label for display
   licenseNumber String
   submittedBy   String
@@ -657,4 +657,137 @@ model Report {
 
   @@index([status])
   @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// ZM-NOT-EMAIL-02 — governed notification delivery
+//
+// Implements the engineering rules of the email template library: one immutable
+// event per committed state transition, channels rendered from that record, and
+// a full delivery audit trail. Templates themselves live in code
+// (src/modules/notifications/catalog) — the database stores what was emitted,
+// never the copy.
+// ---------------------------------------------------------------------------
+
+// Delivery stream. Streams are dispatched and reputation-monitored separately so
+// a marketing complaint can never degrade security or legal deliverability.
+enum NotificationStream {
+  TRANSACTIONAL
+  SECURITY
+  LEGAL
+  OPERATIONAL
+  INTERNAL
+  MARKETING
+}
+
+// Release gate from the template directory. Only ACTIVE templates may dispatch;
+// CONDITIONAL covers the commercial set, which stays disabled until the
+// commercial, tax, payment, refund, and regulatory owners sign off.
+enum NotificationGate {
+  P0
+  P1
+  P2
+  INTERNAL
+  CONDITIONAL
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+// Why a delivery was not attempted. Recorded per the audit rule so suppression is
+// always explainable after the fact.
+enum NotificationSuppressionReason {
+  TEMPLATE_NOT_ACTIVE
+  GATE_NOT_RELEASED
+  RECIPIENT_UNSUBSCRIBED
+  RECIPIENT_BOUNCED
+  RECIPIENT_COMPLAINED
+  NO_RESOLVED_RECIPIENT
+  DUPLICATE_EVENT
+  STATE_REVALIDATION_FAILED
+}
+
+// An immutable record of an authoritative state transition worth notifying about.
+// Created once, never updated: corrections are new events. `idempotencyKey` is
+// derived from the workflow reference plus template so retries of the same
+// transition collapse onto one row instead of re-sending.
+model NotificationEvent {
+  id              String             @id @default(cuid())
+  templateId      String // e.g. "REG-004"
+  templateVersion String
+  baseEvent       String // e.g. "REG-004" — the approved base event the variant maps to
+  stream          NotificationStream
+  gate            NotificationGate
+  idempotencyKey  String             @unique
+  // Reference to the workflow record that caused this event (application id,
+  // verification request id, support case id, …).
+  workflowRef     String?
+  workflowType    String?
+  // Validated merge data for the template. Must contain every required field the
+  // template declares; the renderer refuses to render otherwise.
+  payload         Json
+  locale          String             @default("en-US")
+  // Actor that caused an administrator-generated event; null for system events.
+  actorId         String?
+  actorEmail      String?
+  occurredAt      DateTime           @default(now())
+  createdAt       DateTime           @default(now())
+
+  deliveries NotificationDelivery[]
+
+  @@index([templateId])
+  @@index([workflowType, workflowRef])
+  @@index([occurredAt])
+}
+
+// One row per (event, channel, recipient). Holds the delivery audit trail the
+// spec requires: provider id, timestamps, status, suppression reason, retries.
+model NotificationDelivery {
+  id                  String                         @id @default(cuid())
+  eventId             String
+  event               NotificationEvent              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  channel             NotificationChannel
+  // Masked at rest for the audit view; the full address is resolved at send time.
+  recipientEmail      String?
+  recipientUserId     String?
+  // How the recipient was determined (e.g. "application.primaryContact") so a
+  // misdirected message can be traced back to its resolution rule.
+  recipientResolution String
+  senderAddress       String?
+  status              NotificationDeliveryStatus     @default(PENDING)
+  suppressionReason   NotificationSuppressionReason?
+  providerMessageId   String?
+  attempts            Int                            @default(0)
+  lastError           String?
+  sentAt              DateTime?
+  createdAt           DateTime                       @default(now())
+  updatedAt           DateTime                       @updatedAt
+
+  @@index([eventId])
+  @@index([status])
+  @@index([recipientUserId])
+}
+
+// Address-level delivery suppression. Essential streams (SECURITY, LEGAL,
+// TRANSACTIONAL) ignore UNSUBSCRIBED entries — per the rule that users may not
+// opt out of communications required for an enabled workflow — but always honor
+// hard bounces and complaints.
+model NotificationSuppression {
+  id        String                        @id @default(cuid())
+  email     String                        @unique
+  reason    NotificationSuppressionReason
+  note      String?
+  createdAt DateTime                      @default(now())
+  updatedAt DateTime                      @updatedAt
+
+  @@index([reason])
 }
