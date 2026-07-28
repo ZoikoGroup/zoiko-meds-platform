@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { NotificationStream } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
@@ -148,6 +149,62 @@ export class MailService {
       html: this.layout('Welcome to ZoikoMeds', body),
       text: `Welcome to ZoikoMeds, ${params.fullName}! Open the app: ${this.appBaseUrl}/dashboard`,
     });
+  }
+
+  /**
+   * Sends copy already rendered by the notification template library.
+   *
+   * Unlike the lifecycle helpers above, this throws on transport failure so the
+   * caller can record the outcome on its delivery row. Streams are sent from
+   * distinct senders so a complaint against one cannot degrade the others'
+   * reputation.
+   */
+  async sendRendered(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+    stream: NotificationStream;
+  }): Promise<{ providerMessageId?: string }> {
+    const sender = this.senderFor(params.stream);
+    if (!this.transporter) {
+      this.logger.log(
+        `[log-only mail] stream=${params.stream} to=${params.to} subject="${params.subject}"\n${params.text}`,
+      );
+      return {};
+    }
+    const info = (await this.transporter.sendMail({
+      from: sender,
+      to: params.to,
+      subject: params.subject,
+      html: params.html,
+      text: params.text,
+      headers: { 'X-ZoikoMeds-Stream': params.stream },
+    })) as { messageId?: string };
+    this.logger.log(`Sent "${params.subject}" to ${params.to} [${params.stream}]`);
+    return { providerMessageId: info?.messageId };
+  }
+
+  /**
+   * Per-stream sender. Falls back to the default transactional identity when a
+   * stream-specific address is not configured.
+   */
+  private senderFor(stream: NotificationStream): string {
+    const key = `SMTP_FROM_${stream}`;
+    const address = this.config.get<string>(key) || this.fromAddress;
+    const name =
+      stream === 'SECURITY'
+        ? 'ZoikoMeds Security'
+        : stream === 'LEGAL'
+          ? 'ZoikoMeds Privacy and Legal'
+          : stream === 'OPERATIONAL'
+            ? 'ZoikoMeds Service Status'
+            : stream === 'INTERNAL'
+              ? 'ZoikoMeds Internal Alerts'
+              : stream === 'MARKETING'
+                ? 'ZoikoMeds Updates'
+                : 'ZoikoMeds Network Operations';
+    return `"${name}" <${address}>`;
   }
 
   // --- transport -----------------------------------------------------------
