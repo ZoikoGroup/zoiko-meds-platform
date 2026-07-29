@@ -17,6 +17,7 @@ import { NotificationItem } from '@/features/signal/notification-item'
 import { NotificationSettings } from '@/features/signal/notification-settings'
 import { SignalStatSkeleton, AlertCardSkeleton, SavedMedicineSkeleton } from '@/features/signal/skeletons'
 import { NOTIF_FILTERS } from '@/features/signal/signal-meta'
+import { useSignalSavedStatus } from '@/hooks/use-saved-medicines'
 import {
   listSavedStatus, listActiveAlerts, listNotifications, getNotificationSettings,
   updateNotificationSettings, markRead, markAllRead, dismissNotification,
@@ -43,6 +44,14 @@ export default function UserSignal() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [savedQuery, setSavedQuery] = useState('')
+
+  const { data: liveSavedStatus } = useSignalSavedStatus()
+
+  useEffect(() => {
+    if (liveSavedStatus) {
+      setSaved(liveSavedStatus)
+    }
+  }, [liveSavedStatus])
 
   useEffect(() => {
     let alive = true

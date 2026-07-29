@@ -15,6 +15,7 @@ import {
 import { ConfidenceBadge } from '@/components/shared/status'
 import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
+import { LocationModal } from '@/components/shared/location-modal'
 import { AVAILABILITY, CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
 import { getUserOverview, listNearbyPharmacies } from '@/services/user-api'
 import { SignalWidget } from '@/features/signal/signal-widget'
@@ -170,24 +171,13 @@ export default function UserHome() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showManualLoc} onOpenChange={setShowManualLoc}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Set your location</DialogTitle>
-            <DialogDescription>Enter a city, area, or PIN code.</DialogDescription>
-          </DialogHeader>
-          <Input
-            value={manualLocInput}
-            onChange={(e) => setManualLocInput(e.target.value)}
-            placeholder="e.g. Gandimaisamma, Hyderabad"
-            onKeyDown={(e) => e.key === 'Enter' && saveManualLocation()}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowManualLoc(false)}>Cancel</Button>
-            <Button variant="teal" onClick={saveManualLocation}>Save location</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Location Modal with Typeahead Autocomplete & PIN Code / City Validation */}
+      <LocationModal
+        open={showManualLoc}
+        onOpenChange={setShowManualLoc}
+        currentLocation={location}
+        onSave={(newLoc) => setLocation(newLoc)}
+      />
 
       <Dialog open={isListening} onOpenChange={setIsListening}>
         <DialogContent className="sm:max-w-[320px]">
