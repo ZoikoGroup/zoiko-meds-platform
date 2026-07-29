@@ -62,7 +62,7 @@ export class AppErrorBoundary extends React.Component {
                 </Button>
               </div>
 
-              {process.env.NODE_ENV !== 'production' && this.state.error && (
+              {import.meta.env.DEV && this.state.error && (
                 <div className="mt-2 w-full rounded-xl border border-border/60 bg-muted/40 p-3 text-left">
                   <p className="font-mono text-[11px] text-red-400 break-all">
                     {this.state.error.toString()}
