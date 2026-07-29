@@ -22,6 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { OAuthButtons } from '@/components/shared/oauth-buttons'
+import { PhoneInput } from '@/components/ui/phone-input'
+import { isValidPhoneNumber } from 'react-phone-number-input'
 
 export default function Register() {
   const { register } = useAuth()
@@ -63,19 +65,37 @@ export default function Register() {
     return { score, text, color }
   }, [password])
 
+  // Calculate international phone number validity
+  const phoneError = useMemo(() => {
+    if (!phone || !phone.trim() || phone.trim() === '+' || /^\+[0-9]{1,4}$/.test(phone.trim())) {
+      return ''
+    }
+    return isValidPhoneNumber(phone.trim()) ? '' : 'Please enter a valid phone number.'
+  }, [phone])
+
   // Handle Form Submission
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+
+    if (phoneError) {
+      setError(phoneError)
+      return
+    }
 
     if (password.length < 8) {
       setError('Password must be at least 8 characters long.')
       return
     }
 
+    const formattedPhone =
+      !phone || !phone.trim() || /^\+[0-9]{1,4}$/.test(phone.trim())
+        ? undefined
+        : phone.trim()
+
     setLoading(true)
     try {
-      await register({ name, email, phone, password })
+      await register({ name, email, phone: formattedPhone, password })
       navigate('/dashboard')
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.')
@@ -123,7 +143,7 @@ export default function Register() {
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
         <CardContent className="flex flex-col gap-6 p-6">
           
-          {/* Segmented Control Headers (Sign In vs Create Account) - dark mode contrast enhanced */}
+          {/* Segmented Control Headers (Sign In vs Create Account) */}
           <div className="grid grid-cols-2 rounded-xl bg-muted/80 dark:bg-slate-900/60 p-1 border border-border/40 dark:border-slate-800/80">
             <Link
               to="/login"
@@ -199,22 +219,21 @@ export default function Register() {
                 </Label>
                 <span className="text-[10px] text-muted-foreground">optional</span>
               </div>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-3 flex items-center text-muted-foreground">
-                  <Phone className="size-4" />
+              <PhoneInput
+                id="phone"
+                value={phone}
+                onChange={setPhone}
+                error={Boolean(phoneError)}
+              />
+              {phoneError ? (
+                <span className="text-[11px] font-medium text-red-500 leading-snug">
+                  Please enter a valid phone number.
                 </span>
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="+1 (555) 000-0000"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <span className="text-[10px] text-muted-foreground leading-snug">
-                ℹ️ Used only for optional SMS availability alerts.
-              </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground leading-snug">
+                  ℹ️ Used only for optional SMS availability alerts.
+                </span>
+              )}
             </div>
 
             {/* Password Field */}
@@ -273,7 +292,7 @@ export default function Register() {
             <Button
               type="submit"
               variant="teal"
-              disabled={loading}
+              disabled={loading || Boolean(phoneError)}
               className="mt-3 w-full font-semibold"
             >
               {loading ? (

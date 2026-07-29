@@ -11,6 +11,7 @@ import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
 import { mapsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
 import { reverseGeocode } from '@/lib/geocode'
+import { validateLocation } from '@/lib/location-data'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
@@ -155,7 +156,7 @@ export default function UserSearch() {
 
   // The ONLY entry point that fetches results. Validates that a medicine and a
   // location are set, then commits the current draft as the active search.
-  const runSearch = () => {
+  const runSearch = async () => {
     const q = searchQuery.trim()
     if (!q) {
       flash('Enter a medicine name to search.')
@@ -164,6 +165,13 @@ export default function UserSearch() {
     if (!coords && !location.trim()) {
       flash('Set a location — type a city/PIN code or tap “Use my location”.')
       return
+    }
+    if (!coords && location.trim()) {
+      const locRes = await validateLocation(location.trim())
+      if (!locRes.isValid) {
+        flash(locRes.message || 'Please enter a valid city, area, or 6-digit PIN code.')
+        return
+      }
     }
     setShowSuggestions(false)
     setActiveSearch({
@@ -317,12 +325,40 @@ export default function UserSearch() {
                     <Navigation className="size-3.5" />
                     Using your current location
                     <Check className="size-3.5" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocation('')
+                        setCoords(null)
+                        setGeoStatus('idle')
+                        localStorage.removeItem(LOC_KEY)
+                        if (activeSearch) clearResults()
+                      }}
+                      aria-label="Undo location selection"
+                      className="ml-1.5 font-normal text-muted-foreground underline hover:text-foreground"
+                    >
+                      Undo
+                    </button>
                   </span>
                 ) : location ? (
                   <span className="flex items-center gap-1 text-xs font-semibold text-primary">
                     <MapPin className="size-3.5" />
                     Location set
                     <Check className="size-3.5" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocation('')
+                        setCoords(null)
+                        setGeoStatus('idle')
+                        localStorage.removeItem(LOC_KEY)
+                        if (activeSearch) clearResults()
+                      }}
+                      aria-label="Undo location selection"
+                      className="ml-1.5 font-normal text-muted-foreground underline hover:text-foreground"
+                    >
+                      Undo
+                    </button>
                   </span>
                 ) : (
                   <span className="text-xs text-muted-foreground">Add a location to see nearby pharmacies.</span>

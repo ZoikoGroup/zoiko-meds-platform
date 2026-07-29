@@ -19,7 +19,6 @@ export default function UserProfile() {
 
   const [form, setForm] = useState({
     name: user?.name || '',
-    email: user?.email || '',
     phone: user?.phone || '',
   })
 
@@ -27,7 +26,6 @@ export default function UserProfile() {
     if (user) {
       setForm({
         name: user.name || '',
-        email: user.email || '',
         phone: user.phone || '',
       })
     }
@@ -127,14 +125,16 @@ export default function UserProfile() {
                 </div>
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      required
-                    />
+                    <Label htmlFor="email">Email address</Label>
+                    <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3.5 py-2.5 text-sm">
+                      <span className="font-medium text-foreground">{user?.email || '—'}</span>
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Read-only
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Email is linked to your login account and cannot be changed.
+                    </p>
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="phone">Phone</Label>

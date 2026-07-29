@@ -73,6 +73,7 @@ model SavedMedicine {
   medicineId     String
   medicine       MedicineEntity   @relation(fields: [medicineId], references: [id], onDelete: Cascade)
   priority       MedicinePriority @default(MEDIUM)
+  alertsEnabled  Boolean          @default(true)
   // Last availability status a notification was generated for. Lets the signal
   // generator detect transitions (e.g. running-low → back-in-stock) instead of
   // re-emitting the same state. One of: available|limited|running-low|out-of-stock.
