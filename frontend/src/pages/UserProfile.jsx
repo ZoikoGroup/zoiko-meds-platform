@@ -9,10 +9,12 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
+import { useLanguage } from '@/providers/language-provider'
 import { User, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react'
 
 export default function UserProfile() {
   const { user, logout, updateProfile, changePassword } = useAuth()
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const [flashMsg, flash] = useFlash()
   const [error, setError] = useState('')
@@ -78,8 +80,8 @@ export default function UserProfile() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="My profile"
-        subtitle="Manage your contact details and account security."
+        title={t('myProfile', 'My profile')}
+        subtitle={t('contactDetailsDesc', 'Manage your contact details and account security.')}
       />
 
       {/* Identity card */}
@@ -113,19 +115,19 @@ export default function UserProfile() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User className="size-4 text-primary" />
-                Contact details
+                {t('contactDetails', 'Contact details')}
               </CardTitle>
-              <CardDescription>Update how verified pharmacies and ZoikoMeds can reach you.</CardDescription>
+              <CardDescription>{t('updateContactDesc', 'Update how verified pharmacies and ZoikoMeds can reach you.')}</CardDescription>
             </CardHeader>
             <CardContent className="pt-5">
               <form onSubmit={saveProfile} className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="name">Full name</Label>
+                  <Label htmlFor="name">{t('fullName', 'Full name')}</Label>
                   <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
                 </div>
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="email">Email address</Label>
+                    <Label htmlFor="email">{t('emailAddress', 'Email address')}</Label>
                     <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3.5 py-2.5 text-sm">
                       <span className="font-medium text-foreground">{user?.email || '—'}</span>
                       <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -137,11 +139,11 @@ export default function UserProfile() {
                     </p>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="phone">Phone</Label>
+                    <Label htmlFor="phone">{t('phone', 'Phone')}</Label>
                     <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
                   </div>
                 </div>
-                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">Save changes</Button>
+                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">{t('saveChanges', 'Save changes')}</Button>
               </form>
             </CardContent>
           </Card>
@@ -162,14 +164,14 @@ export default function UserProfile() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Lock className="size-4 text-primary" />
-                Password
+                {t('password', 'Password')}
               </CardTitle>
-              <CardDescription>Update your account password.</CardDescription>
+              <CardDescription>{t('updatePasswordDesc', 'Update your account password.')}</CardDescription>
             </CardHeader>
             <CardContent className="pt-5">
               <form onSubmit={savePassword} className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="current">Current password</Label>
+                  <Label htmlFor="current">{t('currentPassword', 'Current password')}</Label>
                   <div className="relative flex items-center">
                     <Input
                       id="current"
@@ -193,7 +195,7 @@ export default function UserProfile() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="next">New password</Label>
+                  <Label htmlFor="next">{t('newPassword', 'New password')}</Label>
                   <div className="relative flex items-center">
                     <Input
                       id="next"
@@ -220,7 +222,7 @@ export default function UserProfile() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="confirm">Confirm new password</Label>
+                  <Label htmlFor="confirm">{t('confirmNewPassword', 'Confirm new password')}</Label>
                   <div className="relative flex items-center">
                     <Input
                       id="confirm"

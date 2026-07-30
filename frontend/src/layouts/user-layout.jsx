@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
+import { useLanguage } from '@/providers/language-provider'
 import { Brand } from '@/components/shared/brand'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -23,50 +24,51 @@ import { cn } from '@/lib/utils'
 import { getSignalDigest } from '@/services/signal-api'
 import { getPatientNotifications } from '@/services/patient-notifications-api'
 
-const NAV_SECTIONS = [
-  {
-    items: [
-      { label: 'Home', to: '/dashboard', icon: Home },
-      { label: 'Search Medicines', to: '/search', icon: Search },
-      { label: 'How Availability Works', to: '/availability', icon: ShieldCheck },
-    ],
-  },
-  {
-    heading: 'My Medicines',
-    items: [
-      { label: 'Saved Medicines', to: '/saved', icon: Heart },
-      { label: 'ZoikoSignal™', to: '/signal', icon: Radar },
-    ],
-  },
-  {
-    heading: 'Account',
-    items: [
-      { label: 'Notifications', to: '/notifications', icon: Bell },
-      { label: 'My Profile', to: '/profile', icon: User },
-      { label: 'Settings', to: '/settings', icon: Settings },
-    ],
-  },
-]
-
-const PAGE_TITLES = {
-  '/dashboard': 'Home',
-  '/search': 'Search Medicines',
-  '/availability': 'How Availability Works',
-  '/saved': 'Saved Medicines',
-  '/signal': 'ZoikoSignal™',
-  '/notifications': 'Notifications',
-  '/profile': 'My Profile',
-  '/settings': 'Settings',
-}
-
 export function UserLayout() {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
+  const { t } = useLanguage()
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [signalUnread, setSignalUnread] = useState(0)
   const [notifUnread, setNotifUnread] = useState(0)
+
+  const navSections = [
+    {
+      items: [
+        { label: t('home', 'Home'), to: '/dashboard', icon: Home },
+        { label: t('searchMedicines', 'Search Medicines'), to: '/search', icon: Search },
+        { label: t('howAvailabilityWorks', 'How Availability Works'), to: '/availability', icon: ShieldCheck },
+      ],
+    },
+    {
+      heading: t('myMedicines', 'My Medicines'),
+      items: [
+        { label: t('savedMedicines', 'Saved Medicines'), to: '/saved', icon: Heart },
+        { label: t('zoikoSignal', 'ZoikoSignal™'), to: '/signal', icon: Radar },
+      ],
+    },
+    {
+      heading: t('account', 'Account'),
+      items: [
+        { label: t('notifications', 'Notifications'), to: '/notifications', icon: Bell },
+        { label: t('myProfile', 'My Profile'), to: '/profile', icon: User },
+        { label: t('settings', 'Settings'), to: '/settings', icon: Settings },
+      ],
+    },
+  ]
+
+  const pageTitles = {
+    '/dashboard': t('home', 'Home'),
+    '/search': t('searchMedicines', 'Search Medicines'),
+    '/availability': t('howAvailabilityWorks', 'How Availability Works'),
+    '/saved': t('savedMedicines', 'Saved Medicines'),
+    '/signal': t('zoikoSignal', 'ZoikoSignal™'),
+    '/notifications': t('notifications', 'Notifications'),
+    '/profile': t('myProfile', 'My Profile'),
+    '/settings': t('settings', 'Settings'),
+  }
 
   const refreshUnreadCounts = useCallback(() => {
     let alive = true
@@ -91,7 +93,7 @@ export function UserLayout() {
   }, [location.pathname, refreshUnreadCounts])
 
   const isDark = theme === 'dark'
-  const currentTitle = PAGE_TITLES[location.pathname] ?? 'Home'
+  const currentTitle = pageTitles[location.pathname] ?? t('home', 'Home')
 
   const handleLogout = () => {
     logout()
@@ -119,7 +121,7 @@ export function UserLayout() {
 
         {/* Navigation — grouped into labeled sections */}
         <nav className="flex flex-col gap-7" aria-label="Patient portal">
-          {NAV_SECTIONS.map((section) => (
+          {navSections.map((section) => (
             <div key={section.heading ?? 'primary'} className="flex flex-col gap-1.5">
               {section.heading && (
                 <span className="px-3 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/60">
@@ -174,7 +176,7 @@ export function UserLayout() {
 
       <div className="flex flex-col gap-1.5 border-t border-border/60 pt-6">
         <span className="px-3 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/60">
-          Support
+          {t('support', 'Support')}
         </span>
         <a
           href="mailto:support@zoikomeds.com"
@@ -183,7 +185,7 @@ export function UserLayout() {
           <span className="flex w-5 justify-center shrink-0">
             <HelpCircle className="size-5 transition-colors duration-200" />
           </span>
-          <span>Help &amp; Support</span>
+          <span>{t('helpSupport', 'Help & Support')}</span>
         </a>
         <button
           onClick={handleLogout}
@@ -192,7 +194,7 @@ export function UserLayout() {
           <span className="flex w-5 justify-center shrink-0">
             <LogOut className="size-5 transition-colors duration-200" />
           </span>
-          <span>Sign Out</span>
+          <span>{t('signOut', 'Sign Out')}</span>
         </button>
       </div>
     </div>
@@ -291,19 +293,19 @@ export function UserLayout() {
                 <DropdownMenuItem asChild>
                   <Link to="/profile">
                     <User />
-                    My Profile
+                    {t('myProfile', 'My Profile')}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link to="/settings">
                     <Settings />
-                    Settings
+                    {t('settings', 'Settings')}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="danger" onSelect={handleLogout}>
                   <LogOut />
-                  Sign Out
+                  {t('signOut', 'Sign Out')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

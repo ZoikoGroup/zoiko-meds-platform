@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { OAuthButtons } from '@/components/shared/oauth-buttons'
+import { cn } from '@/lib/utils'
 
 export default function Login() {
   const { login } = useAuth()
@@ -31,6 +32,7 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [trustDevice, setTrustDevice] = useState(false)
+  const [trustError, setTrustError] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
   // Feedback states
@@ -45,6 +47,12 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+
+    if (!trustDevice) {
+      setTrustError(true)
+      return
+    }
+    setTrustError(false)
     setLoading(true)
 
     try {
@@ -63,7 +71,7 @@ export default function Login() {
   const showcaseTitle = 'Sign in to your ZoikoMeds portal'
   const showcaseDesc =
     'Access secure medicine availability tools, pharmacy partner workflows, wholesale access, enterprise intelligence, reports, and administrative workflows through one role-aware gateway.'
-  
+
   const showcasePills = [
     { icon: <Lock className="size-3.5 text-teal" />, label: 'Role-based access' },
     { icon: <Shield className="size-3.5 text-teal" />, label: 'MFA & SSO ready' },
@@ -79,7 +87,7 @@ export default function Login() {
     >
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
         <CardContent className="flex flex-col gap-6 p-6">
-          
+
           {/* Segmented Control Headers (Sign In vs Create Account) - dark mode contrast enhanced */}
           <div className="grid grid-cols-2 rounded-xl bg-muted/80 dark:bg-slate-900/60 p-1 border border-border/40 dark:border-slate-800/80">
             <button
@@ -156,22 +164,40 @@ export default function Login() {
             </div>
 
             {/* Keep Signed In & Forgot Password */}
-            <div className="flex items-center justify-between py-1 text-xs">
-              <label className="flex items-center gap-2 cursor-pointer text-muted-foreground select-none">
-                <input
-                  type="checkbox"
-                  checked={trustDevice}
-                  onChange={(e) => setTrustDevice(e.target.checked)}
-                  className="size-3.5 rounded border-input bg-card text-teal ring-offset-background focus:ring-ring focus:ring-2 focus:ring-offset-2"
-                />
-                Trust this device
-              </label>
-              <Link
-                to="/forgot-password"
-                className="font-medium text-teal hover:underline"
-              >
-                Forgot password?
-              </Link>
+            <div className="flex flex-col gap-1 py-1">
+              <div className="flex items-center justify-between text-xs">
+                <label className={cn(
+                  "flex items-center gap-2 cursor-pointer transition-colors select-none",
+                  trustError ? "text-danger font-semibold" : "text-muted-foreground"
+                )}>
+                  <input
+                    type="checkbox"
+                    checked={trustDevice}
+                    onChange={(e) => {
+                      setTrustDevice(e.target.checked)
+                      if (e.target.checked) setTrustError(false)
+                    }}
+                    className={cn(
+                      "size-3.5 rounded border-input bg-card text-teal ring-offset-background focus:ring-ring focus:ring-2 focus:ring-offset-2",
+                      trustError && "border-danger ring-2 ring-danger/30"
+                    )}
+                  />
+                  Trust this device
+                </label>
+                <Link
+                  to="/forgot-password"
+                  className="font-medium text-teal hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+
+              {/* Single line red warning under Trust this device */}
+              {trustError && (
+                <p className="text-xs font-semibold text-danger flex items-center gap-1 mt-0.5">
+                  ⚠️ Please check &ldquo;Trust this device&rdquo; to continue.
+                </p>
+              )}
             </div>
 
             {/* Continue Button */}
@@ -190,6 +216,11 @@ export default function Login() {
                 'Continue securely'
               )}
             </Button>
+
+            {/* Explanatory text below Continue securely */}
+            <p className="text-[11px] text-center text-muted-foreground leading-snug">
+              <span className="text-red-500 font-bold">*</span> You must check <strong className="text-foreground font-semibold">&ldquo;Trust this device&rdquo;</strong> to verify and authorize this login session.
+            </p>
           </form>
 
           {/* Social sign-in (Google, Microsoft) */}

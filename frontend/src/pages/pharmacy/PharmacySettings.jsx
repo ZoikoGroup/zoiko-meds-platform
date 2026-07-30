@@ -17,7 +17,7 @@ const NOTIF_PREFS = [
 ]
 
 export default function PharmacySettings() {
-  const { user } = useAuth()
+  const { user, changePassword: doChangePassword } = useAuth()
   const [flashMsg, flash] = useFlash()
   const [prefs, setPrefs] = useState({ inventory: true, verification: true, uploads: true, system: false })
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
@@ -33,15 +33,19 @@ export default function PharmacySettings() {
     flash('Notification preferences updated')
   }
 
-  const changePassword = (e) => {
+  const changePassword = async (e) => {
     e.preventDefault()
     if (!pwd.current || !pwd.next) { flash('Enter your current and new password'); return }
     if (pwd.next !== pwd.confirm) { flash('New passwords do not match'); return }
     if (pwd.next.length < 8) { flash('New password must be at least 8 characters'); return }
-    // TODO(backend): POST /auth/change-password
-    flash('Password updated')
-    setPwd({ current: '', next: '', confirm: '' })
-    setShowPwd({ current: false, next: false, confirm: false })
+    try {
+      await doChangePassword(pwd.current, pwd.next)
+      flash('Password updated successfully')
+      setPwd({ current: '', next: '', confirm: '' })
+      setShowPwd({ current: false, next: false, confirm: false })
+    } catch (err) {
+      flash(err.message || 'Could not update password')
+    }
   }
 
   return (

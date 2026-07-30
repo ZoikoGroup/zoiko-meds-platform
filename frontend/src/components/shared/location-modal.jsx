@@ -123,6 +123,8 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
 
     localStorage.setItem('zoiko-user-loc', finalFormatted)
     localStorage.setItem('zoiko-loc-permission', 'granted')
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('zoiko-location-change'))
     onSave && onSave(finalFormatted)
     onOpenChange(false)
     setErrorMsg('')
