@@ -6,6 +6,15 @@ const base = {
   JWT_SECRET: STRONG_SECRET,
 };
 
+// A production config that clears every prod-only guardrail; specs override the
+// one field under test.
+const prodBase = {
+  ...base,
+  NODE_ENV: 'production',
+  SUPER_ADMIN_PASSWORD: 'a-unique-strong-password',
+  APP_BASE_URL: 'https://app.example.com',
+};
+
 describe('validateEnv', () => {
   it('accepts a valid development config', () => {
     expect(() => validateEnv({ ...base, NODE_ENV: 'development' })).not.toThrow();
@@ -14,9 +23,7 @@ describe('validateEnv', () => {
   it('accepts a valid production config', () => {
     expect(() =>
       validateEnv({
-        ...base,
-        NODE_ENV: 'production',
-        SUPER_ADMIN_PASSWORD: 'a-unique-strong-password',
+        ...prodBase,
         CORS_ORIGIN: 'https://app.example.com',
       }),
     ).not.toThrow();
@@ -48,23 +55,50 @@ describe('validateEnv', () => {
 
   it('rejects the sample super-admin password in production', () => {
     expect(() =>
-      validateEnv({
-        ...base,
-        NODE_ENV: 'production',
-        SUPER_ADMIN_PASSWORD: 'ChangeMe!SuperAdmin1',
-      }),
+      validateEnv({ ...prodBase, SUPER_ADMIN_PASSWORD: 'ChangeMe!SuperAdmin1' }),
     ).toThrow(/SUPER_ADMIN_PASSWORD/);
   });
 
   it('rejects wildcard CORS in production', () => {
     expect(() =>
-      validateEnv({
-        ...base,
-        NODE_ENV: 'production',
-        SUPER_ADMIN_PASSWORD: 'unique-strong',
-        CORS_ORIGIN: 'https://app.example.com,*',
-      }),
+      validateEnv({ ...prodBase, CORS_ORIGIN: 'https://app.example.com,*' }),
     ).toThrow(/CORS_ORIGIN must not be/);
+  });
+
+  it('rejects a non-absolute APP_BASE_URL in any environment', () => {
+    expect(() => validateEnv({ ...base, APP_BASE_URL: 'app.zoikomeds.com' })).toThrow(
+      /APP_BASE_URL must be an absolute http\(s\) URL/,
+    );
+  });
+
+  it('requires APP_BASE_URL in production', () => {
+    expect(() => validateEnv({ ...prodBase, APP_BASE_URL: '' })).toThrow(
+      /APP_BASE_URL is required in production/,
+    );
+  });
+
+  it('rejects a localhost APP_BASE_URL in production', () => {
+    expect(() =>
+      validateEnv({ ...prodBase, APP_BASE_URL: 'http://localhost:5173' }),
+    ).toThrow(/APP_BASE_URL must not point at localhost/);
+  });
+
+  it('rejects an invalid or localhost OAUTH_SUCCESS_REDIRECT', () => {
+    expect(() => validateEnv({ ...base, OAUTH_SUCCESS_REDIRECT: '/auth/callback' })).toThrow(
+      /OAUTH_SUCCESS_REDIRECT must be an absolute http\(s\) URL/,
+    );
+    expect(() =>
+      validateEnv({
+        ...prodBase,
+        OAUTH_SUCCESS_REDIRECT: 'http://localhost:5173/auth/callback',
+      }),
+    ).toThrow(/OAUTH_SUCCESS_REDIRECT must not point at localhost/);
+  });
+
+  it('accepts APP_BASE_URL with a trailing slash', () => {
+    expect(() =>
+      validateEnv({ ...prodBase, APP_BASE_URL: 'https://app.zoikomeds.com/' }),
+    ).not.toThrow();
   });
 
   it('rejects an invalid NODE_ENV', () => {
