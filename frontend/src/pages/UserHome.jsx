@@ -214,7 +214,9 @@ export default function UserHome() {
     if (window._zoikoRecognition) {
       try {
         window._zoikoRecognition.stop()
-      } catch (e) {}
+      } catch {
+        // Already stopped or torn down by the browser — nothing to clean up.
+      }
       window._zoikoRecognition = null
     }
     setIsListening(false)
@@ -235,7 +237,11 @@ export default function UserHome() {
 
     try {
       if (window._zoikoRecognition) {
-        try { window._zoikoRecognition.abort() } catch (e) {}
+        try {
+          window._zoikoRecognition.abort()
+        } catch {
+          // A stale recognition instance that is already dead — safe to discard.
+        }
       }
       const recognition = new SpeechRecognition()
       window._zoikoRecognition = recognition
@@ -263,7 +269,11 @@ export default function UserHome() {
           setQuery(clean)
           if (isFinal) {
             setVoiceMode('review')
-            try { recognition.stop() } catch (e) {}
+            try {
+              recognition.stop()
+            } catch {
+              // Recognition already ended itself on the final result.
+            }
           }
         }
       }
