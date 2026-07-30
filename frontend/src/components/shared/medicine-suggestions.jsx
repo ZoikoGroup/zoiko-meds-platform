@@ -54,7 +54,10 @@ export function MedicineSuggestions({
       )}
 
       {!loading && !error && suggestions.length === 0 && (
-        <li className="px-3 py-2.5 text-sm text-muted-foreground">No medicines match “{q}”.</li>
+        <li className="flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-danger bg-danger/10 rounded-lg">
+          <AlertTriangle className="size-4 shrink-0 text-danger" />
+          <span>Invalid medicine — &ldquo;{q}&rdquo; was not found in the MediBase™ catalog.</span>
+        </li>
       )}
 
       {!loading && !error && suggestions.map((s, idx) => (

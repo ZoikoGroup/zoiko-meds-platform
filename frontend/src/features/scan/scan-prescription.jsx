@@ -42,6 +42,19 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
   const [fileName, setFileName] = useState('')
   const [extracted, setExtracted] = useState([])
   const [location, setLocation] = useState(() => localStorage.getItem(LOC_KEY) || '')
+
+  useEffect(() => {
+    const syncLoc = () => {
+      setLocation(localStorage.getItem(LOC_KEY) || '')
+    }
+    window.addEventListener('storage', syncLoc)
+    window.addEventListener('zoiko-location-change', syncLoc)
+    return () => {
+      window.removeEventListener('storage', syncLoc)
+      window.removeEventListener('zoiko-location-change', syncLoc)
+    }
+  }, [])
+
   const [distance, setDistance] = useState(25)
   const [locating, setLocating] = useState(false)
 

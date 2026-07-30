@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScanPrescription } from '@/features/scan/scan-prescription'
+import { useLanguage } from '@/providers/language-provider'
 
 const LOC_KEY = 'zoiko-user-loc'
 const DISTANCES = [5, 10, 15, 25, 50]
@@ -30,6 +31,7 @@ const normalizeQuery = (q) => (q || '').toLowerCase().replace(/near me|in hydera
 
 export default function UserSearch() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const { t } = useLanguage()
   const queryParam = searchParams.get('q') || ''
   const [flashMsg, flash] = useFlash()
 
@@ -37,6 +39,20 @@ export default function UserSearch() {
   const [mode, setMode] = useState(searchParams.get('mode') === 'scan' ? 'scan' : 'name')
   const [searchQuery, setSearchQuery] = useState(queryParam)
   const [location, setLocation] = useState(() => localStorage.getItem(LOC_KEY) || '')
+  // Listen for location changes across settings/modals/tabs
+  useEffect(() => {
+    const syncLoc = () => {
+      const saved = localStorage.getItem(LOC_KEY) || ''
+      setLocation(saved)
+      if (!saved) setCoords(null)
+    }
+    window.addEventListener('storage', syncLoc)
+    window.addEventListener('zoiko-location-change', syncLoc)
+    return () => {
+      window.removeEventListener('storage', syncLoc)
+      window.removeEventListener('zoiko-location-change', syncLoc)
+    }
+  }, [])
   // Precise coordinates from the browser's geolocation, when the user opts in.
   const [coords, setCoords] = useState(null)
   const [geoStatus, setGeoStatus] = useState('idle') // idle | loading | ok | error
@@ -210,15 +226,15 @@ export default function UserSearch() {
       <div className="flex justify-center pt-1">
         <div className="inline-flex rounded-xl border border-border bg-muted/50 p-1">
           {[
-            { key: 'name', label: 'Search by name', icon: Search },
+            { key: 'name', label: t('searchByName', 'Search by name'), icon: Search },
             { key: 'scan', label: 'Scan prescription', icon: ScanLine },
-          ].map((t) => {
-            const Icon = t.icon
-            const activeTab = mode === t.key
+          ].map((tTab) => {
+            const Icon = tTab.icon
+            const activeTab = mode === tTab.key
             return (
               <button
-                key={t.key}
-                onClick={() => setMode(t.key)}
+                key={tTab.key}
+                onClick={() => setMode(tTab.key)}
                 aria-pressed={activeTab}
                 className={cn(
                   'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors',
@@ -226,7 +242,7 @@ export default function UserSearch() {
                 )}
               >
                 <Icon className="size-4" />
-                {t.label}
+                {tTab.label}
               </button>
             )
           })}
@@ -245,7 +261,7 @@ export default function UserSearch() {
               {/* Medicine name */}
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="medicine-name" className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Medicine name
+                  {t('medicineName', 'MEDICINE NAME')}
                 </label>
                 <div className="relative">
                   <Tag className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -256,7 +272,7 @@ export default function UserSearch() {
                     onFocus={() => setShowSuggestions(true)}
                     onBlur={() => setShowSuggestions(false)}
                     onKeyDown={onNameKeyDown}
-                    placeholder="e.g. Doxycycline"
+                    placeholder={t('medicinePlaceholder', 'e.g. Doxycycline')}
                     aria-label="Medicine name"
                     autoComplete="off"
                     role="combobox"
@@ -279,15 +295,14 @@ export default function UserSearch() {
                   )}
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Enter a medicine name only. Do not enter symptoms, diagnoses, insurance details,
-                  or prescription images.
+                  {t('medicineNameHelp', 'Enter a medicine name only. Do not enter symptoms, diagnoses, insurance details, or prescription images.')}
                 </p>
               </div>
 
               {/* Search area */}
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="search-area" className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Search area
+                  {t('searchArea', 'SEARCH AREA')}
                 </label>
                 <div className="relative">
                   <MapPin className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -302,7 +317,7 @@ export default function UserSearch() {
                       if (activeSearch) clearResults()
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && runSearch()}
-                    placeholder="City, ZIP code, or postcode"
+                    placeholder={t('searchAreaPlaceholder', 'City, ZIP code, or postcode')}
                     aria-label="Search area"
                     className="h-11 rounded-xl pl-10 pr-36"
                   />
@@ -317,13 +332,13 @@ export default function UserSearch() {
                     ) : (
                       <LocateFixed className="size-3.5" />
                     )}
-                    Use my location
+                    {t('useMyLocation', 'Use my location')}
                   </button>
                 </div>
                 {coords ? (
                   <span className="flex items-center gap-1 text-xs font-semibold text-primary">
                     <Navigation className="size-3.5" />
-                    Using your current location
+                    {t('usingCurrentLocation', 'Using your current location')}
                     <Check className="size-3.5" />
                     <button
                       type="button"
@@ -337,13 +352,13 @@ export default function UserSearch() {
                       aria-label="Undo location selection"
                       className="ml-1.5 font-normal text-muted-foreground underline hover:text-foreground"
                     >
-                      Undo
+                      {t('undo', 'Undo')}
                     </button>
                   </span>
                 ) : location ? (
                   <span className="flex items-center gap-1 text-xs font-semibold text-primary">
                     <MapPin className="size-3.5" />
-                    Location set
+                    {t('locationSet', 'Location set')}
                     <Check className="size-3.5" />
                     <button
                       type="button"
@@ -357,11 +372,11 @@ export default function UserSearch() {
                       aria-label="Undo location selection"
                       className="ml-1.5 font-normal text-muted-foreground underline hover:text-foreground"
                     >
-                      Undo
+                      {t('undo', 'Undo')}
                     </button>
                   </span>
                 ) : (
-                  <span className="text-xs text-muted-foreground">Add a location to see nearby pharmacies.</span>
+                  <span className="text-xs text-muted-foreground">{t('addLocationHelp', 'Add a location to see nearby pharmacies.')}</span>
                 )}
               </div>
 
@@ -370,7 +385,7 @@ export default function UserSearch() {
                 <span className="hidden text-xs lg:block" aria-hidden>&nbsp;</span>
                 <Button className="h-11 px-6" onClick={runSearch}>
                   <Search className="size-4" />
-                  Search Availability
+                  {t('searchAvailability', 'Search Availability')}
                 </Button>
               </div>
             </div>
@@ -378,7 +393,7 @@ export default function UserSearch() {
             {/* Distance + trust indicators */}
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-border pt-4">
               <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                Distance from me:
+                {t('distanceFromMe', 'Distance from me:')}
                 <select
                   value={distanceMiles}
                   onChange={(e) => { setDistanceMiles(Number(e.target.value)); if (activeSearch) clearResults() }}
@@ -386,17 +401,17 @@ export default function UserSearch() {
                   className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {DISTANCES.map((d) => (
-                    <option key={d} value={d}>{d} miles</option>
+                    <option key={d} value={d}>{d} {t('miles', 'miles')}</option>
                   ))}
                 </select>
               </label>
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <ShieldCheck className="size-3.5 text-primary" />
-                  Verified pharmacy network
+                  {t('verifiedNetwork', 'Verified pharmacy network')}
                 </span>
-                <span>Privacy-safe search</span>
-                <span>No exact stock quantities</span>
+                <span>{t('privacySafe', 'Privacy-safe search')}</span>
+                <span>{t('noExactQuantities', 'No exact stock quantities')}</span>
               </div>
             </div>
           </Card>
@@ -463,35 +478,32 @@ export default function UserSearch() {
           <section className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-base font-bold text-foreground">
-                {result?.medicine ? `${result.medicine} — availability near you` : 'Availability near you'}
+                {result?.medicine ? `${result.medicine} — ${t('availabilityNearYou', 'Availability near you')}` : t('availabilityNearYou', 'Availability near you')}
               </h3>
               {hasSearched && result && items.length > 0 && (
                 <Badge size="sm">{result.availableCount} of {result.total} pharmacies</Badge>
               )}
               <Link to="/availability" className="ml-auto flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
                 <Info className="size-3.5" />
-                What does confidence mean?
+                {t('whatDoesConfidenceMean', 'What does confidence mean?')}
               </Link>
             </div>
 
             {!hasSearched ? (
               <div className="rounded-2xl border border-dashed border-border py-16 text-center">
                 <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                  Enter a medicine and tap{' '}
-                  <span className="font-semibold text-foreground">Search Availability</span> to see which
-                  nearby pharmacies are likely to have it.
+                  {t('emptySearchPrompt', 'Enter a medicine and tap Search Availability to see which nearby pharmacies are likely to have it.')}
                 </p>
               </div>
             ) : loading ? (
               <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
-                Checking availability at nearby pharmacies…
+                {t('checkingAvailability', 'Checking availability at nearby pharmacies…')}
               </div>
             ) : items.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border py-16 text-center">
                 <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                  No pharmacies found within the selected radius. Try a different location or
-                  increase the distance.
+                  {t('noPharmaciesFound', 'No pharmacies found within the selected radius. Try a different location or increase the distance.')}
                 </p>
               </div>
             ) : (

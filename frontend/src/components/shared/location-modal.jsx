@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { MapPin, Search, Check, AlertCircle, Sparkles, Loader2, RefreshCw } from 'lucide-react'
 import {
   Dialog,
@@ -117,10 +117,14 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
       const existing = JSON.parse(localStorage.getItem('zoiko-recent-locations') || '[]')
       const updated = [finalFormatted, ...existing.filter((item) => item !== finalFormatted)].slice(0, 5)
       localStorage.setItem('zoiko-recent-locations', JSON.stringify(updated))
-    } catch {}
+    } catch {
+      // Ignore localStorage parse errors
+    }
 
     localStorage.setItem('zoiko-user-loc', finalFormatted)
     localStorage.setItem('zoiko-loc-permission', 'granted')
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('zoiko-location-change'))
     onSave && onSave(finalFormatted)
     onOpenChange(false)
     setErrorMsg('')

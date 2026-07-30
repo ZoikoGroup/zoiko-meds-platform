@@ -312,9 +312,23 @@ export default function Register() {
           {/* Privacy Disclaimer */}
           <div className="text-center text-[10px] text-muted-foreground leading-relaxed">
             By creating an account, you agree to our{' '}
-            <Link to="#" className="text-teal hover:underline font-medium">Terms of Service</Link>{' '}
+            <a
+              href="https://zoikomeds.com/terms-of-use"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-teal hover:underline font-medium"
+            >
+              Terms of Service
+            </a>{' '}
             and{' '}
-            <Link to="#" className="text-teal hover:underline font-medium">Privacy Policy</Link>.
+            <a
+              href="https://zoikomeds.com/privacy-center"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-teal hover:underline font-medium"
+            >
+              Privacy Policy
+            </a>.
           </div>
 
         </CardContent>
