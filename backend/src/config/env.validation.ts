@@ -56,8 +56,39 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     errors.push('DATABASE_URL must be a PostgreSQL connection string.');
   }
 
+  // --- Public app URLs -------------------------------------------------------
+  // Password-reset links, invites and the OAuth bounce all target APP_BASE_URL.
+  // A wrong or missing value silently mails users to the wrong site, so the
+  // format is checked here and a deployed instance must set a real host.
+  const appBaseUrl = String(config.APP_BASE_URL ?? '').trim();
+  if (appBaseUrl && !isAbsoluteHttpUrl(appBaseUrl)) {
+    errors.push(
+      `APP_BASE_URL must be an absolute http(s) URL of the ZoikoMeds app (got "${appBaseUrl}").`,
+    );
+  }
+  const oauthRedirect = String(config.OAUTH_SUCCESS_REDIRECT ?? '').trim();
+  if (oauthRedirect && !isAbsoluteHttpUrl(oauthRedirect)) {
+    errors.push(
+      `OAUTH_SUCCESS_REDIRECT must be an absolute http(s) URL (got "${oauthRedirect}").`,
+    );
+  }
+
   // --- Production-only guardrails --------------------------------------------
   if (isProd) {
+    if (!appBaseUrl) {
+      errors.push(
+        'APP_BASE_URL is required in production — it is the host used for password reset links, invites and the OAuth redirect.',
+      );
+    } else if (isLoopbackUrl(appBaseUrl)) {
+      errors.push(
+        `APP_BASE_URL must not point at localhost in production (got "${appBaseUrl}").`,
+      );
+    }
+    if (oauthRedirect && isLoopbackUrl(oauthRedirect)) {
+      errors.push(
+        `OAUTH_SUCCESS_REDIRECT must not point at localhost in production (got "${oauthRedirect}").`,
+      );
+    }
     const superAdminPassword = String(config.SUPER_ADMIN_PASSWORD ?? '');
     if (superAdminPassword === 'ChangeMe!SuperAdmin1') {
       errors.push(
@@ -77,4 +108,23 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   }
 
   return { ...config, NODE_ENV: nodeEnv, JWT_SECRET: jwtSecret, DATABASE_URL: databaseUrl } as ValidatedEnv;
+}
+
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    // IPv6 hostnames come back bracketed ("[::1]") — compare the bare address.
+    const host = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
 }

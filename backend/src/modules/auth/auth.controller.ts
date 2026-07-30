@@ -15,6 +15,11 @@ import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
+import {
+  appBaseUrl,
+  oauthSuccessRedirect,
+  withQueryParam,
+} from '../../config/app-urls';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -108,9 +113,7 @@ export class AuthController {
     ipAddress: string,
     userAgent: string,
   ) {
-    const frontend = this.config
-      .get<string>('APP_BASE_URL', 'http://localhost:5173')
-      .replace(/\/$/, '');
+    const frontend = appBaseUrl(this.config);
     try {
       const profile = req.user as OAuthProfile | undefined;
       if (!profile) throw new Error('No OAuth profile on request');
@@ -119,11 +122,8 @@ export class AuthController {
         ipAddress,
         userAgent,
       );
-      const target = this.config.get<string>(
-        'OAUTH_SUCCESS_REDIRECT',
-        `${frontend}/auth/callback`,
-      );
-      res.redirect(`${target}?token=${encodeURIComponent(accessToken)}`);
+      const target = oauthSuccessRedirect(this.config);
+      res.redirect(withQueryParam(target, 'token', accessToken));
     } catch {
       res.redirect(`${frontend}/login?error=oauth`);
     }

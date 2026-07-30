@@ -11,6 +11,7 @@ import {
   Prisma,
 } from '@prisma/client';
 
+import { appBaseUrl } from '../../config/app-urls';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { findTemplate } from './catalog';
@@ -108,10 +109,8 @@ export class NotificationsService {
       );
     this.releasedGates = new Set(configured);
 
-    const appBaseUrl = (
-      this.config.get<string>('APP_BASE_URL') || 'https://app.zoikomeds.com'
-    ).replace(/\/+$/, '');
-    const derivedHost = safeHostname(appBaseUrl);
+    const baseUrl = appBaseUrl(this.config);
+    const derivedHost = safeHostname(baseUrl);
     this.allowedLinkHosts = (
       this.config.get<string>('NOTIFICATION_ALLOWED_LINK_HOSTS') ?? ''
     )
@@ -123,7 +122,7 @@ export class NotificationsService {
     this.supportEmail =
       this.config.get<string>('SUPPORT_EMAIL') || 'support@zoikomeds.com';
     this.supportCenterLink =
-      this.config.get<string>('SUPPORT_CENTER_LINK') || `${appBaseUrl}/support`;
+      this.config.get<string>('SUPPORT_CENTER_LINK') || `${baseUrl}/support`;
 
     if (this.releasedGates.has(NotificationGate.CONDITIONAL)) {
       this.logger.warn(
