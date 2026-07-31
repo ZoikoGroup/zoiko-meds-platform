@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   UploadCloud, Camera, Image as ImageIcon, ShieldCheck, MapPin, LocateFixed,

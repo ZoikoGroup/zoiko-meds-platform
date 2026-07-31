@@ -8,8 +8,10 @@ import { Flash, useFlash } from '@/components/shared/flash'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Search, Trash2, Heart, ArrowRight } from 'lucide-react'
 import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
+import { useLanguage } from '@/providers/language-provider'
 
 export default function UserSaved() {
+  const { t } = useLanguage()
   const { data: saved = [], isLoading } = useSavedMedicines()
   const unsaveMutation = useUnsaveMedicine()
   const toggleAlertsMutation = useToggleSavedAlerts()
@@ -36,8 +38,8 @@ export default function UserSaved() {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader
-          title="Saved medicines"
-          subtitle="Track availability confidence for the medicines you follow across verified pharmacies."
+          title={t('savedMedicines', 'Saved medicines')}
+          subtitle={t('savedMedicinesSubtitle', 'Track availability confidence for the medicines you follow across verified pharmacies.')}
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((i) => (
@@ -51,8 +53,8 @@ export default function UserSaved() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Saved medicines"
-        subtitle="Track availability confidence for the medicines you follow across verified pharmacies."
+        title={t('savedMedicines', 'Saved medicines')}
+        subtitle={t('savedMedicinesSubtitle', 'Track availability confidence for the medicines you follow across verified pharmacies.')}
       />
 
       {flashMsg && <Flash message={flashMsg} />}
@@ -60,12 +62,12 @@ export default function UserSaved() {
       {saved.length === 0 ? (
         <EmptyState
           icon={Heart}
-          title="No saved medicines yet"
-          description="Save a medicine from search or details page to track its availability confidence here."
+          title={t('noSavedMedicinesYet', 'No saved medicines yet')}
+          description={t('noSavedMedicinesDesc', 'Save a medicine from search or details page to track its availability confidence here.')}
           action={
             <Button onClick={() => navigate('/search')}>
               <Search className="size-4" />
-              Search medicines
+              {t('searchMedicines', 'Search medicines')}
             </Button>
           }
         />
@@ -89,7 +91,7 @@ export default function UserSaved() {
 
                 {/* Alerts toggle */}
                 <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3">
-                  <span className="text-sm font-medium text-foreground">Alerts enabled</span>
+                  <span className="text-sm font-medium text-foreground">{t('alertsEnabled', 'Alerts enabled')}</span>
                   <Switch
                     checked={med.alertsEnabled ?? true}
                     onCheckedChange={() => toggleAlerts(med.id, med.alertsEnabled ?? true)}
@@ -105,7 +107,7 @@ export default function UserSaved() {
                     className="flex-1"
                     onClick={() => navigate(`/medicine/${med.id}`)}
                   >
-                    View details
+                    {t('viewDetails', 'View details')}
                     <ArrowRight className="size-3.5" />
                   </Button>
                   <Button

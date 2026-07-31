@@ -79,9 +79,10 @@ export const router = createBrowserRouter([
       { path: 'login', element: <Login /> },
       { path: 'register', element: <Register /> },
       { path: 'forgot-password', element: <ForgotPassword /> },
-      { path: 'reset-password', element: <ResetPassword /> },
     ],
   },
+  // Reset Password route (always accessible via email link with token)
+  { path: 'reset-password', element: <ResetPassword />, errorElement: <RouteErrorBoundary /> },
   // Super Admin routes (under /admin)
   {
     path: 'admin',

@@ -5,13 +5,14 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { useLanguage, LANG_NAMES } from '@/providers/language-provider'
-import { Globe, Eye, Trash2 } from 'lucide-react'
+import { Globe, Eye, Trash2, CheckCircle2 } from 'lucide-react'
 
 export default function UserSettings() {
   const [flashMsg, flash] = useFlash()
   const { language, setLanguage, t } = useLanguage()
   const [selectedLang, setSelectedLang] = useState(language)
   const [prefs, setPrefs] = useState({ largeText: false, reduceMotion: false })
+  const [locationCleared, setLocationCleared] = useState(false)
 
   useEffect(() => {
     setSelectedLang(language)
@@ -30,7 +31,9 @@ export default function UserSettings() {
     localStorage.removeItem('zoiko-recent-locations')
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('zoiko-location-change'))
-    flash('Saved location cleared')
+    
+    setLocationCleared(true)
+    setTimeout(() => setLocationCleared(false), 3500)
   }
 
   return (
@@ -136,9 +139,17 @@ export default function UserSettings() {
               nearby verified pharmacies. Clearing it prompts a fresh location
               request on your next search. No precise coordinates are retained.
             </p>
-            <Button variant="outline" onClick={clearLocation} className="w-fit border-danger/30 text-danger hover:bg-danger/5">
-              Clear saved location
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="outline" onClick={clearLocation} className="w-fit border-danger/30 text-danger hover:bg-danger/5">
+                {t('clearLocationBtn', 'Clear saved location')}
+              </Button>
+              {locationCleared && (
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-teal dark:text-emerald-400 bg-teal/10 dark:bg-emerald-950/40 px-3 py-1.5 rounded-full border border-teal/20 dark:border-emerald-800/40 animate-in fade-in duration-200">
+                  <CheckCircle2 className="size-3.5 text-teal dark:text-emerald-400" />
+                  {t('savedLocationCleared', 'Saved location cleared')}
+                </span>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

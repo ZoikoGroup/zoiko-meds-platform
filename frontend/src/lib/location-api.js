@@ -26,6 +26,18 @@ export async function validateLocationLive(query) {
     return SEARCH_CACHE.get(trimmed.toLowerCase())
   }
 
+  // Handle pre-formatted location strings containing (PIN XXXXXX)
+  const pinInStringMatch = trimmed.match(/\(PIN\s*([1-9][0-9]{5})\)/i)
+  if (pinInStringMatch) {
+    const result = {
+      isValid: true,
+      formatted: trimmed,
+      suggestions: [{ name: trimmed, pin: pinInStringMatch[1] }],
+    }
+    SEARCH_CACHE.set(trimmed.toLowerCase(), result)
+    return result
+  }
+
   try {
     // 1. PIN Code Pre-filter (India Post API)
     if (PINCODE_REGEX.test(trimmed)) {

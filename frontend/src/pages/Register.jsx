@@ -22,8 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { OAuthButtons } from '@/components/shared/oauth-buttons'
-import { PhoneInput } from '@/components/ui/phone-input'
-import { isValidPhoneNumber } from 'react-phone-number-input'
+import { PhoneInput, COUNTRY_MIN_DIGITS, COUNTRY_MAX_DIGITS } from '@/components/ui/phone-input'
+import { isValidPhoneNumber, isPossiblePhoneNumber, getCountryCallingCode } from 'react-phone-number-input'
 
 export default function Register() {
   const { register } = useAuth()
@@ -33,6 +33,8 @@ export default function Register() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [phoneCountry, setPhoneCountry] = useState('IN')
+  const [phoneTouched, setPhoneTouched] = useState(false)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
@@ -65,13 +67,70 @@ export default function Register() {
     return { score, text, color }
   }, [password])
 
-  // Calculate international phone number validity
+  // Calculate country-specific phone number validity
   const phoneError = useMemo(() => {
-    if (!phone || !phone.trim() || phone.trim() === '+' || /^\+[0-9]{1,4}$/.test(phone.trim())) {
+    if (!phone || !phone.trim() || phone.trim() === '+') {
       return ''
     }
-    return isValidPhoneNumber(phone.trim()) ? '' : 'Please enter a valid phone number.'
-  }, [phone])
+
+    const trimmed = phone.trim()
+    const digitsOnly = trimmed.replace(/\D/g, '')
+
+    // Extract country dial code digits
+    let dialCodeDigits = '91'
+    try {
+      dialCodeDigits = getCountryCallingCode(phoneCountry)
+    } catch {
+      dialCodeDigits = '91'
+    }
+
+    // Isolate local subscriber number digits
+    let localDigits = digitsOnly
+    if (digitsOnly.startsWith(dialCodeDigits)) {
+      localDigits = digitsOnly.slice(dialCodeDigits.length)
+    }
+
+    if (!localDigits) {
+      return ''
+    }
+
+    const minAllowed = COUNTRY_MIN_DIGITS[phoneCountry] || 7
+    const maxAllowed = COUNTRY_MAX_DIGITS[phoneCountry] || 15
+
+    // --- INDIAN PHONE NUMBER RULES (+91) ---
+    if (phoneCountry === 'IN') {
+      // Must start with 6, 7, 8, or 9
+      if (!/^[6-9]/.test(localDigits)) {
+        return 'Please enter a valid Indian mobile number.'
+      }
+      if (localDigits.length < 10) {
+        return 'Phone number is too short.'
+      }
+      if (localDigits.length > 10) {
+        return 'Phone number is too long.'
+      }
+      return ''
+    }
+
+    // --- OTHER COUNTRIES RULES ---
+    if (localDigits.length < minAllowed) {
+      return 'Phone number is too short.'
+    }
+    if (localDigits.length > maxAllowed) {
+      return 'Phone number is too long.'
+    }
+
+    const isValid =
+      isValidPhoneNumber(trimmed, phoneCountry) ||
+      isPossiblePhoneNumber(trimmed, phoneCountry) ||
+      (phoneCountry === 'US' && localDigits.length === 10)
+
+    if (!isValid) {
+      return 'Invalid phone number for the selected country.'
+    }
+
+    return ''
+  }, [phone, phoneCountry])
 
   // Handle Form Submission
   const handleSubmit = async (e) => {
@@ -79,6 +138,7 @@ export default function Register() {
     setError('')
 
     if (phoneError) {
+      setPhoneTouched(true)
       setError(phoneError)
       return
     }
@@ -89,7 +149,7 @@ export default function Register() {
     }
 
     const formattedPhone =
-      !phone || !phone.trim() || /^\+[0-9]{1,4}$/.test(phone.trim())
+      !phone || !phone.trim() || phone.trim() === '+'
         ? undefined
         : phone.trim()
 
@@ -222,15 +282,25 @@ export default function Register() {
               <PhoneInput
                 id="phone"
                 value={phone}
-                onChange={setPhone}
-                error={Boolean(phoneError)}
+                countryProp={phoneCountry}
+                onChange={(val) => {
+                  setPhone(val)
+                  if (val && !phoneTouched) setPhoneTouched(true)
+                }}
+                onCountryChange={(iso2) => {
+                  setPhoneCountry(iso2)
+                }}
+                onBlur={() => setPhoneTouched(true)}
+                error={Boolean(phoneTouched && phoneError)}
+                aria-invalid={Boolean(phoneTouched && phoneError)}
+                aria-describedby={phoneTouched && phoneError ? 'phone-error-msg' : 'phone-info-msg'}
               />
-              {phoneError ? (
-                <span className="text-[11px] font-medium text-red-500 leading-snug">
-                  Please enter a valid phone number.
+              {phoneTouched && phoneError ? (
+                <span id="phone-error-msg" role="alert" className="text-[11px] font-medium text-red-500 leading-snug">
+                  {phoneError}
                 </span>
               ) : (
-                <span className="text-[10px] text-muted-foreground leading-snug">
+                <span id="phone-info-msg" className="text-[10px] text-muted-foreground leading-snug">
                   ℹ️ Used only for optional SMS availability alerts.
                 </span>
               )}

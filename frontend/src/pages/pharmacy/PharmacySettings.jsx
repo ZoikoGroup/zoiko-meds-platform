@@ -33,18 +33,21 @@ export default function PharmacySettings() {
     flash('Notification preferences updated')
   }
 
+  const [pwdError, setPwdError] = useState('')
+
   const changePassword = async (e) => {
     e.preventDefault()
-    if (!pwd.current || !pwd.next) { flash('Enter your current and new password'); return }
-    if (pwd.next !== pwd.confirm) { flash('New passwords do not match'); return }
-    if (pwd.next.length < 8) { flash('New password must be at least 8 characters'); return }
+    setPwdError('')
+    if (!pwd.current || !pwd.next) { setPwdError('Enter your current and new password'); return }
+    if (pwd.next !== pwd.confirm) { setPwdError('New passwords do not match'); return }
+    if (pwd.next.length < 8) { setPwdError('New password must be at least 8 characters'); return }
     try {
       await doChangePassword(pwd.current, pwd.next)
       flash('Password updated successfully')
       setPwd({ current: '', next: '', confirm: '' })
       setShowPwd({ current: false, next: false, confirm: false })
     } catch (err) {
-      flash(err.message || 'Could not update password')
+      setPwdError(err.message || 'Could not update password')
     }
   }
 
@@ -80,6 +83,11 @@ export default function PharmacySettings() {
           </CardHeader>
           <CardContent className="pt-5">
             <form onSubmit={changePassword} className="flex flex-col gap-5">
+              {pwdError && (
+                <div className="rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-xs font-semibold text-danger leading-snug">
+                  ⚠️ {pwdError}
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="pw-cur">Current password</Label>
                 <div className="relative flex items-center">
