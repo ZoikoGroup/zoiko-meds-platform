@@ -10,7 +10,6 @@ function resolveApiBaseUrl() {
   const configured = import.meta.env.VITE_API_BASE_URL
   if (configured) return configured
   if (import.meta.env.PROD) {
-    // eslint-disable-next-line no-console
     console.error(
       '[ZoikoMeds] VITE_API_BASE_URL was not set at build time. Falling back to same-origin "/api". Set VITE_API_BASE_URL to your API URL when building for production.'
     )
