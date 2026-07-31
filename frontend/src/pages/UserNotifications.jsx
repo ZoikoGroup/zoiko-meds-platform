@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/shared/page-header'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/states'
+import { useLanguage } from '@/providers/language-provider'
 import {
   getPatientNotifications,
   markPatientNotificationRead,
@@ -21,18 +22,14 @@ import {
 } from 'lucide-react'
 
 const TYPE_META = {
-  announcement: { icon: Megaphone, label: 'Announcements' },
-  stock: { icon: TrendingUp, label: 'Stock Alerts' },
-  safety: { icon: ShieldAlert, label: 'Safety & Recalls' },
-  system: { icon: Server, label: 'System' },
+  announcement: { icon: Megaphone, labelKey: 'announcements', defaultLabel: 'Announcements' },
+  stock: { icon: TrendingUp, labelKey: 'stockAlerts', defaultLabel: 'Stock Alerts' },
+  safety: { icon: ShieldAlert, labelKey: 'safetyRecalls', defaultLabel: 'Safety & Recalls' },
+  system: { icon: Server, labelKey: 'system', defaultLabel: 'System' },
 }
 
-const FILTERS = [
-  { value: 'all', label: 'All' },
-  ...Object.entries(TYPE_META).map(([value, m]) => ({ value, label: m.label })),
-]
-
 export default function UserNotifications() {
+  const { t } = useLanguage()
   const [items, setItems] = useState(null)
   const [filter, setFilter] = useState('all')
   const navigate = useNavigate()
@@ -96,16 +93,21 @@ export default function UserNotifications() {
   const visible = filter === 'all' ? items : items.filter((n) => n.type === filter)
   const unread = items.filter((n) => n.unread).length
 
+  const filtersList = [
+    { value: 'all', label: t('all', 'All') },
+    ...Object.entries(TYPE_META).map(([value, m]) => ({ value, label: t(m.labelKey, m.defaultLabel) })),
+  ]
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Notifications"
-        subtitle="Platform updates, medicine safety alerts, stock availability notifications, and system messages."
+        title={t('notifications', 'Notifications')}
+        subtitle={t('notificationsSubtitle', 'Platform updates, medicine safety alerts, stock availability notifications, and system messages.')}
         actions={
           unread > 0 && (
             <Button variant="outline" onClick={handleMarkAllRead}>
               <Check className="size-4" />
-              Mark all read
+              {t('markAllRead', 'Mark all read')}
             </Button>
           )
         }
@@ -113,7 +115,7 @@ export default function UserNotifications() {
 
       {/* Filter chips */}
       <div className="flex flex-wrap gap-2">
-        {FILTERS.map((f) => (
+        {filtersList.map((f) => (
           <button
             key={f.value}
             onClick={() => setFilter(f.value)}
@@ -130,7 +132,7 @@ export default function UserNotifications() {
       </div>
 
       {visible.length === 0 ? (
-        <EmptyState icon={Bell} title="No notifications" description="You are all caught up." />
+        <EmptyState icon={Bell} title={t('noNotifications', 'No notifications')} description={t('allCaughtUp', "You are all caught up.")} />
       ) : (
         <div className="flex flex-col gap-3">
           {visible.map((n) => {
@@ -181,7 +183,7 @@ export default function UserNotifications() {
                   )}
                   {n.unread && !n.action && (
                     <Button variant="ghost" size="sm" onClick={() => handleMarkRead(n)}>
-                      Mark read
+                      {t('markRead', 'Mark read')}
                     </Button>
                   )}
                 </div>

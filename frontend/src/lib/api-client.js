@@ -10,7 +10,6 @@ function resolveApiBaseUrl() {
   const configured = import.meta.env.VITE_API_BASE_URL
   if (configured) return configured
   if (import.meta.env.PROD) {
-    // eslint-disable-next-line no-console
     console.error(
       '[ZoikoMeds] VITE_API_BASE_URL was not set at build time. Falling back to same-origin "/api". Set VITE_API_BASE_URL to your API URL when building for production.'
     )
@@ -53,7 +52,7 @@ export function setUnauthorizedHandler(fn) {
 
 export async function apiFetch(
   path,
-  { method = 'GET', body, auth = true, headers = {} } = {}
+  { method = 'GET', body, auth = true, headers = {}, skipUnauthorizedHandler = false } = {}
 ) {
   const finalHeaders = { ...headers }
   if (body !== undefined) finalHeaders['Content-Type'] = 'application/json'
@@ -88,7 +87,7 @@ export async function apiFetch(
     // An authenticated request rejected with 401 means the session is no
     // longer valid — trigger a logout. (Login/register use auth:false, so a
     // bad-credentials 401 there does not fire this.)
-    if (res.status === 401 && auth && token && unauthorizedHandler) {
+    if (res.status === 401 && auth && token && unauthorizedHandler && !skipUnauthorizedHandler) {
       unauthorizedHandler()
     }
     // Nest validation errors arrive as { message: string[] }.

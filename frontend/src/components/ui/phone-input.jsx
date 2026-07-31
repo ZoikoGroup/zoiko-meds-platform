@@ -76,18 +76,82 @@ const PRIORITY_COUNTRIES = [
   'ID', // Indonesia (+62)
 ]
 
+export const COUNTRY_MAX_DIGITS = {
+  IN: 10,
+  US: 10,
+  CA: 10,
+  GB: 11,
+  AU: 10,
+  AE: 9,
+  SG: 8,
+  MY: 10,
+  SA: 9,
+  DE: 11,
+  FR: 9,
+  JP: 10,
+  CN: 11,
+  BR: 11,
+  MX: 10,
+  PK: 10,
+  BD: 10,
+  LK: 9,
+  ID: 11,
+  NZ: 10,
+}
+
+export const COUNTRY_MIN_DIGITS = {
+  IN: 10,
+  US: 10,
+  CA: 10,
+  GB: 10,
+  AU: 9,
+  AE: 8,
+  SG: 8,
+  MY: 9,
+  SA: 9,
+  DE: 10,
+  FR: 9,
+  JP: 10,
+  CN: 11,
+  BR: 10,
+  MX: 10,
+  PK: 10,
+  BD: 10,
+  LK: 9,
+  ID: 9,
+  NZ: 8,
+}
+
 export function PhoneInput({
   value = '',
   onChange,
+  onCountryChange,
+  countryProp,
   disabled = false,
   error = false,
   className,
   id = 'phone',
+  onBlur,
+  onFocus,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedby,
 }) {
-  const [country, setCountry] = useState(() => detectUserCountry())
+  const [country, setCountry] = useState(() => countryProp || detectUserCountry())
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const inputRef = useRef(null)
+
+  // Synchronize country prop if passed externally
+  useEffect(() => {
+    if (countryProp && countryProp !== country) {
+      setCountry(countryProp)
+    }
+  }, [countryProp])
+
+  // Notify parent of initial country on mount
+  useEffect(() => {
+    onCountryChange && onCountryChange(country)
+  }, [])
 
   // Build full country list with localized names, flag emoji, and dial code
   const countryList = useMemo(() => {
@@ -172,10 +236,12 @@ export function PhoneInput({
     }
   }, [value, currentDialCode])
 
-  // Handle local number input changes (strictly digits only)
+  const maxDigits = COUNTRY_MAX_DIGITS[country] || 15
+
+  // Handle local number input changes (strictly digits only and capped at country maxDigits)
   const handleNumberChange = (e) => {
     const rawVal = e.target.value
-    const digitsOnly = rawVal.replace(/\D/g, '')
+    const digitsOnly = rawVal.replace(/\D/g, '').slice(0, maxDigits)
     setLocalNumber(digitsOnly)
 
     if (!digitsOnly) {
@@ -218,14 +284,14 @@ export function PhoneInput({
     }
   }
 
-  // Handle Paste Event (sanitize clipboard text to digits only)
+  // Handle Paste Event (sanitize clipboard text to digits only and capped at country maxDigits)
   const handlePaste = (e) => {
     e.preventDefault()
     const pastedText = e.clipboardData.getData('text') || ''
     const digitsOnly = pastedText.replace(/\D/g, '')
     if (!digitsOnly) return
 
-    const combined = `${localNumber}${digitsOnly}`
+    const combined = `${localNumber}${digitsOnly}`.slice(0, maxDigits)
     setLocalNumber(combined)
     const fullE164 = `${currentDialCode}${combined}`
     onChange && onChange(fullE164)
@@ -234,6 +300,7 @@ export function PhoneInput({
   // Handle country selection
   const handleSelectCountry = (iso2) => {
     setCountry(iso2)
+    onCountryChange && onCountryChange(iso2)
     setOpen(false)
     setSearch('')
 
@@ -244,9 +311,15 @@ export function PhoneInput({
       newDialCode = '+91'
     }
 
-    if (localNumber) {
-      const fullE164 = `${newDialCode}${localNumber}`
+    const countryMax = COUNTRY_MAX_DIGITS[iso2] || 15
+    const truncatedLocal = localNumber.slice(0, countryMax)
+    setLocalNumber(truncatedLocal)
+
+    if (truncatedLocal) {
+      const fullE164 = `${newDialCode}${truncatedLocal}`
       onChange && onChange(fullE164)
+    } else {
+      onChange && onChange('')
     }
   }
 
@@ -341,13 +414,18 @@ export function PhoneInput({
         type="tel"
         inputMode="numeric"
         pattern="[0-9]*"
+        maxLength={maxDigits}
         autoComplete="tel-local"
         disabled={disabled}
-        placeholder="9876543210"
+        placeholder={country === 'IN' ? '9876543210' : '9876543210'}
         value={localNumber}
         onChange={handleNumberChange}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
+        onBlur={onBlur}
+        onFocus={onFocus}
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedby}
         className="h-full w-full border-none bg-transparent px-3 text-sm font-medium leading-none text-foreground placeholder:text-muted-foreground/60 shadow-none outline-none focus-visible:ring-0 focus-visible:outline-none"
       />
     </div>

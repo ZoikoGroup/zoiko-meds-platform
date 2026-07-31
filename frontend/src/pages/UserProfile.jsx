@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -11,6 +11,8 @@ import { Flash, useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
 import { useLanguage } from '@/providers/language-provider'
 import { User, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import { PhoneInput, COUNTRY_MIN_DIGITS, COUNTRY_MAX_DIGITS } from '@/components/ui/phone-input'
+import { isValidPhoneNumber, isPossiblePhoneNumber, getCountryCallingCode } from 'react-phone-number-input'
 
 export default function UserProfile() {
   const { user, logout, updateProfile, changePassword } = useAuth()
@@ -23,6 +25,8 @@ export default function UserProfile() {
     name: user?.name || '',
     phone: user?.phone || '',
   })
+  const [phoneCountry, setPhoneCountry] = useState('IN')
+  const [phoneTouched, setPhoneTouched] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -34,15 +38,86 @@ export default function UserProfile() {
   }, [user])
 
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
+  const [pwdError, setPwdError] = useState('')
   const [showPwd, setShowPwd] = useState({ current: false, next: false, confirm: false })
 
   const isPasswordTooShort = Boolean(pwd.next && pwd.next.length < 8)
   const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
   const isPasswordFormInvalid = !pwd.current || !pwd.next || !pwd.confirm || pwd.next !== pwd.confirm || pwd.next.length < 8
 
+  // Calculate country-specific phone number validity
+  const phoneError = useMemo(() => {
+    const rawPhone = form.phone
+    if (!rawPhone || !rawPhone.trim() || rawPhone.trim() === '+') {
+      return ''
+    }
+
+    const trimmed = rawPhone.trim()
+    const digitsOnly = trimmed.replace(/\D/g, '')
+
+    if (!digitsOnly) {
+      return 'Please enter a valid phone number.'
+    }
+
+    let dialCodeDigits = '91'
+    try {
+      dialCodeDigits = getCountryCallingCode(phoneCountry)
+    } catch {
+      dialCodeDigits = '91'
+    }
+
+    let localDigits = digitsOnly
+    if (digitsOnly.startsWith(dialCodeDigits)) {
+      localDigits = digitsOnly.slice(dialCodeDigits.length)
+    }
+
+    if (!localDigits) {
+      return ''
+    }
+
+    const minAllowed = COUNTRY_MIN_DIGITS[phoneCountry] || 7
+    const maxAllowed = COUNTRY_MAX_DIGITS[phoneCountry] || 15
+
+    if (phoneCountry === 'IN') {
+      if (!/^[6-9]/.test(localDigits)) {
+        return 'Please enter a valid Indian mobile number.'
+      }
+      if (localDigits.length < 10) {
+        return 'Phone number is too short.'
+      }
+      if (localDigits.length > 10) {
+        return 'Phone number is too long.'
+      }
+      return ''
+    }
+
+    if (localDigits.length < minAllowed) {
+      return 'Phone number is too short.'
+    }
+    if (localDigits.length > maxAllowed) {
+      return 'Phone number is too long.'
+    }
+
+    const isValid =
+      isValidPhoneNumber(trimmed, phoneCountry) ||
+      isPossiblePhoneNumber(trimmed, phoneCountry) ||
+      (phoneCountry === 'US' && localDigits.length === 10)
+
+    if (!isValid) {
+      return 'Invalid phone number for the selected country.'
+    }
+
+    return ''
+  }, [form.phone, phoneCountry])
+
   const saveProfile = async (e) => {
     e.preventDefault()
     setError('')
+    if (phoneError) {
+      setPhoneTouched(true)
+      setError(phoneError)
+      return
+    }
     try {
       await updateProfile({ fullName: form.name, phone: form.phone })
       flash('Profile updated')
@@ -54,12 +129,13 @@ export default function UserProfile() {
   const savePassword = async (e) => {
     e.preventDefault()
     setError('')
+    setPwdError('')
     if (pwd.next !== pwd.confirm) {
-      setError('New passwords do not match.')
+      setPwdError('New passwords do not match.')
       return
     }
     if (pwd.next.length < 8) {
-      setError('New password must be at least 8 characters.')
+      setPwdError('New password must be at least 8 characters.')
       return
     }
     try {
@@ -68,11 +144,11 @@ export default function UserProfile() {
       setShowPwd({ current: false, next: false, confirm: false })
       flash('Password updated')
     } catch (err) {
-      setError(err.message || 'Could not update password')
+      setPwdError(err.message || 'Could not update password')
     }
   }
 
-  const handleLogout = () => {
+  const _handleLogout = () => {
     logout()
     navigate('/login')
   }
@@ -140,7 +216,27 @@ export default function UserProfile() {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="phone">{t('phone', 'Phone')}</Label>
-                    <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
+                    <PhoneInput
+                      id="phone"
+                      value={form.phone}
+                      countryProp={phoneCountry}
+                      onChange={(val) => {
+                        setForm((prev) => ({ ...prev, phone: val }))
+                        if (val && !phoneTouched) setPhoneTouched(true)
+                      }}
+                      onCountryChange={(iso2) => {
+                        setPhoneCountry(iso2)
+                      }}
+                      onBlur={() => setPhoneTouched(true)}
+                      error={Boolean(phoneTouched && phoneError)}
+                      aria-invalid={Boolean(phoneTouched && phoneError)}
+                      aria-describedby={phoneTouched && phoneError ? 'phone-error-msg' : undefined}
+                    />
+                    {phoneTouched && phoneError && (
+                      <span id="phone-error-msg" role="alert" className="text-[11px] font-medium text-red-500 leading-snug">
+                        {phoneError}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">{t('saveChanges', 'Save changes')}</Button>
@@ -170,6 +266,11 @@ export default function UserProfile() {
             </CardHeader>
             <CardContent className="pt-5">
               <form onSubmit={savePassword} className="flex flex-col gap-5">
+                {pwdError && (
+                  <div className="rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-xs font-semibold text-danger leading-snug">
+                    ⚠️ {pwdError}
+                  </div>
+                )}
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="current">{t('currentPassword', 'Current password')}</Label>
                   <div className="relative flex items-center">

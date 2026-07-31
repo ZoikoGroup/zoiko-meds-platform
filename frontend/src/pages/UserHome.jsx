@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search, MapPin, Mic, Bell, Info, ShieldCheck, Clock, Pill, Heart,
@@ -199,7 +199,7 @@ export default function UserHome() {
           setMediBaseMatch(false)
           setMatchedName('')
         }
-      } catch {
+      } catch (_e) {
         setMediBaseMatch(false)
         setMatchedName('')
       } finally {
@@ -290,7 +290,7 @@ export default function UserHome() {
 
       recognition.start()
       setIsListening(true)
-    } catch (err) {
+    } catch (_err) {
       setVoiceError('Could not access microphone. Please check permissions or type medicine name.')
       setIsListening(true)
     }
@@ -603,7 +603,11 @@ export default function UserHome() {
 
       {/* Quick actions */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {QUICK_ACTIONS.map((a) => {
+        {[
+          { title: t('scanPrescription', 'Scan a prescription'), desc: t('scanDesc', 'Snap or upload it — we extract the medicines for you.'), icon: ScanLine, to: '/search?mode=scan', gradient: 'from-primary to-teal' },
+          { title: t('yourZoikoSignal', 'Your ZoikoSignal™'), desc: t('zoikoSignalDesc', 'Get alerts when saved medicines run low or return.'), icon: Radar, to: '/signal', gradient: 'from-violet-500 to-primary' },
+          { title: t('savedMedicines', 'Saved medicines'), desc: t('savedMedicinesDesc', 'Track availability for the medicines you follow.'), icon: Heart, to: '/saved', gradient: 'from-rose-500 to-red-500' },
+        ].map((a) => {
           const Icon = a.icon
           return (
             <button
@@ -630,17 +634,22 @@ export default function UserHome() {
       <div className="flex items-start gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4">
         <Info className="mt-0.5 size-5 shrink-0 text-primary" />
         <p className="text-sm leading-relaxed text-muted-foreground">
-          {CONFIRM_NOTE}
+          {t('homeDisclaimer', 'Availability is a governed confidence signal from verified pharmacies — not exact stock. Please confirm with the pharmacy before visiting.')}
         </p>
       </div>
 
       {/* Summary tiles */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {SUMMARY_META.map((s) => {
+        {[
+          { key: 'savedMedicines', label: t('savedMedicines', 'Saved medicines'), icon: Heart, to: '/saved' },
+          { key: 'recentSearches', label: t('recentSearches', 'Recent searches'), icon: Search, to: '/search' },
+          { key: 'verifiedPharmacies', label: t('verifiedPharmacies', 'Verified pharmacies'), icon: Building2, to: '/search' },
+          { key: 'activeAlerts', label: t('activeAlerts', 'Active alerts'), icon: Bell, to: '/signal' },
+        ].map((s) => {
           const Icon = s.icon
           return (
             <button
-              key={s.label}
+              key={s.key}
               onClick={() => navigate(s.to)}
               className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
             >
@@ -658,14 +667,23 @@ export default function UserHome() {
       <section className="flex flex-col gap-4">
         <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
           <Sparkles className="size-4 text-teal" />
-          Browse by health need
+          {t('browseByHealthNeed', 'BROWSE BY HEALTH NEED')}
         </h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {CATEGORIES.map((c) => {
+          {[
+            { label: t('feverPain', 'Fever & Pain'), med: 'Paracetamol', icon: Thermometer },
+            { label: t('coldCough', 'Cold & Cough'), med: 'Cetirizine', icon: Wind },
+            { label: t('diabetes', 'Diabetes'), med: 'Metformin', icon: Activity },
+            { label: t('heartBp', 'Heart & BP'), med: 'Amlodipine', icon: HeartPulse },
+            { label: t('antibiotics', 'Antibiotics'), med: 'Azithromycin', icon: Pill },
+            { label: t('acidity', 'Acidity'), med: 'Pantoprazole', icon: Flame },
+            { label: t('allergy', 'Allergy'), med: 'Levocetirizine', icon: Droplets },
+            { label: t('vitamins', 'Vitamins'), med: 'Vitamin D3', icon: Sparkles },
+          ].map((c) => {
             const Icon = c.icon
             return (
               <button
-                key={c.label}
+                key={c.med}
                 onClick={() => goSearch(c.med)}
                 className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
               >

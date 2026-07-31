@@ -18,6 +18,7 @@ import { NotificationSettings } from '@/features/signal/notification-settings'
 import { SignalStatSkeleton, AlertCardSkeleton, SavedMedicineSkeleton } from '@/features/signal/skeletons'
 import { NOTIF_FILTERS } from '@/features/signal/signal-meta'
 import { useSignalSavedStatus } from '@/hooks/use-saved-medicines'
+import { useLanguage } from '@/providers/language-provider'
 import {
   listSavedStatus, listActiveAlerts, listNotifications, getNotificationSettings,
   updateNotificationSettings, markRead, markAllRead, dismissNotification,
@@ -35,6 +36,7 @@ function matchesFilter(n, key) {
 
 export default function UserSignal() {
   const navigate = useNavigate()
+  const { t } = useLanguage()
   const [flashMsg, flash] = useFlash()
 
   const [saved, setSaved] = useState([])
@@ -98,32 +100,38 @@ export default function UserSignal() {
       flash('Opening advisory…')
       return
     }
-    goSearch(item.action?.query || item.medicine)
-  }
-
-  const handleDismiss = async (id) => {
-    setAlerts((a) => a.filter((x) => x.id !== id))
-    setNotifications((n) => n.filter((x) => x.id !== id))
-    try { await dismissNotification(id) } catch { /* optimistic */ }
-    flash('Alert dismissed')
-  }
-
-  const handleRead = async (id) => {
-    setNotifications((ns) => ns.map((n) => (n.id === id ? { ...n, read: true } : n)))
-    try { await markRead(id) } catch { /* optimistic */ }
+    if (item.action?.query) {
+      goSearch(item.action.query)
+      return
+    }
+    goSearch(item.medicineName || '')
   }
 
   const handleMarkAll = async () => {
-    setNotifications((ns) => ns.map((n) => ({ ...n, read: true })))
+    setNotifications((n) => n.map((x) => ({ ...x, read: true })))
+    setAlerts([])
     try { await markAllRead() } catch { /* optimistic */ }
     flash('All notifications marked as read')
   }
 
+  const handleRead = async (id) => {
+    setNotifications((n) => n.map((x) => (x.id === id ? { ...x, read: !x.read } : x)))
+    try { await markRead(id) } catch { /* optimistic */ }
+  }
+
+  const handleToggleRead = handleRead
+
   const handleArchive = async (id) => {
     setNotifications((n) => n.filter((x) => x.id !== id))
-    setAlerts((a) => a.filter((x) => x.id !== id))
     try { await archiveNotification(id) } catch { /* optimistic */ }
     flash('Notification archived')
+  }
+
+  const handleDismiss = async (id) => {
+    setNotifications((n) => n.filter((x) => x.id !== id))
+    setAlerts((a) => a.filter((x) => x.id !== id))
+    try { await dismissNotification(id) } catch { /* optimistic */ }
+    flash('Notification deleted')
   }
 
   const handleDelete = async (id) => {
@@ -154,28 +162,36 @@ export default function UserSignal() {
   const isEmpty = !loading && saved.length === 0
 
   const STAT_TILES = [
-    { label: 'Saved Medicines', value: stats.savedMedicines, icon: Heart },
-    { label: 'Active Alerts', value: stats.activeAlerts, icon: Bell, severity: 'serious' },
-    { label: 'Medicines Running Low', value: stats.runningLow, icon: TrendingDown, severity: 'critical' },
-    { label: 'Back in Stock Today', value: stats.backInStockToday, icon: PackageCheck, severity: 'good' },
+    { label: t('savedMedicines', 'Saved Medicines'), value: stats.savedMedicines, icon: Heart },
+    { label: t('activeAlerts', 'Active Alerts'), value: stats.activeAlerts, icon: Bell, severity: 'serious' },
+    { label: t('runningLow', 'Medicines Running Low'), value: stats.runningLow, icon: TrendingDown, severity: 'critical' },
+    { label: t('backInStockToday', 'Back in Stock Today'), value: stats.backInStockToday, icon: PackageCheck, severity: 'good' },
+  ]
+
+  const translatedFilters = [
+    { key: 'all', label: t('all', 'All') },
+    { key: 'unread', label: t('unread', 'Unread') },
+    { key: 'running-low', label: t('runningLow', 'Running Low') },
+    { key: 'back-in-stock', label: t('backInStock', 'Back in Stock') },
+    { key: 'safety', label: t('safetyAlerts', 'Safety Alerts') },
   ]
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
-        eyebrow="My Medicines"
-        title="ZoikoSignal™"
-        subtitle="Personalized medicine availability notifications for your saved medicines."
+        eyebrow={t('myMedicines', 'My Medicines')}
+        title={t('zoikoSignal', 'ZoikoSignal™')}
+        subtitle={t('zoikoSignalSubtitle', 'Personalized medicine availability notifications for your saved medicines.')}
         actions={
           <>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-semibold text-success">
               <span className="size-2 animate-pulse rounded-full bg-success" aria-hidden />
-              Live monitoring
+              {t('liveMonitoring', 'Live monitoring')}
             </span>
             {unreadCount > 0 && (
               <Button variant="outline" size="sm" onClick={handleMarkAll}>
                 <CheckCheck className="size-4" />
-                Mark all read
+                {t('markAllRead', 'Mark all read')}
               </Button>
             )}
           </>
@@ -188,20 +204,20 @@ export default function UserSignal() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {loading
           ? Array.from({ length: 4 }).map((_, i) => <SignalStatSkeleton key={i} />)
-          : STAT_TILES.map((t) => (
-              <StatTile key={t.label} label={t.label} value={t.value} icon={t.icon} severity={t.severity} />
+          : STAT_TILES.map((tTile) => (
+              <StatTile key={tTile.label} label={tTile.label} value={tTile.value} icon={tTile.icon} severity={tTile.severity} />
             ))}
       </div>
 
       {isEmpty ? (
         <EmptyState
           icon={Heart}
-          title="No saved medicines"
-          description="Save medicines to receive personalized ZoikoSignal alerts about availability near you."
+          title={t('noSavedMedicinesYet', 'No saved medicines yet')}
+          description={t('noSavedMedicinesDesc', 'Save a medicine from search or details page to track its availability confidence here.')}
           action={
             <Button onClick={() => navigate('/search')}>
               <Search className="size-4" />
-              Search medicines
+              {t('searchMedicines', 'Search medicines')}
             </Button>
           }
         />
@@ -211,7 +227,7 @@ export default function UserSignal() {
           <section className="flex flex-col gap-4">
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
               <Radar className="size-4 text-primary" />
-              Active alerts
+              {t('activeAlerts', 'Active alerts')}
             </h3>
             {loading ? (
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -221,8 +237,8 @@ export default function UserSignal() {
             ) : alerts.length === 0 ? (
               <EmptyState
                 icon={CheckCheck}
-                title="You're all caught up"
-                description="No urgent availability alerts for your saved medicines right now."
+                title={t('allCaughtUp', "You're all caught up")}
+                description={t('noUrgentAlerts', 'No urgent availability alerts for your saved medicines right now.')}
                 className="py-10"
               />
             ) : (
@@ -247,14 +263,14 @@ export default function UserSignal() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
                 <Heart className="size-4 text-teal" />
-                My saved medicines
+                {t('mySavedMedicines', 'MY SAVED MEDICINES')}
               </h3>
               <div className="relative w-full max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={savedQuery}
                   onChange={(e) => setSavedQuery(e.target.value)}
-                  placeholder="Search saved medicines…"
+                  placeholder={t('searchSavedPlaceholder', 'Search saved medicines...')}
                   aria-label="Search saved medicines"
                   className="h-9 rounded-lg pl-9"
                 />
@@ -287,12 +303,12 @@ export default function UserSignal() {
           <section className="flex flex-col gap-4">
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
               <Bell className="size-4 text-primary" />
-              Smart notifications
+              {t('smartNotifications', 'SMART NOTIFICATIONS')}
             </h3>
 
             {/* filter tabs */}
             <div className="flex flex-wrap gap-1.5">
-              {NOTIF_FILTERS.map((f) => {
+              {translatedFilters.map((f) => {
                 const count = notifications.filter((n) => matchesFilter(n, f.key)).length
                 const active = filter === f.key
                 return (

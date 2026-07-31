@@ -83,7 +83,6 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
     setInputVal(locName)
     setErrorMsg('')
     setShowDropdown(false)
-    saveLocation(locName)
   }
 
   const saveLocation = async (targetVal = inputVal) => {
