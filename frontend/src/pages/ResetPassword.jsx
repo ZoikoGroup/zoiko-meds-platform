@@ -7,11 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { resetPasswordRequest } from '@/services/auth-api'
+import { useAuth } from '@/providers/auth-provider'
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') || ''
   const navigate = useNavigate()
+  const { logout } = useAuth()
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -34,8 +36,11 @@ export default function ResetPassword() {
     setLoading(true)
     try {
       await resetPasswordRequest(token, password)
+      // Drop any session held in this browser — the password it was minted
+      // against is gone, and a stale token would bounce us off /login.
+      logout()
       setDone(true)
-      setTimeout(() => navigate('/login'), 2200)
+      setTimeout(() => navigate('/login', { replace: true }), 2200)
     } catch (err) {
       setError(err.message || 'This link is invalid or has expired.')
     } finally {

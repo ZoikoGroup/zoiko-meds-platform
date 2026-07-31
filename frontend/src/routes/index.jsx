@@ -78,10 +78,12 @@ export const router = createBrowserRouter([
     children: [
       { path: 'login', element: <Login /> },
       { path: 'register', element: <Register /> },
-      { path: 'forgot-password', element: <ForgotPassword /> },
     ],
   },
-  // Reset Password route (always accessible via email link with token)
+  // Password recovery — always reachable, session or not. These are the landing
+  // pages for emailed reset/invite links, so a stale session in the browser must
+  // not bounce the visitor to a portal before they can set a new password.
+  { path: 'forgot-password', element: <ForgotPassword />, errorElement: <RouteErrorBoundary /> },
   { path: 'reset-password', element: <ResetPassword />, errorElement: <RouteErrorBoundary /> },
   // Super Admin routes (under /admin)
   {

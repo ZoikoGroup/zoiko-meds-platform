@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, ShieldAlert } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
-import { portalHome } from '@/lib/roles'
 
 /**
  * Landing route for the OAuth browser flow. The backend redirects here with
  * `?token=<jwt>` on success (or `?error=` on failure). We adopt the token,
- * hydrate the session, and forward the user to their portal.
+ * hydrate the session, and forward the user to the dashboard. Admin and
+ * pharmacy accounts are moved on to their own portal by the route guards.
  */
 export default function AuthCallback() {
   const [params] = useSearchParams()
@@ -33,7 +33,7 @@ export default function AuthCallback() {
     }
 
     loginWithToken(token)
-      .then((user) => navigate(portalHome(user?.role), { replace: true }))
+      .then(() => navigate('/dashboard', { replace: true }))
       .catch(() => {
         setError('Your sign-in session could not be verified. Please try again.')
         setTimeout(() => navigate('/login', { replace: true }), 2500)

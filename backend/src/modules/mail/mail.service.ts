@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { NotificationStream } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { appBaseUrl } from '../../config/app-urls';
 
 interface SendArgs {
   to: string;
@@ -33,9 +34,8 @@ export class MailService {
       this.config.get<string>('SMTP_USERNAME') ||
       'no-reply@zoikomeds.com';
     this.fromName = this.config.get<string>('SMTP_FROM_NAME') || 'ZoikoMeds';
-    this.appBaseUrl = (
-      this.config.get<string>('APP_BASE_URL') || 'http://localhost:5173'
-    ).replace(/\/+$/, '');
+    // Links in outbound mail must point at the SPA host, not the marketing site.
+    this.appBaseUrl = appBaseUrl(this.config);
     this.enabled = Boolean(host);
 
     if (this.enabled) {
