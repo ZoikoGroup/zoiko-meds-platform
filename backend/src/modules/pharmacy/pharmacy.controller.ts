@@ -34,16 +34,65 @@ export class PharmacyController {
   // target pharmacy is always the one linked to the JWT — never a guessed
   // fallback — so one pharmacy can never read or mutate another's inventory.
 
+  @Get('me')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get profile details for the logged-in pharmacy' })
+  async getProfile(
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
+    return this.pharmacy.getProfile(resolvedId, user);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update profile details for the logged-in pharmacy' })
+  async updateProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
+    @Body() body: any,
+  ) {
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
+    return this.pharmacy.updateProfile(resolvedId, body, user, ipAddress);
+  }
+
+  @Get('notifications')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get notifications for the logged-in pharmacy user' })
+  async getNotifications(
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.pharmacy.getUserNotifications(user.id);
+  }
+
   @Get('dashboard')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get dashboard summary for the logged-in pharmacy' })
   async getDashboard(
-    @CurrentUser('pharmacyId') pharmacyId: string | null,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(pharmacyId);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
     return this.pharmacy.getDashboard(resolvedId);
+  }
+
+  @Get('reports')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get reports and analytics for the logged-in pharmacy' })
+  async getReports(
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
+    return this.pharmacy.getReports(resolvedId);
   }
 
   @Get('inventory')
@@ -52,9 +101,9 @@ export class PharmacyController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List inventory for the logged-in pharmacy' })
   async getInventory(
-    @CurrentUser('pharmacyId') pharmacyId: string | null,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(pharmacyId);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
     return this.pharmacy.getInventory(resolvedId);
   }
 
@@ -68,7 +117,7 @@ export class PharmacyController {
     @Ip() ipAddress: string,
     @Body() body: ImportInventoryDto,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
     let input: string | Record<string, string>[] = '';
     if (body.csvText) {
       input = body.csvText;
@@ -91,7 +140,7 @@ export class PharmacyController {
     @Ip() ipAddress: string,
     @Body() dto: AddInventoryDto,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
     return this.pharmacy.addInventoryItem(resolvedId, dto, user, ipAddress);
   }
 
@@ -106,7 +155,7 @@ export class PharmacyController {
     @Param('id') id: string,
     @Body() dto: UpdateInventoryDto,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
     return this.pharmacy.updateInventoryItem(resolvedId, id, dto, user, ipAddress);
   }
 
@@ -120,7 +169,7 @@ export class PharmacyController {
     @Ip() ipAddress: string,
     @Param('id') id: string,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null);
+    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
     return this.pharmacy.deleteInventoryItem(resolvedId, id, user, ipAddress);
   }
 

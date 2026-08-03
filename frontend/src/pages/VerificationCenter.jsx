@@ -24,6 +24,7 @@ import {
   CheckCircle,
   XCircle,
   ListFilter,
+  MapPin,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
 
@@ -33,7 +34,7 @@ const STATUS_LABEL = {
   ESCALATED: 'Escalated',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
-  REQUEST_INFO: 'Request Info',
+  REQUEST_INFO: 'Information Requested',
 }
 
 const STATUS_VARIANT = {
@@ -294,6 +295,34 @@ export default function VerificationCenter() {
                         <code className="text-xs font-semibold bg-muted px-1.5 py-0.5 rounded w-fit">
                           {activeRequest.licenseNumber}
                         </code>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2.5 border-b pb-5">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <MapPin className="size-3.5" /> Pharmacy Profile Address
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-muted/20 p-3.5 rounded-lg border border-border/80">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-muted-foreground">Address Line</span>
+                          <span className="font-medium text-foreground">{activeRequest.addressLine1 || '—'}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-muted-foreground">City</span>
+                          <span className="font-medium text-foreground">{activeRequest.city || '—'}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-muted-foreground">State / Region</span>
+                          <span className="font-medium text-foreground">{activeRequest.region || '—'}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-muted-foreground">Postal Code</span>
+                          <span className="font-medium text-foreground">{activeRequest.postalCode || '—'}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 sm:col-span-2">
+                          <span className="text-muted-foreground">Country</span>
+                          <span className="font-medium text-foreground">{activeRequest.country || '—'}</span>
+                        </div>
                       </div>
                     </div>
 

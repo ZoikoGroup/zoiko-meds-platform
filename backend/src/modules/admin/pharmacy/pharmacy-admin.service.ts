@@ -187,6 +187,9 @@ export class PharmacyAdminService {
       case VerificationStatus.SUSPENDED:
         targetReqStatus = VerificationRequestStatus.REJECTED;
         break;
+      case VerificationStatus.INFO_REQUESTED:
+        targetReqStatus = VerificationRequestStatus.REQUEST_INFO;
+        break;
       case VerificationStatus.PENDING:
       case VerificationStatus.UNVERIFIED:
         targetReqStatus = VerificationRequestStatus.PENDING;
@@ -224,7 +227,10 @@ export class PharmacyAdminService {
       id: p.id,
       name: p.name,
       licenseNumber: p.licenseNumber,
+      addressLine1: p.addressLine1,
       city: p.city,
+      region: p.region,
+      postalCode: p.postalCode,
       country: p.country,
       status: p.verificationStatus,
       availabilityScore: Math.round(p.reliabilityScore * 100),

@@ -27,6 +27,7 @@ import * as admin from '@/services/admin-api'
 
 const STATUS_LABEL = {
   VERIFIED: 'Verified',
+  INFO_REQUESTED: 'Information Requested',
   PENDING: 'Pending',
   SUSPENDED: 'Suspended',
   UNVERIFIED: 'Unverified',
@@ -34,6 +35,7 @@ const STATUS_LABEL = {
 }
 const STATUS_VARIANT = {
   VERIFIED: 'success',
+  INFO_REQUESTED: 'warning',
   PENDING: 'secondary',
   SUSPENDED: 'destructive',
   UNVERIFIED: 'outline',
@@ -197,7 +199,7 @@ export default function PharmacyManagement() {
       header: 'Location',
       cell: (row) => (
         <span className="text-muted-foreground">
-          {[row.city, row.country].filter(Boolean).join(', ') || '—'}
+          {[row.addressLine1, row.city, row.region, row.postalCode, row.country].filter(Boolean).join(', ') || '—'}
         </span>
       ),
     },
@@ -239,6 +241,7 @@ export default function PharmacyManagement() {
       >
         <option value="All">All Statuses</option>
         <option value="VERIFIED">Verified</option>
+        <option value="INFO_REQUESTED">Information Requested</option>
         <option value="PENDING">Pending</option>
         <option value="SUSPENDED">Suspended</option>
         <option value="REJECTED">Rejected</option>
@@ -373,7 +376,7 @@ export default function PharmacyManagement() {
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Headquarters Location</span>
-                <span>{[selectedPharmacy.city, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
+                <span className="text-right max-w-[240px] font-medium">{[selectedPharmacy.addressLine1, selectedPharmacy.city, selectedPharmacy.region, selectedPharmacy.postalCode, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Availability Engine Score</span>

@@ -85,6 +85,13 @@ export const getDashboard = async () => {
 import { listNotifications } from './admin-api'
 
 export const getNotifications = async () => {
+  let userNotifications = []
+  try {
+    userNotifications = await apiFetch('/pharmacies/notifications')
+  } catch {
+    userNotifications = []
+  }
+
   let announcements = []
   try {
     const raw = await listNotifications()
@@ -103,13 +110,41 @@ export const getNotifications = async () => {
   } catch {
     // fallback gracefully
   }
-  return [...announcements, ...NOTIFICATIONS]
+  return [...userNotifications, ...announcements, ...NOTIFICATIONS]
 }
 export const getParticipation = () => settle(PARTICIPATION)
 export const getIntegration = () => settle(INTEGRATION)
 // TODO(backend): POST /pharmacy/integration/sync
 export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' })
-export const getProfile = () => settle(PROFILE)
-// TODO(backend): PATCH /pharmacy/me
-export const updateProfile = (patch) => settle({ ...PROFILE, ...patch })
-export const getReports = () => settle(REPORTS)
+
+export const getProfile = async () => {
+  try {
+    return await apiFetch('/pharmacies/me')
+  } catch (err) {
+    console.warn('[pharmacy-api] Get profile API failed, fallback to demo profile', err)
+    return structuredClone(PROFILE)
+  }
+}
+
+export const updateProfile = async (patch) => {
+  try {
+    const res = await apiFetch('/pharmacies/me', {
+      method: 'PATCH',
+      body: patch,
+    })
+    window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+    return res
+  } catch (err) {
+    console.warn('[pharmacy-api] Update profile API failed', err)
+    throw err
+  }
+}
+
+export const getReports = async () => {
+  try {
+    return await apiFetch('/pharmacies/reports')
+  } catch (err) {
+    console.warn('[pharmacy-api] Get reports API failed', err)
+    return settle(REPORTS)
+  }
+}

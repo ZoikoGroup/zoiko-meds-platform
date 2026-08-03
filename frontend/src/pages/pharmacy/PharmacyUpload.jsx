@@ -9,7 +9,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { importCsv } from '@/services/pharmacy-api'
+import { useEffect } from 'react'
+import { importCsv, getProfile } from '@/services/pharmacy-api'
 import { cn } from '@/lib/utils'
 import { UploadCloud, FileText, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react'
 
@@ -30,6 +31,7 @@ function parseCsv(text) {
 
 export default function PharmacyUpload() {
   const inputRef = useRef(null)
+  const [profile, setProfile] = useState(null)
   const [dragOver, setDragOver] = useState(false)
   const [file, setFile] = useState(null)
   const [parsed, setParsed] = useState(null)
@@ -39,6 +41,17 @@ export default function PharmacyUpload() {
   const [errorMsg, setErrorMsg] = useState('')
   const [importMode, setImportMode] = useState('merge') // 'merge' | 'replace'
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+
+  useEffect(() => {
+    getProfile().then(setProfile).catch(() => {})
+    const handleSync = () => getProfile().then(setProfile).catch(() => {})
+    window.addEventListener('pharmacy-status-updated', handleSync)
+    window.addEventListener('focus', handleSync)
+    return () => {
+      window.removeEventListener('pharmacy-status-updated', handleSync)
+      window.removeEventListener('focus', handleSync)
+    }
+  }, [])
 
   const handleFile = (f) => {
     setStatus('idle'); setResult(null); setProgress(0)
@@ -104,6 +117,19 @@ export default function PharmacyUpload() {
         title="CSV upload"
         subtitle="Bulk-import or update your inventory from a CSV file."
       />
+
+      {profile && profile.verificationStatus !== 'VERIFIED' && (
+        <div className="flex items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 text-warning">
+          <AlertTriangle className="size-5 shrink-0" />
+          <div className="flex flex-col gap-0.5 text-xs">
+            <span className="font-bold text-sm">Pharmacy Verification Notice ({profile.verificationStatus})</span>
+            <span>
+              Your pharmacy identity <strong>{profile.name}</strong> ({profile.licenseNumber}) has status <strong>{profile.verificationStatus}</strong>.
+              {profile.verificationStatus === 'INFO_REQUESTED' ? ' Reviewer requested additional information. Please check your Pharmacy Profile.' : ' Verification must be active for public availability signals.'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Dropzone */}
       <Card

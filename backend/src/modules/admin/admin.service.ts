@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, User, UserRole } from '@prisma/client';
+import { Prisma, User, UserRole, VerificationRequestStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
@@ -180,6 +180,13 @@ export class AdminService {
       });
     }
 
+    if (
+      (user.role === UserRole.PHARMACY_ADMIN || user.role === UserRole.PHARMACY_STAFF) &&
+      !user.pharmacyId
+    ) {
+      await this.ensurePharmacyVerificationRequest(user.id, actorId);
+    }
+
     await this.audit(actorId, 'admin.user.create', user.id, {
       email: user.email,
       role: user.role,
@@ -228,6 +235,12 @@ export class AdminService {
     }
 
     const user = await this.prisma.user.update({ where: { id }, data });
+    if (
+      (user.role === UserRole.PHARMACY_ADMIN || user.role === UserRole.PHARMACY_STAFF) &&
+      !user.pharmacyId
+    ) {
+      await this.ensurePharmacyVerificationRequest(user.id, actorId);
+    }
     await this.audit(actorId, 'admin.user.update', id, {
       changed: Object.keys(data),
     });
@@ -236,11 +249,33 @@ export class AdminService {
 
   async setRole(actorId: string, id: string, role: UserRole) {
     const target = await this.requireUser(id);
-    if (target.role === role) return this.toPublicUser(target);
+    if (target.role === role) {
+      if (
+        (role === UserRole.PHARMACY_ADMIN || role === UserRole.PHARMACY_STAFF) &&
+        !target.pharmacyId
+      ) {
+        await this.ensurePharmacyVerificationRequest(target.id, actorId);
+      }
+      return this.toPublicUser(target);
+    }
     if (target.role === UserRole.SUPER_ADMIN) {
       await this.assertNotLastSuperAdmin(target);
     }
-    const user = await this.prisma.user.update({ where: { id }, data: { role } });
+
+    const data: Prisma.UserUpdateInput = { role };
+    if (role !== UserRole.PHARMACY_ADMIN && role !== UserRole.PHARMACY_STAFF) {
+      data.pharmacy = { disconnect: true };
+    }
+
+    const user = await this.prisma.user.update({ where: { id }, data });
+
+    if (
+      (user.role === UserRole.PHARMACY_ADMIN || user.role === UserRole.PHARMACY_STAFF) &&
+      !user.pharmacyId
+    ) {
+      await this.ensurePharmacyVerificationRequest(user.id, actorId);
+    }
+
     await this.audit(actorId, 'admin.user.role', id, {
       from: target.role,
       to: role,
@@ -570,6 +605,58 @@ export class AdminService {
       acc[String(g[key])] = g._count._all;
       return acc;
     }, {});
+  }
+
+  private async ensurePharmacyVerificationRequest(userId: string, actorId?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.pharmacyId) return;
+
+    const userEmail = user.email.toLowerCase();
+    const defaultLicense = `LIC-${user.id.slice(-6).toUpperCase()}`;
+
+    const existing = await this.prisma.verificationRequest.findFirst({
+      where: {
+        OR: [
+          { submittedBy: { contains: userEmail, mode: 'insensitive' } },
+          { licenseNumber: defaultLicense },
+        ],
+      },
+    });
+
+    if (existing) {
+      if (existing.status !== VerificationRequestStatus.PENDING) {
+        await this.prisma.verificationRequest.update({
+          where: { id: existing.id },
+          data: {
+            status: VerificationRequestStatus.PENDING,
+            notes: existing.notes
+              ? `${existing.notes}\n[${new Date().toISOString()}]: Role set to ${roleLabel(user.role)}. Status reset to PENDING.`
+              : `Role set to ${roleLabel(user.role)}. Status reset to PENDING.`,
+          },
+        });
+      }
+    } else {
+      const pharmacyName = `${user.fullName} Pharmacy`;
+      const req = await this.prisma.verificationRequest.create({
+        data: {
+          pharmacyName,
+          licenseNumber: defaultLicense,
+          submittedBy: `${user.fullName} (${user.email})`,
+          status: VerificationRequestStatus.PENDING,
+          notes: `Automated pending verification request created upon role assignment to ${roleLabel(user.role)}.`,
+        },
+      });
+
+      if (actorId) {
+        await this.auditWriter.write(
+          actorId,
+          'admin.verification.auto_create',
+          'VerificationRequest',
+          req.id,
+          { pharmacy: pharmacyName, userEmail: user.email },
+        );
+      }
+    }
   }
 
   private toPublicUser(user: User) {
