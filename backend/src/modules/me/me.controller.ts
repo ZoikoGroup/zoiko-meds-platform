@@ -67,6 +67,16 @@ export class MeController {
     return this.me.unsave(userId, medicineId);
   }
 
+  @Patch('saved/:medicineId/alerts')
+  @ApiOperation({ summary: 'Toggle alerts for a saved medicine' })
+  updateSavedAlerts(
+    @CurrentUser('id') userId: string,
+    @Param('medicineId') medicineId: string,
+    @Body('alertsEnabled') alertsEnabled: boolean,
+  ) {
+    return this.me.updateSavedMedicineAlerts(userId, medicineId, alertsEnabled);
+  }
+
   @Get('alerts')
   @ApiOperation({ summary: 'Get alert preferences' })
   getAlerts(@CurrentUser('id') userId: string) {

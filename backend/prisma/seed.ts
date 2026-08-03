@@ -18,6 +18,10 @@ import {
   PrescriptionCategory,
   PrismaClient,
   QualityState,
+  ReportFormat,
+  ReportScope,
+  ReportStatus,
+  ReportType,
   UserRole,
   VerificationRequestStatus,
   VerificationStatus,
@@ -109,6 +113,7 @@ async function main() {
     { name: 'HealthFirst Pharmacy', licenseNumber: 'LIC-1004', city: 'New York', country: 'United States', latitude: 40.7128, longitude: -74.006, reliabilityScore: 0.9, verificationStatus: VerificationStatus.VERIFIED },
     { name: 'GreenCross Meds', licenseNumber: 'LIC-1005', city: 'Toronto', country: 'Canada', latitude: 43.6532, longitude: -79.3832, reliabilityScore: 0.45, verificationStatus: VerificationStatus.PENDING },
     { name: 'Sunrise Pharmacy', licenseNumber: 'LIC-1006', city: 'Sydney', country: 'Australia', latitude: -33.8688, longitude: 151.2093, reliabilityScore: 0.3, verificationStatus: VerificationStatus.SUSPENDED },
+    { name: 'Apex Pharmacy', licenseNumber: 'LIC-2001', city: 'Chicago', country: 'United States', reliabilityScore: 0.5, verificationStatus: VerificationStatus.PENDING },
   ];
   // Idempotent: clear and reseed pharmacies + everything that depends on them.
   await prisma.signalEvent.deleteMany({});
@@ -124,6 +129,15 @@ async function main() {
   }
   const pharmacyByName = Object.fromEntries(pharmacies.map((p) => [p.name, p]));
   console.log(`✔ ${pharmacies.length} pharmacies ready`);
+
+  // Associate demo pharmacy users (manager & pharmacist) with Apollo Pharmacy
+  const apollo = pharmacyByName['Apollo Pharmacy'];
+  if (apollo) {
+    await prisma.user.updateMany({
+      where: { email: { in: ['manager@zoikomeds.io', 'pharmacist@zoikomeds.io'] } },
+      data: { pharmacyId: apollo.id },
+    });
+  }
 
   // --- MediBase™ medicines + ZoikoAvail™ signals -------------------------
   // Confidence bands (HIGH/MODERATE/LOW) are the public-safe signal — never
@@ -468,24 +482,35 @@ async function main() {
   );
 
   // --- Verification requests ---------------------------------------------
-  const pending = pharmacies.filter(
-    (p) => p.verificationStatus === VerificationStatus.PENDING,
-  );
+  const wellnessForever = pharmacyByName['Wellness Forever'];
+  const mediTrust = pharmacyByName['MediTrust Drugstore'];
+  const greenCross = pharmacyByName['GreenCross Meds'];
+  const apex = pharmacyByName['Apex Pharmacy'];
+
   await prisma.verificationRequest.createMany({
     data: [
       {
-        pharmacyId: pending[0]?.id ?? null,
-        pharmacyName: pending[0]?.name ?? 'MediTrust Drugstore',
-        licenseNumber: pending[0]?.licenseNumber ?? 'LIC-1003',
+        pharmacyId: wellnessForever?.id ?? null,
+        pharmacyName: wellnessForever?.name ?? 'Wellness Forever',
+        licenseNumber: wellnessForever?.licenseNumber ?? 'LIC-HYD-04',
         submittedBy: 'k.tanaka@zoikomeds.io',
         status: VerificationRequestStatus.PENDING,
         docName: 'license-scan.pdf',
         docUrl: '#',
       },
       {
-        pharmacyId: pending[1]?.id ?? null,
-        pharmacyName: pending[1]?.name ?? 'GreenCross Meds',
-        licenseNumber: pending[1]?.licenseNumber ?? 'LIC-1005',
+        pharmacyId: mediTrust?.id ?? null,
+        pharmacyName: mediTrust?.name ?? 'MediTrust Drugstore',
+        licenseNumber: mediTrust?.licenseNumber ?? 'LIC-1003',
+        submittedBy: 'k.tanaka@zoikomeds.io',
+        status: VerificationRequestStatus.PENDING,
+        docName: 'license-scan.pdf',
+        docUrl: '#',
+      },
+      {
+        pharmacyId: greenCross?.id ?? null,
+        pharmacyName: greenCross?.name ?? 'GreenCross Meds',
+        licenseNumber: greenCross?.licenseNumber ?? 'LIC-1005',
         submittedBy: 'l.hoffmann@zoikomeds.io',
         status: VerificationRequestStatus.UNDER_REVIEW,
         reviewer: 'Rafael Silva',
@@ -493,8 +518,9 @@ async function main() {
         docUrl: '#',
       },
       {
-        pharmacyName: 'Apex Pharmacy',
-        licenseNumber: 'LIC-2001',
+        pharmacyId: apex?.id ?? null,
+        pharmacyName: apex?.name ?? 'Apex Pharmacy',
+        licenseNumber: apex?.licenseNumber ?? 'LIC-2001',
         submittedBy: 'apex@partners.io',
         status: VerificationRequestStatus.ESCALATED,
         docName: 'application.pdf',
@@ -519,6 +545,21 @@ async function main() {
     ],
   });
   console.log('✔ Notifications ready');
+
+  // --- Reports ------------------------------------------------------------
+  await prisma.report.deleteMany({});
+  await prisma.report.createMany({
+    data: [
+      { name: 'Q2 Access-Resilience Briefing', type: ReportType.EXECUTIVE_BRIEFING, format: ReportFormat.PDF, scope: ReportScope.ALL, status: ReportStatus.READY, owner: superEmail, createdBy: superEmail },
+      { name: 'APAC Shortage-Pressure Digest', type: ReportType.REGIONAL_DIGEST, format: ReportFormat.PDF, scope: ReportScope.JURISDICTION, status: ReportStatus.SCHEDULED, schedule: 'Daily · 06:00', owner: superEmail, createdBy: superEmail },
+      { name: 'Jurisdiction Compliance Export', type: ReportType.GOVERNANCE_EXPORT, format: ReportFormat.CSV, scope: ReportScope.JURISDICTION, status: ReportStatus.READY, owner: superEmail, createdBy: superEmail },
+      { name: 'Partner Participation Rollup', type: ReportType.NETWORK_REPORT, format: ReportFormat.XLSX, scope: ReportScope.NETWORK, status: ReportStatus.SCHEDULED, schedule: 'Weekly · Mon', owner: superEmail, createdBy: superEmail },
+      { name: 'Signal Freshness SLA Report', type: ReportType.OPERATIONS, format: ReportFormat.JSON, scope: ReportScope.SIGNAL, status: ReportStatus.RUNNING, owner: superEmail, createdBy: superEmail },
+      { name: 'MediBase Normalization Audit', type: ReportType.DATA_QUALITY, format: ReportFormat.CSV, scope: ReportScope.ALL, status: ReportStatus.READY, owner: superEmail, createdBy: superEmail },
+      { name: 'Access-Risk Forecast (draft)', type: ReportType.FORECAST, format: ReportFormat.PDF, scope: ReportScope.SIGNAL, status: ReportStatus.FAILED, owner: superEmail, createdBy: superEmail },
+    ],
+  });
+  console.log('✔ Reports ready');
 
   // --- Seed a few audit-log entries --------------------------------------
   await prisma.auditLog.createMany({

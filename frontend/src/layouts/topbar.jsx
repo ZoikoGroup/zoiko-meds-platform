@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, AlertTriangle, Bell, Check, CheckCircle2, ChevronsUpDown, LogOut, Menu, Moon, Plus, Search, Settings, Sun, UserCog, XCircle, Activity, CheckSquare, Send, RefreshCw } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Bell, Check, CheckCircle2, ChevronsUpDown, LogOut, Menu, Moon, Plus, RefreshCw, Search, Settings, Sun, UserCog, XCircle, Activity, CheckSquare, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Tooltip, TooltipContent, TooltipTrigger, } from '@/components/ui/tooltip';
 import { useTheme } from '@/providers/theme-provider';
 import { useAuth } from '@/providers/auth-provider';
-import { notifications } from '@/services/data';
+import { listNotifications } from '@/services/admin-api';
 import { routeMeta } from '@/routes/navigation';
 import { cn } from '@/lib/utils';
 /* ------------------------------- search --------------------------------- */
@@ -54,21 +54,21 @@ function QuickActions() {
         <DropdownMenuLabel>Platform Actions</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/medibase" className="flex items-center gap-2">
-            <Plus className="size-4 text-muted-foreground"/>
-            Add New Medicine
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link to="/verification" className="flex items-center gap-2">
+          <Link to="/admin/verification" className="flex items-center gap-2">
             <CheckSquare className="size-4 text-muted-foreground"/>
             Review Verification Queue
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/notifications" className="flex items-center gap-2">
+          <Link to="/admin/notifications" className="flex items-center gap-2">
             <Send className="size-4 text-muted-foreground"/>
             Broadcast Update
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/admin/settings" className="flex items-center gap-2">
+            <Settings className="size-4 text-muted-foreground"/>
+            Configure Settings
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -87,8 +87,67 @@ const SEV = {
     critical: { Icon: XCircle, className: 'text-danger' },
 };
 function NotificationsMenu() {
-    const [items, setItems] = useState(notifications);
-    const unread = items.filter((n) => !n.read).length;
+    const [items, setItems] = useState([]);
+    const [readIds, setReadIds] = useState(new Set());
+
+    const loadLiveNotifications = useCallback(async () => {
+        try {
+            const raw = await listNotifications();
+            const mapped = (raw || []).map((n) => {
+                let severity = 'good';
+                if (n.type === 'EMERGENCY_ALERT') severity = 'critical';
+                else if (n.type === 'MAINTENANCE') severity = 'warning';
+                else if (n.type === 'PLATFORM_UPDATE') severity = 'serious';
+
+                let channel = 'System Announcement';
+                if (n.target === 'ALL_USERS') channel = 'All Users';
+                else if (n.target === 'PHARMACY_MANAGERS') channel = 'Pharmacy Managers';
+                else if (n.target === 'ENTERPRISE_ADMINS') channel = 'Enterprise Admins';
+                else if (n.target === 'GOVERNMENT_PARTNERS') channel = 'Government Partners';
+
+                return {
+                    id: n.id,
+                    title: n.title,
+                    description: n.message,
+                    severity,
+                    channel,
+                    time: n.date ? new Date(n.date).toLocaleDateString() : 'Just now',
+                    rawDate: n.date ? new Date(n.date) : new Date(),
+                };
+            });
+            mapped.sort((a, b) => b.rawDate - a.rawDate);
+            setItems(mapped);
+        } catch {
+            // Keep current items if network fails
+        }
+    }, []);
+
+    useEffect(() => {
+        loadLiveNotifications();
+
+        const handleSync = () => loadLiveNotifications();
+        window.addEventListener('broadcast-dispatched', handleSync);
+        window.addEventListener('focus', handleSync);
+
+        const interval = setInterval(handleSync, 10000);
+
+        return () => {
+            window.removeEventListener('broadcast-dispatched', handleSync);
+            window.removeEventListener('focus', handleSync);
+            clearInterval(interval);
+        };
+    }, [loadLiveNotifications]);
+
+    const unread = items.filter((n) => !readIds.has(n.id)).length;
+
+    const markAllRead = () => {
+        setReadIds(new Set(items.map((n) => n.id)));
+    };
+
+    const markSingleRead = (id) => {
+        setReadIds((prev) => new Set([...prev, id]));
+    };
+
     return (<Popover>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="relative text-muted-foreground" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}>
@@ -106,33 +165,38 @@ function NotificationsMenu() {
                 {unread} new
               </Badge>)}
           </div>
-          <button onClick={() => setItems((prev) => prev.map((n) => ({ ...n, read: true })))} className="text-xs font-medium text-primary hover:underline">
+          <button onClick={markAllRead} className="text-xs font-medium text-primary hover:underline">
             Mark all read
           </button>
         </div>
         <Separator />
         <div className="max-h-80 overflow-y-auto py-1">
-          {items.map((n) => {
-            const { Icon, className } = SEV[n.severity];
-            return (<div key={n.id} className="flex gap-3 px-4 py-3 transition-colors hover:bg-accent">
-                <Icon className={cn('mt-0.5 size-4.5 shrink-0', className)}/>
-                <div className="flex flex-col gap-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium leading-tight">
-                      {n.title}
+          {items.length === 0 ? (
+            <p className="p-4 text-xs text-muted-foreground text-center">No announcements yet.</p>
+          ) : (
+            items.map((n) => {
+              const isRead = readIds.has(n.id);
+              const { Icon, className } = SEV[n.severity] || SEV.good;
+              return (<div key={n.id} onClick={() => markSingleRead(n.id)} className={cn('flex cursor-pointer gap-3 px-4 py-3 transition-colors hover:bg-accent', !isRead && 'bg-primary/5')}>
+                  <Icon className={cn('mt-0.5 size-4.5 shrink-0', className)}/>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium leading-tight">
+                        {n.title}
+                      </span>
+                      {!isRead && <span className="size-1.5 rounded-full bg-primary"/>}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{n.description}</p>
+                    <span className="mt-0.5 text-[11px] text-muted-foreground">
+                      {n.channel} · {n.time}
                     </span>
-                    {!n.read && <span className="size-1.5 rounded-full bg-primary"/>}
                   </div>
-                  <p className="text-xs text-muted-foreground">{n.description}</p>
-                  <span className="mt-0.5 text-[11px] text-muted-foreground">
-                    {n.channel} · {n.time}
-                  </span>
-                </div>
-              </div>);
-          })}
+                </div>);
+            })
+          )}
         </div>
         <Separator />
-        <Link to="/reports" className="flex items-center justify-center py-2.5 text-xs font-medium text-primary hover:underline">
+        <Link to="/admin/reports" className="flex items-center justify-center py-2.5 text-xs font-medium text-primary hover:underline">
           View all activity
         </Link>
       </PopoverContent>

@@ -22,6 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { OAuthButtons } from '@/components/shared/oauth-buttons'
+import { PhoneInput, COUNTRY_MIN_DIGITS, COUNTRY_MAX_DIGITS } from '@/components/ui/phone-input'
+import { isValidPhoneNumber, isPossiblePhoneNumber, getCountryCallingCode } from 'react-phone-number-input'
 
 export default function Register() {
   const { register } = useAuth()
@@ -31,6 +33,8 @@ export default function Register() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [phoneCountry, setPhoneCountry] = useState('IN')
+  const [phoneTouched, setPhoneTouched] = useState(false)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
@@ -63,19 +67,95 @@ export default function Register() {
     return { score, text, color }
   }, [password])
 
+  // Calculate country-specific phone number validity
+  const phoneError = useMemo(() => {
+    if (!phone || !phone.trim() || phone.trim() === '+') {
+      return ''
+    }
+
+    const trimmed = phone.trim()
+    const digitsOnly = trimmed.replace(/\D/g, '')
+
+    // Extract country dial code digits
+    let dialCodeDigits = '91'
+    try {
+      dialCodeDigits = getCountryCallingCode(phoneCountry)
+    } catch {
+      dialCodeDigits = '91'
+    }
+
+    // Isolate local subscriber number digits
+    let localDigits = digitsOnly
+    if (digitsOnly.startsWith(dialCodeDigits)) {
+      localDigits = digitsOnly.slice(dialCodeDigits.length)
+    }
+
+    if (!localDigits) {
+      return ''
+    }
+
+    const minAllowed = COUNTRY_MIN_DIGITS[phoneCountry] || 7
+    const maxAllowed = COUNTRY_MAX_DIGITS[phoneCountry] || 15
+
+    // --- INDIAN PHONE NUMBER RULES (+91) ---
+    if (phoneCountry === 'IN') {
+      // Must start with 6, 7, 8, or 9
+      if (!/^[6-9]/.test(localDigits)) {
+        return 'Please enter a valid Indian mobile number.'
+      }
+      if (localDigits.length < 10) {
+        return 'Phone number is too short.'
+      }
+      if (localDigits.length > 10) {
+        return 'Phone number is too long.'
+      }
+      return ''
+    }
+
+    // --- OTHER COUNTRIES RULES ---
+    if (localDigits.length < minAllowed) {
+      return 'Phone number is too short.'
+    }
+    if (localDigits.length > maxAllowed) {
+      return 'Phone number is too long.'
+    }
+
+    const isValid =
+      isValidPhoneNumber(trimmed, phoneCountry) ||
+      isPossiblePhoneNumber(trimmed, phoneCountry) ||
+      (phoneCountry === 'US' && localDigits.length === 10)
+
+    if (!isValid) {
+      return 'Invalid phone number for the selected country.'
+    }
+
+    return ''
+  }, [phone, phoneCountry])
+
   // Handle Form Submission
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+
+    if (phoneError) {
+      setPhoneTouched(true)
+      setError(phoneError)
+      return
+    }
 
     if (password.length < 8) {
       setError('Password must be at least 8 characters long.')
       return
     }
 
+    const formattedPhone =
+      !phone || !phone.trim() || phone.trim() === '+'
+        ? undefined
+        : phone.trim()
+
     setLoading(true)
     try {
-      await register({ name, email, phone, password })
+      await register({ name, email, phone: formattedPhone, password })
       navigate('/dashboard')
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.')
@@ -123,7 +203,7 @@ export default function Register() {
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
         <CardContent className="flex flex-col gap-6 p-6">
           
-          {/* Segmented Control Headers (Sign In vs Create Account) - dark mode contrast enhanced */}
+          {/* Segmented Control Headers (Sign In vs Create Account) */}
           <div className="grid grid-cols-2 rounded-xl bg-muted/80 dark:bg-slate-900/60 p-1 border border-border/40 dark:border-slate-800/80">
             <Link
               to="/login"
@@ -199,22 +279,31 @@ export default function Register() {
                 </Label>
                 <span className="text-[10px] text-muted-foreground">optional</span>
               </div>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-3 flex items-center text-muted-foreground">
-                  <Phone className="size-4" />
+              <PhoneInput
+                id="phone"
+                value={phone}
+                countryProp={phoneCountry}
+                onChange={(val) => {
+                  setPhone(val)
+                  if (val && !phoneTouched) setPhoneTouched(true)
+                }}
+                onCountryChange={(iso2) => {
+                  setPhoneCountry(iso2)
+                }}
+                onBlur={() => setPhoneTouched(true)}
+                error={Boolean(phoneTouched && phoneError)}
+                aria-invalid={Boolean(phoneTouched && phoneError)}
+                aria-describedby={phoneTouched && phoneError ? 'phone-error-msg' : 'phone-info-msg'}
+              />
+              {phoneTouched && phoneError ? (
+                <span id="phone-error-msg" role="alert" className="text-[11px] font-medium text-red-500 leading-snug">
+                  {phoneError}
                 </span>
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="+1 (555) 000-0000"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <span className="text-[10px] text-muted-foreground leading-snug">
-                ℹ️ Used only for optional SMS availability alerts.
-              </span>
+              ) : (
+                <span id="phone-info-msg" className="text-[10px] text-muted-foreground leading-snug">
+                  ℹ️ Used only for optional SMS availability alerts.
+                </span>
+              )}
             </div>
 
             {/* Password Field */}
@@ -273,7 +362,7 @@ export default function Register() {
             <Button
               type="submit"
               variant="teal"
-              disabled={loading}
+              disabled={loading || Boolean(phoneError)}
               className="mt-3 w-full font-semibold"
             >
               {loading ? (
@@ -293,9 +382,23 @@ export default function Register() {
           {/* Privacy Disclaimer */}
           <div className="text-center text-[10px] text-muted-foreground leading-relaxed">
             By creating an account, you agree to our{' '}
-            <Link to="#" className="text-teal hover:underline font-medium">Terms of Service</Link>{' '}
+            <a
+              href="https://zoikomeds.com/terms-of-use"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-teal hover:underline font-medium"
+            >
+              Terms of Service
+            </a>{' '}
             and{' '}
-            <Link to="#" className="text-teal hover:underline font-medium">Privacy Policy</Link>.
+            <a
+              href="https://zoikomeds.com/privacy-center"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-teal hover:underline font-medium"
+            >
+              Privacy Policy
+            </a>.
           </div>
 
         </CardContent>

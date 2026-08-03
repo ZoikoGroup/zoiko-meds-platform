@@ -1,10 +1,11 @@
-import { lazy } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppLayout } from '@/layouts/app-layout'
 import { UserLayout } from '@/layouts/user-layout'
 import { PharmacyLayout } from '@/layouts/pharmacy-layout'
 import { AdminProtectedRoute, UserProtectedRoute, PharmacyProtectedRoute, PublicRoute } from '@/routes/protected-route'
 import { navSections, routeMeta } from '@/routes/navigation'
+import { lazyImport } from '@/lib/lazy-import'
+import { RouteErrorBoundary } from '@/components/shared/error-boundary'
 
 // Prefix all Super Admin sidebar links dynamically at runtime with '/admin'
 navSections.forEach(section => {
@@ -25,63 +26,70 @@ Object.keys(routeMeta).forEach(key => {
 });
 
 // Super Admin page chunks
-const Dashboard = lazy(() => import('@/pages/Dashboard'))
-const Governance = lazy(() => import('@/pages/Governance'))
-const PharmacyManagement = lazy(() => import('@/pages/PharmacyManagement'))
-const UsersRoles = lazy(() => import('@/pages/UsersRoles'))
-const VerificationCenter = lazy(() => import('@/pages/VerificationCenter'))
-const ZoikoSignal = lazy(() => import('@/pages/ZoikoSignal'))
-const ZoikoAvail = lazy(() => import('@/pages/ZoikoAvail'))
-const MediBase = lazy(() => import('@/pages/MediBase'))
-const Reports = lazy(() => import('@/pages/Reports'))
-const Notifications = lazy(() => import('@/pages/Notifications'))
-const AuditLogs = lazy(() => import('@/pages/AuditLogs'))
-const Settings = lazy(() => import('@/pages/Settings'))
+const Dashboard = lazyImport(() => import('@/pages/Dashboard'), 'Dashboard')
+const Governance = lazyImport(() => import('@/pages/Governance'), 'Governance')
+const PharmacyManagement = lazyImport(() => import('@/pages/PharmacyManagement'), 'PharmacyManagement')
+const UsersRoles = lazyImport(() => import('@/pages/UsersRoles'), 'UsersRoles')
+const VerificationCenter = lazyImport(() => import('@/pages/VerificationCenter'), 'VerificationCenter')
+const ZoikoSignal = lazyImport(() => import('@/pages/ZoikoSignal'), 'ZoikoSignal')
+const ZoikoAvail = lazyImport(() => import('@/pages/ZoikoAvail'), 'ZoikoAvail')
+const ZoikoAvailSandbox = lazyImport(() => import('@/pages/ZoikoAvailSandbox'), 'ZoikoAvailSandbox')
+const MediBase = lazyImport(() => import('@/pages/MediBase'), 'MediBase')
+const Reports = lazyImport(() => import('@/pages/Reports'), 'Reports')
+const Notifications = lazyImport(() => import('@/pages/Notifications'), 'Notifications')
+const AuditLogs = lazyImport(() => import('@/pages/AuditLogs'), 'AuditLogs')
+const Settings = lazyImport(() => import('@/pages/Settings'), 'Settings')
 
 // User Portal page chunks
-const UserHome = lazy(() => import('@/pages/UserHome'))
-const UserSearch = lazy(() => import('@/pages/UserSearch'))
-const Availability = lazy(() => import('@/pages/Availability'))
-const MedicineDetail = lazy(() => import('@/pages/MedicineDetail'))
-const UserSaved = lazy(() => import('@/pages/UserSaved'))
-const UserSignal = lazy(() => import('@/pages/UserSignal'))
-const UserProfile = lazy(() => import('@/pages/UserProfile'))
-const UserSettings = lazy(() => import('@/pages/UserSettings'))
+const UserHome = lazyImport(() => import('@/pages/UserHome'), 'UserHome')
+const UserSearch = lazyImport(() => import('@/pages/UserSearch'), 'UserSearch')
+const Availability = lazyImport(() => import('@/pages/Availability'), 'Availability')
+const MedicineDetail = lazyImport(() => import('@/pages/MedicineDetail'), 'MedicineDetail')
+const UserSaved = lazyImport(() => import('@/pages/UserSaved'), 'UserSaved')
+const UserSignal = lazyImport(() => import('@/pages/UserSignal'), 'UserSignal')
+const UserNotifications = lazyImport(() => import('@/pages/UserNotifications'), 'UserNotifications')
+const UserProfile = lazyImport(() => import('@/pages/UserProfile'), 'UserProfile')
+const UserSettings = lazyImport(() => import('@/pages/UserSettings'), 'UserSettings')
 
 // Pharmacy Portal page chunks
-const PharmacyDashboard = lazy(() => import('@/pages/pharmacy/PharmacyDashboard'))
-const PharmacyInventory = lazy(() => import('@/pages/pharmacy/PharmacyInventory'))
-const PharmacyAvailability = lazy(() => import('@/pages/pharmacy/PharmacyAvailability'))
-const PharmacyUpload = lazy(() => import('@/pages/pharmacy/PharmacyUpload'))
-const PharmacyIntegration = lazy(() => import('@/pages/pharmacy/PharmacyIntegration'))
-const PharmacyParticipation = lazy(() => import('@/pages/pharmacy/PharmacyParticipation'))
-const PharmacyReports = lazy(() => import('@/pages/pharmacy/PharmacyReports'))
-const PharmacyNotifications = lazy(() => import('@/pages/pharmacy/PharmacyNotifications'))
-const PharmacyProfile = lazy(() => import('@/pages/pharmacy/PharmacyProfile'))
-const PharmacySettings = lazy(() => import('@/pages/pharmacy/PharmacySettings'))
+const PharmacyDashboard = lazyImport(() => import('@/pages/pharmacy/PharmacyDashboard'), 'PharmacyDashboard')
+const PharmacyInventory = lazyImport(() => import('@/pages/pharmacy/PharmacyInventory'), 'PharmacyInventory')
+const PharmacyAvailability = lazyImport(() => import('@/pages/pharmacy/PharmacyAvailability'), 'PharmacyAvailability')
+const PharmacyUpload = lazyImport(() => import('@/pages/pharmacy/PharmacyUpload'), 'PharmacyUpload')
+const PharmacyIntegration = lazyImport(() => import('@/pages/pharmacy/PharmacyIntegration'), 'PharmacyIntegration')
+const PharmacyParticipation = lazyImport(() => import('@/pages/pharmacy/PharmacyParticipation'), 'PharmacyParticipation')
+const PharmacyReports = lazyImport(() => import('@/pages/pharmacy/PharmacyReports'), 'PharmacyReports')
+const PharmacyNotifications = lazyImport(() => import('@/pages/pharmacy/PharmacyNotifications'), 'PharmacyNotifications')
+const PharmacyProfile = lazyImport(() => import('@/pages/pharmacy/PharmacyProfile'), 'PharmacyProfile')
+const PharmacySettings = lazyImport(() => import('@/pages/pharmacy/PharmacySettings'), 'PharmacySettings')
 
-const Login = lazy(() => import('@/pages/Login'))
-const Register = lazy(() => import('@/pages/Register'))
-const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
-const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
-const AuthCallback = lazy(() => import('@/pages/AuthCallback'))
-const NotFound = lazy(() => import('@/pages/NotFound'))
+import Login from '@/pages/Login'
+import Register from '@/pages/Register'
+const ForgotPassword = lazyImport(() => import('@/pages/ForgotPassword'), 'ForgotPassword')
+const ResetPassword = lazyImport(() => import('@/pages/ResetPassword'), 'ResetPassword')
+const AuthCallback = lazyImport(() => import('@/pages/AuthCallback'), 'AuthCallback')
+const NotFound = lazyImport(() => import('@/pages/NotFound'), 'NotFound')
 
 export const router = createBrowserRouter([
   // Public routes (only accessible when not logged in)
   {
     element: <PublicRoute />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { path: 'login', element: <Login /> },
       { path: 'register', element: <Register /> },
-      { path: 'forgot-password', element: <ForgotPassword /> },
-      { path: 'reset-password', element: <ResetPassword /> },
     ],
   },
+  // Password recovery — always reachable, session or not. These are the landing
+  // pages for emailed reset/invite links, so a stale session in the browser must
+  // not bounce the visitor to a portal before they can set a new password.
+  { path: 'forgot-password', element: <ForgotPassword />, errorElement: <RouteErrorBoundary /> },
+  { path: 'reset-password', element: <ResetPassword />, errorElement: <RouteErrorBoundary /> },
   // Super Admin routes (under /admin)
   {
     path: 'admin',
     element: <AdminProtectedRoute />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         element: <AppLayout />,
@@ -94,6 +102,7 @@ export const router = createBrowserRouter([
           { path: 'verification', element: <VerificationCenter /> },
           { path: 'zoikosignal', element: <ZoikoSignal /> },
           { path: 'zoikoavail', element: <ZoikoAvail /> },
+          { path: 'zoikoavail/sandbox', element: <ZoikoAvailSandbox /> },
           { path: 'medibase', element: <MediBase /> },
           { path: 'reports', element: <Reports /> },
           { path: 'notifications', element: <Notifications /> },
@@ -103,19 +112,13 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  // OAuth landing — adopts the token minted by the backend callback and
-  // forwards to the right portal. Deliberately outside PublicRoute so it runs
-  // during the brief window before the session is hydrated.
-  { path: 'auth/callback', element: <AuthCallback /> },
-  // Root: the login page is the front door.
-  // PublicRoute forwards an already-signed-in user on to their portal.
-  {
-    path: '/',
-    element: <Navigate to="/login" replace />
-  },
+  // OAuth landing
+  { path: 'auth/callback', element: <AuthCallback />, errorElement: <RouteErrorBoundary /> },
+  { path: '/', element: <Navigate to="/login" replace /> },
   // User Portal routes
   {
     element: <UserProtectedRoute />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         element: <UserLayout />,
@@ -126,7 +129,7 @@ export const router = createBrowserRouter([
           { path: 'medicine/:id', element: <MedicineDetail /> },
           { path: 'saved', element: <UserSaved /> },
           { path: 'signal', element: <UserSignal /> },
-          // Legacy alerts route now lives inside ZoikoSignal.
+          { path: 'notifications', element: <UserNotifications /> },
           { path: 'alerts', element: <Navigate to="/signal" replace /> },
           { path: 'profile', element: <UserProfile /> },
           { path: 'settings', element: <UserSettings /> },
@@ -138,6 +141,7 @@ export const router = createBrowserRouter([
   {
     path: 'pharmacy',
     element: <PharmacyProtectedRoute />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         element: <PharmacyLayout />,
@@ -158,5 +162,5 @@ export const router = createBrowserRouter([
     ],
   },
   // Fallback route
-  { path: '*', element: <NotFound /> },
+  { path: '*', element: <NotFound />, errorElement: <RouteErrorBoundary /> },
 ])

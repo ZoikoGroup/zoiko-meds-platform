@@ -93,6 +93,7 @@ export default function UsersRoles() {
     }
     try {
       await admin.createUser(form)
+      window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
       setIsAddOpen(false)
       setForm({ fullName: '', email: '', role: ROLES.PHARMACY_STAFF, password: '' })
       await load()
@@ -120,7 +121,10 @@ export default function UsersRoles() {
     run(row.id, () => admin.setUserActive(row.id, !row.isActive))
 
   const changeRole = (row, role) =>
-    run(row.id, () => admin.setUserRole(row.id, role))
+    run(row.id, async () => {
+      await admin.setUserRole(row.id, role)
+      window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+    })
 
   const confirmDelete = () =>
     run(deleteTarget.id, () => admin.deleteUser(deleteTarget.id)).then(() =>

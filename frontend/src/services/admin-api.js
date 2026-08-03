@@ -81,3 +81,17 @@ export const createNotification = (body) =>
 
 export const deleteNotification = (id) =>
   apiFetch(`/admin/notifications/${id}`, { method: 'DELETE' })
+
+// --- Reports -------------------------------------------------------------
+export const listReports = () => apiFetch('/admin/reports')
+
+export const createReport = (body) =>
+  apiFetch('/admin/reports', { method: 'POST', body })
+
+export const duplicateReport = (id) =>
+  apiFetch(`/admin/reports/${id}/duplicate`, { method: 'POST' })
+
+export const downloadReport = (id) => apiFetch(`/admin/reports/${id}/download`)
+
+export const deleteReport = (id) =>
+  apiFetch(`/admin/reports/${id}`, { method: 'DELETE' })

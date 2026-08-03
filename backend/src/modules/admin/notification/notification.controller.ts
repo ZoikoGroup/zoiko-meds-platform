@@ -19,8 +19,7 @@ import { AuthenticatedUser } from '../../auth/strategies/jwt.strategy';
 
 @ApiTags('admin')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN)
+@UseGuards(JwtAuthGuard)
 @Controller('admin/notifications')
 export class NotificationController {
   constructor(private readonly notifications: NotificationService) {}
@@ -32,6 +31,8 @@ export class NotificationController {
   }
 
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({ summary: 'Compose & dispatch a broadcast' })
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -41,6 +42,8 @@ export class NotificationController {
   }
 
   @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   remove(@CurrentUser('id') actorId: string, @Param('id') id: string) {
     return this.notifications.remove(actorId, id);
   }

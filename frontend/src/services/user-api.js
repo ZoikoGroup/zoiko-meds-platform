@@ -27,6 +27,9 @@ export const listSaved = () => apiFetch('/me/saved')
 export const saveMedicine = (medicineId) =>
   apiFetch('/me/saved', { method: 'POST', body: { medicineId } })
 
+export const updateSavedMedicineAlerts = (medicineId, alertsEnabled) =>
+  apiFetch(`/me/saved/${medicineId}/alerts`, { method: 'PATCH', body: { alertsEnabled } })
+
 export const unsaveMedicine = (medicineId) =>
   apiFetch(`/me/saved/${medicineId}`, { method: 'DELETE' })
 

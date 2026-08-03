@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Pharmacy, Prisma, VerificationStatus } from '@prisma/client';
+import { Pharmacy, Prisma, VerificationRequestStatus, VerificationStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { CreatePharmacyDto } from './dto/create-pharmacy.dto';
@@ -53,16 +53,27 @@ export class PharmacyAdminService {
   }
 
   async create(actorId: string, dto: CreatePharmacyDto) {
-    const pharmacy = await this.prisma.pharmacy.create({
-      data: {
-        name: dto.name,
-        licenseNumber: dto.licenseNumber || null,
-        city: dto.city || null,
-        country: dto.country || null,
-        reliabilityScore: (dto.availabilityScore ?? 100) / 100,
-        verificationStatus: VerificationStatus.PENDING,
-      },
+    const pharmacy = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.pharmacy.create({
+        data: {
+          name: dto.name,
+          licenseNumber: dto.licenseNumber || null,
+          city: dto.city || null,
+          country: dto.country || null,
+          reliabilityScore: (dto.availabilityScore ?? 100) / 100,
+          verificationStatus: VerificationStatus.PENDING,
+        },
+      });
+
+      if (dto.licenseNumber) {
+        await tx.verificationRequest.updateMany({
+          where: { licenseNumber: dto.licenseNumber, pharmacyId: null },
+          data: { pharmacyId: created.id },
+        });
+      }
+      return created;
     });
+
     await this.audit.write(actorId, 'admin.pharmacy.create', 'Pharmacy', pharmacy.id, {
       name: pharmacy.name,
     });
@@ -70,34 +81,56 @@ export class PharmacyAdminService {
   }
 
   async update(actorId: string, id: string, dto: UpdatePharmacyDto) {
-    await this.require(id);
-    const data: Prisma.PharmacyUpdateInput = {};
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.licenseNumber !== undefined) data.licenseNumber = dto.licenseNumber || null;
-    if (dto.city !== undefined) data.city = dto.city || null;
-    if (dto.country !== undefined) data.country = dto.country || null;
-    if (dto.availabilityScore !== undefined) {
-      data.reliabilityScore = dto.availabilityScore / 100;
-    }
-    if (dto.verificationStatus !== undefined) {
-      data.verificationStatus = dto.verificationStatus;
-    }
-    const pharmacy = await this.prisma.pharmacy.update({ where: { id }, data });
+    const pharmacy = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.pharmacy.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('Pharmacy not found');
+
+      const data: Prisma.PharmacyUpdateInput = { updatedAt: new Date() };
+      if (dto.name !== undefined) data.name = dto.name;
+      if (dto.licenseNumber !== undefined) data.licenseNumber = dto.licenseNumber || null;
+      if (dto.city !== undefined) data.city = dto.city || null;
+      if (dto.country !== undefined) data.country = dto.country || null;
+      if (dto.availabilityScore !== undefined) {
+        data.reliabilityScore = dto.availabilityScore / 100;
+      }
+      if (dto.verificationStatus !== undefined) {
+        data.verificationStatus = dto.verificationStatus;
+        data.isParticipating = dto.verificationStatus === VerificationStatus.VERIFIED;
+      }
+
+      const updated = await tx.pharmacy.update({ where: { id }, data });
+
+      if (dto.verificationStatus !== undefined) {
+        await this.syncVerificationRequests(tx, [id], dto.verificationStatus);
+      }
+
+      return updated;
+    });
+
     await this.audit.write(actorId, 'admin.pharmacy.update', 'Pharmacy', id, {
-      changed: Object.keys(data),
+      changed: Object.keys(dto),
     });
     return this.toDto(pharmacy);
   }
 
   async setStatus(actorId: string, id: string, status: VerificationStatus) {
-    await this.require(id);
-    const pharmacy = await this.prisma.pharmacy.update({
-      where: { id },
-      data: {
-        verificationStatus: status,
-        isParticipating: status === VerificationStatus.VERIFIED,
-      },
+    const pharmacy = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.pharmacy.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('Pharmacy not found');
+
+      const updated = await tx.pharmacy.update({
+        where: { id },
+        data: {
+          verificationStatus: status,
+          isParticipating: status === VerificationStatus.VERIFIED,
+          updatedAt: new Date(),
+        },
+      });
+
+      await this.syncVerificationRequests(tx, [id], status);
+      return updated;
     });
+
     await this.audit.write(
       actorId,
       `admin.pharmacy.${status.toLowerCase()}`,
@@ -109,13 +142,18 @@ export class PharmacyAdminService {
   }
 
   async bulkSetStatus(actorId: string, ids: string[], status: VerificationStatus) {
-    await this.prisma.pharmacy.updateMany({
-      where: { id: { in: ids } },
-      data: {
-        verificationStatus: status,
-        isParticipating: status === VerificationStatus.VERIFIED,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.pharmacy.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          verificationStatus: status,
+          isParticipating: status === VerificationStatus.VERIFIED,
+          updatedAt: new Date(),
+        },
+      });
+      await this.syncVerificationRequests(tx, ids, status);
     });
+
     await this.audit.write(
       actorId,
       `admin.pharmacy.bulk_${status.toLowerCase()}`,
@@ -135,6 +173,49 @@ export class PharmacyAdminService {
     return { id, deleted: true };
   }
 
+  private async syncVerificationRequests(
+    tx: Prisma.TransactionClient,
+    pharmacyIds: string[],
+    status: VerificationStatus,
+  ) {
+    let targetReqStatus: VerificationRequestStatus | null = null;
+    switch (status) {
+      case VerificationStatus.VERIFIED:
+        targetReqStatus = VerificationRequestStatus.APPROVED;
+        break;
+      case VerificationStatus.REJECTED:
+      case VerificationStatus.SUSPENDED:
+        targetReqStatus = VerificationRequestStatus.REJECTED;
+        break;
+      case VerificationStatus.INFO_REQUESTED:
+        targetReqStatus = VerificationRequestStatus.REQUEST_INFO;
+        break;
+      case VerificationStatus.PENDING:
+      case VerificationStatus.UNVERIFIED:
+        targetReqStatus = VerificationRequestStatus.PENDING;
+        break;
+    }
+
+    if (targetReqStatus !== null) {
+      await tx.verificationRequest.updateMany({
+        where: { pharmacyId: { in: pharmacyIds } },
+        data: { status: targetReqStatus },
+      });
+
+      const pharmacies = await tx.pharmacy.findMany({
+        where: { id: { in: pharmacyIds }, licenseNumber: { not: null } },
+        select: { id: true, licenseNumber: true },
+      });
+      const licenses = pharmacies.map((p) => p.licenseNumber).filter(Boolean) as string[];
+      if (licenses.length > 0) {
+        await tx.verificationRequest.updateMany({
+          where: { licenseNumber: { in: licenses } },
+          data: { status: targetReqStatus },
+        });
+      }
+    }
+  }
+
   private async require(id: string): Promise<Pharmacy> {
     const pharmacy = await this.prisma.pharmacy.findUnique({ where: { id } });
     if (!pharmacy) throw new NotFoundException('Pharmacy not found');
@@ -146,7 +227,10 @@ export class PharmacyAdminService {
       id: p.id,
       name: p.name,
       licenseNumber: p.licenseNumber,
+      addressLine1: p.addressLine1,
       city: p.city,
+      region: p.region,
+      postalCode: p.postalCode,
       country: p.country,
       status: p.verificationStatus,
       availabilityScore: Math.round(p.reliabilityScore * 100),
@@ -156,3 +240,4 @@ export class PharmacyAdminService {
     };
   }
 }
+

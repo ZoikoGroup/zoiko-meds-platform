@@ -70,6 +70,7 @@ export default function Notifications() {
       await admin.createNotification(form)
       setIsAddOpen(false)
       setForm({ title: '', message: '', type: 'PLATFORM_UPDATE', target: 'ALL_USERS' })
+      window.dispatchEvent(new CustomEvent('broadcast-dispatched'))
       await load()
     } catch (err) {
       setError(err.message || 'Failed to dispatch broadcast')
@@ -79,6 +80,7 @@ export default function Notifications() {
   const handleDelete = async (id) => {
     try {
       await admin.deleteNotification(id)
+      window.dispatchEvent(new CustomEvent('broadcast-dispatched'))
       await load()
     } catch (err) {
       setError(err.message || 'Failed to delete broadcast')

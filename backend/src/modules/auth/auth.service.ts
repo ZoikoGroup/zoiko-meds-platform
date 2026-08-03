@@ -322,7 +322,7 @@ export class AuthService {
         },
         ipAddress,
       );
-      throw new UnauthorizedException('Current password is incorrect');
+      throw new BadRequestException('Current password is incorrect');
     }
     const passwordHash = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
     await this.prisma.user.update({

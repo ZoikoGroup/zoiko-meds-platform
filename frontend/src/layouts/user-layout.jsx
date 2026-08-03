@@ -1,12 +1,13 @@
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState, useEffect, useCallback } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Home, Search, Heart, Radar, Settings, HelpCircle,
-  Menu, LogOut, Sun, Moon, Loader2, User, ShieldCheck,
+  Menu, LogOut, Sun, Moon, Loader2, User, ShieldCheck, Bell,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
+import { useLanguage } from '@/providers/language-provider'
 import { Brand } from '@/components/shared/brand'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -21,59 +22,78 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { getSignalDigest } from '@/services/signal-api'
-
-const NAV_SECTIONS = [
-  {
-    items: [
-      { label: 'Home', to: '/dashboard', icon: Home },
-      { label: 'Search Medicines', to: '/search', icon: Search },
-      { label: 'How Availability Works', to: '/availability', icon: ShieldCheck },
-    ],
-  },
-  {
-    heading: 'My Medicines',
-    items: [
-      { label: 'Saved Medicines', to: '/saved', icon: Heart },
-      { label: 'ZoikoSignal™', to: '/signal', icon: Radar },
-    ],
-  },
-  {
-    heading: 'Account',
-    items: [
-      { label: 'My Profile', to: '/profile', icon: User },
-      { label: 'Settings', to: '/settings', icon: Settings },
-    ],
-  },
-]
-
-const PAGE_TITLES = {
-  '/dashboard': 'Home',
-  '/search': 'Search Medicines',
-  '/availability': 'How Availability Works',
-  '/saved': 'Saved Medicines',
-  '/signal': 'ZoikoSignal™',
-  '/profile': 'My Profile',
-  '/settings': 'Settings',
-}
+import { getPatientNotifications } from '@/services/patient-notifications-api'
 
 export function UserLayout() {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
+  const { t } = useLanguage()
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [signalUnread, setSignalUnread] = useState(0)
+  const [notifUnread, setNotifUnread] = useState(0)
 
-  // Live unread count for the ZoikoSignal nav badge; refreshes on navigation
-  // so it stays in sync after alerts are read on the ZoikoSignal page.
-  useEffect(() => {
+  const navSections = [
+    {
+      items: [
+        { label: t('home', 'Home'), to: '/dashboard', icon: Home },
+        { label: t('searchMedicines', 'Search Medicines'), to: '/search', icon: Search },
+        { label: t('howAvailabilityWorks', 'How Availability Works'), to: '/availability', icon: ShieldCheck },
+      ],
+    },
+    {
+      heading: t('myMedicines', 'My Medicines'),
+      items: [
+        { label: t('savedMedicines', 'Saved Medicines'), to: '/saved', icon: Heart },
+        { label: t('zoikoSignal', 'ZoikoSignal™'), to: '/signal', icon: Radar },
+      ],
+    },
+    {
+      heading: t('account', 'Account'),
+      items: [
+        { label: t('notifications', 'Notifications'), to: '/notifications', icon: Bell },
+        { label: t('myProfile', 'My Profile'), to: '/profile', icon: User },
+        { label: t('settings', 'Settings'), to: '/settings', icon: Settings },
+      ],
+    },
+  ]
+
+  const pageTitles = {
+    '/dashboard': t('home', 'Home'),
+    '/search': t('searchMedicines', 'Search Medicines'),
+    '/availability': t('howAvailabilityWorks', 'How Availability Works'),
+    '/saved': t('savedMedicines', 'Saved Medicines'),
+    '/signal': t('zoikoSignal', 'ZoikoSignal™'),
+    '/notifications': t('notifications', 'Notifications'),
+    '/profile': t('myProfile', 'My Profile'),
+    '/settings': t('settings', 'Settings'),
+  }
+
+  const refreshUnreadCounts = useCallback(() => {
     let alive = true
     getSignalDigest().then((d) => alive && setSignalUnread(d.unread)).catch(() => {})
+    getPatientNotifications().then((list) => {
+      if (alive) {
+        setNotifUnread((list || []).filter((n) => n.unread).length)
+      }
+    }).catch(() => {})
     return () => { alive = false }
-  }, [location.pathname])
+  }, [])
+
+  useEffect(() => {
+    refreshUnreadCounts()
+    const handleSync = () => refreshUnreadCounts()
+    window.addEventListener('broadcast-dispatched', handleSync)
+    window.addEventListener('focus', handleSync)
+    return () => {
+      window.removeEventListener('broadcast-dispatched', handleSync)
+      window.removeEventListener('focus', handleSync)
+    }
+  }, [location.pathname, refreshUnreadCounts])
 
   const isDark = theme === 'dark'
-  const currentTitle = PAGE_TITLES[location.pathname] ?? 'Home'
+  const currentTitle = pageTitles[location.pathname] ?? t('home', 'Home')
 
   const handleLogout = () => {
     logout()
@@ -101,7 +121,7 @@ export function UserLayout() {
 
         {/* Navigation — grouped into labeled sections */}
         <nav className="flex flex-col gap-7" aria-label="Patient portal">
-          {NAV_SECTIONS.map((section) => (
+          {navSections.map((section) => (
             <div key={section.heading ?? 'primary'} className="flex flex-col gap-1.5">
               {section.heading && (
                 <span className="px-3 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/60">
@@ -124,12 +144,26 @@ export function UserLayout() {
                     )}
                   >
                     <span className="flex w-5 justify-center shrink-0">
-                      <Icon className={cn('size-5 transition-colors duration-200', active ? 'text-primary' : 'text-muted-foreground')} />
+                      <Icon
+                        className={cn(
+                          'size-5 transition-colors duration-200',
+                          link.to === '/notifications'
+                            ? 'text-[#2563EB] dark:text-[#3B82F6]'
+                            : active
+                            ? 'text-primary'
+                            : 'text-muted-foreground'
+                        )}
+                      />
                     </span>
                     <span>{link.label}</span>
                     {link.to === '/signal' && signalUnread > 0 && (
                       <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
                         {signalUnread}
+                      </span>
+                    )}
+                    {link.to === '/notifications' && notifUnread > 0 && (
+                      <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
+                        {notifUnread}
                       </span>
                     )}
                   </Link>
@@ -142,7 +176,7 @@ export function UserLayout() {
 
       <div className="flex flex-col gap-1.5 border-t border-border/60 pt-6">
         <span className="px-3 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/60">
-          Support
+          {t('support', 'Support')}
         </span>
         <a
           href="mailto:support@zoikomeds.com"
@@ -151,7 +185,7 @@ export function UserLayout() {
           <span className="flex w-5 justify-center shrink-0">
             <HelpCircle className="size-5 transition-colors duration-200" />
           </span>
-          <span>Help &amp; Support</span>
+          <span>{t('helpSupport', 'Help & Support')}</span>
         </a>
         <button
           onClick={handleLogout}
@@ -160,7 +194,7 @@ export function UserLayout() {
           <span className="flex w-5 justify-center shrink-0">
             <LogOut className="size-5 transition-colors duration-200" />
           </span>
-          <span>Sign Out</span>
+          <span>{t('signOut', 'Sign Out')}</span>
         </button>
       </div>
     </div>
@@ -206,6 +240,23 @@ export function UserLayout() {
             <Button
               variant="ghost"
               size="icon-sm"
+              asChild
+              className="relative rounded-full text-muted-foreground hover:text-foreground"
+              aria-label={`Notifications${notifUnread > 0 ? `, ${notifUnread} unread` : ''}`}
+            >
+              <Link to="/notifications">
+                <Bell className="size-4.5 transition-colors text-[#2563EB] dark:text-[#3B82F6]" />
+                {notifUnread > 0 && (
+                  <span className="absolute top-1 right-1 flex size-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2563EB] dark:bg-[#3B82F6] opacity-75" />
+                    <span className="relative inline-flex size-2.5 rounded-full bg-[#2563EB] dark:bg-[#3B82F6]" />
+                  </span>
+                )}
+              </Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={toggleTheme}
               className="rounded-full text-muted-foreground hover:text-foreground"
               aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
@@ -242,19 +293,19 @@ export function UserLayout() {
                 <DropdownMenuItem asChild>
                   <Link to="/profile">
                     <User />
-                    My Profile
+                    {t('myProfile', 'My Profile')}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link to="/settings">
                     <Settings />
-                    Settings
+                    {t('settings', 'Settings')}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="danger" onSelect={handleLogout}>
                   <LogOut />
-                  Sign Out
+                  {t('signOut', 'Sign Out')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

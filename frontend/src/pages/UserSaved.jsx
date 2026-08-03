@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
@@ -6,31 +5,56 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { EmptyState } from '@/components/shared/states'
 import { Flash, useFlash } from '@/components/shared/flash'
-import { savedMedicines as demoSavedMedicines } from '@/data/saved-medicines'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Search, Trash2, Heart, ArrowRight } from 'lucide-react'
+import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
+import { useLanguage } from '@/providers/language-provider'
 
 export default function UserSaved() {
-  // Static demo data for now. Replace `demoSavedMedicines` with an API response
-  // (e.g. GET /me/saved) here — the rest of the component stays the same.
-  const [saved, setSaved] = useState(demoSavedMedicines)
+  const { t } = useLanguage()
+  const { data: saved = [], isLoading } = useSavedMedicines()
+  const unsaveMutation = useUnsaveMedicine()
+  const toggleAlertsMutation = useToggleSavedAlerts()
   const [flashMsg, flash] = useFlash()
   const navigate = useNavigate()
 
-  const toggleAlerts = (id) =>
-    setSaved((rows) =>
-      rows.map((m) => (m.id === id ? { ...m, alertsEnabled: !m.alertsEnabled } : m)),
+  const toggleAlerts = (id, currentAlerts) => {
+    toggleAlertsMutation.mutate(
+      { medicineId: id, alertsEnabled: !currentAlerts },
+      {
+        onError: () => flash('Could not update alert preferences.'),
+      }
     )
+  }
 
   const remove = (id, name) => {
-    setSaved((rows) => rows.filter((m) => m.id !== id))
-    flash(`Removed ${name} from saved`)
+    unsaveMutation.mutate(id, {
+      onSuccess: () => flash(`Removed ${name} from saved`),
+      onError: () => flash(`Could not remove ${name}`),
+    })
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title={t('savedMedicines', 'Saved medicines')}
+          subtitle={t('savedMedicinesSubtitle', 'Track availability confidence for the medicines you follow across verified pharmacies.')}
+        />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-44 w-full rounded-2xl" />
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Saved medicines"
-        subtitle="Track availability confidence for the medicines you follow across verified pharmacies."
+        title={t('savedMedicines', 'Saved medicines')}
+        subtitle={t('savedMedicinesSubtitle', 'Track availability confidence for the medicines you follow across verified pharmacies.')}
       />
 
       {flashMsg && <Flash message={flashMsg} />}
@@ -38,12 +62,12 @@ export default function UserSaved() {
       {saved.length === 0 ? (
         <EmptyState
           icon={Heart}
-          title="No saved medicines yet"
-          description="Save a medicine from search to track its availability confidence here."
+          title={t('noSavedMedicinesYet', 'No saved medicines yet')}
+          description={t('noSavedMedicinesDesc', 'Save a medicine from search or details page to track its availability confidence here.')}
           action={
             <Button onClick={() => navigate('/search')}>
               <Search className="size-4" />
-              Search medicines
+              {t('searchMedicines', 'Search medicines')}
             </Button>
           }
         />
@@ -57,20 +81,20 @@ export default function UserSaved() {
                   <div className="flex min-w-0 flex-col">
                     <span className="text-sm font-bold text-foreground">{med.name}</span>
                     <span className="text-xs text-muted-foreground">
-                      {med.generic} · {med.strength}
+                      {[med.generic, med.strength].filter(Boolean).join(' · ')}
                     </span>
                   </div>
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Heart className="size-4 fill-current" aria-hidden />
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-500">
+                    <Heart className="size-4 fill-red-500 text-red-500" aria-hidden />
                   </span>
                 </div>
 
                 {/* Alerts toggle */}
                 <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3">
-                  <span className="text-sm font-medium text-foreground">Alerts enabled</span>
+                  <span className="text-sm font-medium text-foreground">{t('alertsEnabled', 'Alerts enabled')}</span>
                   <Switch
-                    checked={med.alertsEnabled}
-                    onCheckedChange={() => toggleAlerts(med.id)}
+                    checked={med.alertsEnabled ?? true}
+                    onCheckedChange={() => toggleAlerts(med.id, med.alertsEnabled ?? true)}
                     aria-label={`Toggle alerts for ${med.name}`}
                   />
                 </div>
@@ -83,7 +107,7 @@ export default function UserSaved() {
                     className="flex-1"
                     onClick={() => navigate(`/medicine/${med.id}`)}
                   >
-                    View details
+                    {t('viewDetails', 'View details')}
                     <ArrowRight className="size-3.5" />
                   </Button>
                   <Button
@@ -92,6 +116,7 @@ export default function UserSaved() {
                     className="text-danger hover:bg-danger/5"
                     aria-label={`Remove ${med.name} from saved`}
                     onClick={() => remove(med.id, med.name)}
+                    disabled={unsaveMutation.isPending}
                   >
                     <Trash2 className="size-4" />
                   </Button>

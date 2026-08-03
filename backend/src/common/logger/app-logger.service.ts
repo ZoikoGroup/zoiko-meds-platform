@@ -11,18 +11,19 @@ export class AppLogger extends ConsoleLogger implements LoggerService {
 
   private emit(level: LogLevel, message: unknown, context?: string, extra?: Record<string, unknown>) {
     if (!this.json) {
+      const ctx = context || this.context;
       // Delegate to Nest's pretty console formatting in dev/test.
       switch (level) {
         case 'error':
-          return super.error(message as string, context);
+          return ctx ? super.error(message as string, ctx) : super.error(message as string);
         case 'warn':
-          return super.warn(message as string, context);
+          return ctx ? super.warn(message as string, ctx) : super.warn(message as string);
         case 'debug':
-          return super.debug?.(message as string, context);
+          return ctx ? super.debug?.(message as string, ctx) : super.debug?.(message as string);
         case 'verbose':
-          return super.verbose?.(message as string, context);
+          return ctx ? super.verbose?.(message as string, ctx) : super.verbose?.(message as string);
         default:
-          return super.log(message as string, context);
+          return ctx ? super.log(message as string, ctx) : super.log(message as string);
       }
     }
     const line = {

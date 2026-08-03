@@ -45,6 +45,7 @@ export function changePasswordRequest(currentPassword, newPassword) {
   return apiFetch('/auth/change-password', {
     method: 'POST',
     body: { currentPassword, newPassword },
+    skipUnauthorizedHandler: true,
   })
 }
 

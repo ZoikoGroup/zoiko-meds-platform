@@ -147,7 +147,15 @@ export class MeService {
       },
     });
     return rows
-      .map((r) => this.toMedicineDto(r.medicine, [r.medicine]))
+      .map((r) => {
+        const dto = this.toMedicineDto(r.medicine, [r.medicine]);
+        if (!dto) return null;
+        return {
+          ...dto,
+          alertsEnabled: r.alertsEnabled ?? true,
+          priority: r.priority?.toLowerCase() ?? 'medium',
+        };
+      })
       .filter(Boolean);
   }
 
@@ -175,6 +183,18 @@ export class MeService {
       where: { userId, medicineId },
     });
     return { saved: false, medicineId };
+  }
+
+  async updateSavedMedicineAlerts(
+    userId: string,
+    medicineId: string,
+    alertsEnabled: boolean,
+  ) {
+    await this.prisma.savedMedicine.updateMany({
+      where: { userId, medicineId },
+      data: { alertsEnabled },
+    });
+    return { success: true, medicineId, alertsEnabled };
   }
 
   // --- Alert preferences ---------------------------------------------------

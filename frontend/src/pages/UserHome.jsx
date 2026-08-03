@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import {
   Search, MapPin, Mic, Bell, Info, ShieldCheck, Clock, Pill, Heart,
   Network, Webhook, ArrowRight, Building2, ScanLine, Radar, Thermometer,
-  Wind, Activity, HeartPulse, Flame, Droplets, Sparkles,
+  Wind, Activity, HeartPulse, Flame, Droplets, Sparkles, Edit3, CheckCircle2, RotateCcw,
+  AlertCircle, Loader2,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,9 +16,12 @@ import {
 import { ConfidenceBadge } from '@/components/shared/status'
 import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
+import { LocationModal } from '@/components/shared/location-modal'
 import { AVAILABILITY, CONFIRM_NOTE, mapsHref, telHref } from '@/lib/availability'
 import { getUserOverview, listNearbyPharmacies } from '@/services/user-api'
+import { matchMedicines } from '@/services/medicine-api'
 import { SignalWidget } from '@/features/signal/signal-widget'
+import { useLanguage } from '@/providers/language-provider'
 import { cn } from '@/lib/utils'
 
 const QUICK_CHIPS = ['Dolo 650', 'Paracetamol', 'Cetirizine', 'Azithromycin', 'Metformin']
@@ -53,6 +57,7 @@ const CATEGORIES = [
 
 export default function UserHome() {
   const navigate = useNavigate()
+  const { t } = useLanguage()
   const [query, setQuery] = useState('')
   const [showLocationDialog, setShowLocationDialog] = useState(false)
   const [showManualLoc, setShowManualLoc] = useState(false)
@@ -62,8 +67,21 @@ export default function UserHome() {
   const [overview, setOverview] = useState(null)
   const [pharmacies, setPharmacies] = useState([])
   const [location, setLocation] = useState(
-    () => localStorage.getItem('zoiko-user-loc') || 'Gandimaisamma, Hyderabad',
+    () => localStorage.getItem('zoiko-user-loc') || '',
   )
+
+  // Listen for location changes across settings/modals/tabs
+  useEffect(() => {
+    const syncLoc = () => {
+      setLocation(localStorage.getItem('zoiko-user-loc') || '')
+    }
+    window.addEventListener('storage', syncLoc)
+    window.addEventListener('zoiko-location-change', syncLoc)
+    return () => {
+      window.removeEventListener('storage', syncLoc)
+      window.removeEventListener('zoiko-location-change', syncLoc)
+    }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -116,8 +134,12 @@ export default function UserHome() {
 
   const allowLocation = () => {
     localStorage.setItem('zoiko-loc-permission', 'granted')
-    localStorage.setItem('zoiko-user-loc', location)
     setShowLocationDialog(false)
+    if (location) {
+      localStorage.setItem('zoiko-user-loc', location)
+    } else {
+      setShowManualLoc(true)
+    }
   }
 
   const denyLocation = () => {
@@ -133,12 +155,145 @@ export default function UserHome() {
     setManualLocInput('')
   }
 
+  const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceError, setVoiceError] = useState('')
+  const [voiceMode, setVoiceMode] = useState('idle') // 'idle' | 'listening' | 'review'
+
+  const [mediBaseMatch, setMediBaseMatch] = useState(null) // null = idle, true = valid, false = invalid
+  const [checkingMediBase, setCheckingMediBase] = useState(false)
+  const [matchedName, setMatchedName] = useState('')
+
+  useEffect(() => {
+    const term = (voiceTranscript || '').trim()
+    if (!term) {
+      setMediBaseMatch(null)
+      setCheckingMediBase(false)
+      setMatchedName('')
+      return
+    }
+
+    setCheckingMediBase(true)
+    const t = setTimeout(async () => {
+      try {
+        const matches = await matchMedicines(term, 5)
+        if (matches && matches.length > 0) {
+          setMediBaseMatch(true)
+          const lowerTerm = term.toLowerCase()
+          const exactName = matches.find((m) => m.name.toLowerCase() === lowerTerm)
+          const exactGeneric = matches.find((m) => m.generic.toLowerCase() === lowerTerm)
+          const partialName = matches.find((m) => m.name.toLowerCase().includes(lowerTerm))
+          const partialGeneric = matches.find((m) => m.generic.toLowerCase().includes(lowerTerm))
+
+          if (exactName) {
+            setMatchedName(exactName.name)
+          } else if (exactGeneric) {
+            setMatchedName(exactGeneric.generic)
+          } else if (partialName) {
+            setMatchedName(partialName.name)
+          } else if (partialGeneric) {
+            setMatchedName(partialGeneric.generic)
+          } else {
+            setMatchedName(term)
+          }
+        } else {
+          setMediBaseMatch(false)
+          setMatchedName('')
+        }
+      } catch (_e) {
+        setMediBaseMatch(false)
+        setMatchedName('')
+      } finally {
+        setCheckingMediBase(false)
+      }
+    }, 250)
+
+    return () => clearTimeout(t)
+  }, [voiceTranscript])
+
+  const stopVoice = () => {
+    if (window._zoikoRecognition) {
+      try {
+        window._zoikoRecognition.stop()
+      } catch {
+        // Already stopped or torn down by the browser — nothing to clean up.
+      }
+      window._zoikoRecognition = null
+    }
+    setIsListening(false)
+    setVoiceMode('idle')
+  }
+
   const triggerVoice = () => {
-    setIsListening(true)
-    setTimeout(() => {
-      setIsListening(false)
-      goSearch('Dolo 650')
-    }, 2600)
+    setVoiceTranscript('')
+    setVoiceError('')
+    setVoiceMode('listening')
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+    if (!SpeechRecognition) {
+      setVoiceError('Speech recognition is not supported in this browser. Please type your search.')
+      setIsListening(true)
+      return
+    }
+
+    try {
+      if (window._zoikoRecognition) {
+        try {
+          window._zoikoRecognition.abort()
+        } catch {
+          // A stale recognition instance that is already dead — safe to discard.
+        }
+      }
+      const recognition = new SpeechRecognition()
+      window._zoikoRecognition = recognition
+      recognition.lang = 'en-US'
+      recognition.continuous = false
+      recognition.interimResults = true
+
+      recognition.onstart = () => {
+        setIsListening(true)
+        setVoiceMode('listening')
+      }
+
+      recognition.onresult = (event) => {
+        let text = ''
+        let isFinal = false
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          text += event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            isFinal = true
+          }
+        }
+        const clean = text.trim()
+        if (clean) {
+          setVoiceTranscript(clean)
+          setQuery(clean)
+          if (isFinal) {
+            setVoiceMode('review')
+            try {
+              recognition.stop()
+            } catch {
+              // Recognition already ended itself on the final result.
+            }
+          }
+        }
+      }
+
+      recognition.onerror = (event) => {
+        if (event.error !== 'no-speech') {
+          setVoiceError(`Voice error (${event.error}). Please try again or type medicine name.`)
+        }
+      }
+
+      recognition.onend = () => {
+        // Recognition ended
+      }
+
+      recognition.start()
+      setIsListening(true)
+    } catch (_err) {
+      setVoiceError('Could not access microphone. Please check permissions or type medicine name.')
+      setIsListening(true)
+    }
   }
 
   const active = pharmacies.find((p) => p.id === activeId)
@@ -170,34 +325,176 @@ export default function UserHome() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showManualLoc} onOpenChange={setShowManualLoc}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Set your location</DialogTitle>
-            <DialogDescription>Enter a city, area, or PIN code.</DialogDescription>
-          </DialogHeader>
-          <Input
-            value={manualLocInput}
-            onChange={(e) => setManualLocInput(e.target.value)}
-            placeholder="e.g. Gandimaisamma, Hyderabad"
-            onKeyDown={(e) => e.key === 'Enter' && saveManualLocation()}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowManualLoc(false)}>Cancel</Button>
-            <Button variant="teal" onClick={saveManualLocation}>Save location</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Location Modal with Typeahead Autocomplete & PIN Code / City Validation */}
+      <LocationModal
+        open={showManualLoc}
+        onOpenChange={setShowManualLoc}
+        currentLocation={location}
+        onSave={(newLoc) => setLocation(newLoc)}
+      />
 
-      <Dialog open={isListening} onOpenChange={setIsListening}>
-        <DialogContent className="sm:max-w-[320px]">
-          <DialogHeader className="items-center text-center">
-            <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/15 text-primary">
-              <Mic className="size-7 animate-pulse" />
+      <Dialog open={isListening} onOpenChange={(open) => { if (!open) stopVoice() }}>
+        <DialogContent className="sm:max-w-[420px] p-6">
+          <DialogHeader className="items-center text-center flex flex-col gap-2">
+            <div className={cn(
+              "mx-auto flex size-14 items-center justify-center rounded-2xl transition-all",
+              voiceError
+                ? "bg-red-500/10 text-red-500"
+                : voiceMode === 'review' && mediBaseMatch === false
+                ? "bg-red-500/10 text-red-500"
+                : voiceMode === 'review'
+                ? "bg-teal/10 text-teal"
+                : "bg-primary/10 text-primary"
+            )}>
+              {voiceError ? (
+                <Mic className="size-6 text-red-500" />
+              ) : voiceMode === 'review' && mediBaseMatch === false ? (
+                <AlertCircle className="size-6 text-danger" />
+              ) : voiceMode === 'review' ? (
+                <CheckCircle2 className="size-6 text-teal" />
+              ) : (
+                <Mic className="size-6 animate-pulse text-primary" />
+              )}
             </div>
-            <DialogTitle>Listening…</DialogTitle>
-            <DialogDescription>Say a medicine name — e.g. “Dolo 650”.</DialogDescription>
+            <DialogTitle className="text-lg font-bold">
+              {voiceError
+                ? 'Voice Search Error'
+                : voiceMode === 'review' && mediBaseMatch === false
+                ? 'Unrecognized Medicine'
+                : voiceMode === 'review'
+                ? 'Medicine Captured'
+                : 'Listening…'}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground text-center">
+              {voiceError
+                ? voiceError
+                : voiceMode === 'review'
+                ? 'Review or edit the captured medicine name before searching:'
+                : 'Say a medicine name clearly — e.g. "Paracetamol", "Azithromycin", or "Cetirizine"'}
+            </DialogDescription>
           </DialogHeader>
+
+          {/* Interactive Editable Input box when speech is captured */}
+          {voiceMode === 'review' && !voiceError && (
+            <div className="mt-3 flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label htmlFor="voice-edit-input" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground text-left">
+                  Edit Medicine Name
+                </label>
+                {checkingMediBase ? (
+                  <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+                    <Loader2 className="size-3 animate-spin text-teal" /> Checking MediBase™...
+                  </span>
+                ) : mediBaseMatch === true ? (
+                  <span className="text-[11px] font-bold text-success flex items-center gap-1">
+                    <CheckCircle2 className="size-3 text-success" /> Valid MediBase™ Medicine
+                  </span>
+                ) : mediBaseMatch === false && voiceTranscript.trim() ? (
+                  <span className="text-[11px] font-bold text-danger flex items-center gap-1">
+                    <AlertCircle className="size-3 text-danger" /> Invalid Medicine
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="relative flex items-center">
+                <Input
+                  id="voice-edit-input"
+                  type="text"
+                  value={voiceTranscript}
+                  onChange={(e) => {
+                    setVoiceTranscript(e.target.value)
+                    setQuery(e.target.value)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && voiceTranscript.trim()) {
+                      e.preventDefault()
+                      const val = voiceTranscript.trim()
+                      stopVoice()
+                      goSearch(val)
+                    }
+                  }}
+                  placeholder="Type or edit medicine name..."
+                  className={cn(
+                    "h-11 rounded-xl text-sm font-semibold pl-3.5 pr-10 border transition-colors",
+                    mediBaseMatch === false && voiceTranscript.trim()
+                      ? "border-danger focus-visible:ring-danger/20 bg-danger/5"
+                      : mediBaseMatch === true
+                      ? "border-success/50 focus-visible:ring-success/20 bg-success/5"
+                      : "border-primary/30 focus-visible:ring-primary/20"
+                  )}
+                />
+                <Edit3 className="absolute right-3.5 size-4 text-muted-foreground pointer-events-none" />
+              </div>
+
+              {/* Invalid Medicine Warning Banner */}
+              {mediBaseMatch === false && !checkingMediBase && voiceTranscript.trim() && (
+                <div className="flex items-start gap-2 rounded-xl bg-danger/10 p-2.5 text-xs text-danger border border-danger/20 leading-snug text-left mt-1">
+                  <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Invalid Medicine:</span> &ldquo;{voiceTranscript}&rdquo; is not listed in the MediBase™ catalog. Please check the spelling or brand name.
+                  </div>
+                </div>
+              )}
+
+              {/* Valid Medicine Match Indicator */}
+              {mediBaseMatch === true && matchedName && !checkingMediBase && (
+                <div className="flex items-center gap-1.5 text-xs text-success font-medium text-left px-1 mt-0.5">
+                  <ShieldCheck className="size-3.5 text-teal shrink-0" />
+                  <span>Found in MediBase™: <strong className="font-semibold">{matchedName}</strong></span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="mt-5 flex flex-wrap gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={stopVoice}
+              className="rounded-xl text-xs flex-1 sm:flex-none"
+            >
+              Cancel
+            </Button>
+
+            {voiceMode === 'review' && !voiceError ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={triggerVoice}
+                  className="rounded-xl text-xs gap-1.5 flex-1 sm:flex-none"
+                >
+                  <RotateCcw className="size-3.5" />
+                  Speak again
+                </Button>
+                <Button
+                  variant={mediBaseMatch === false ? 'danger' : 'teal'}
+                  size="sm"
+                  disabled={!voiceTranscript.trim()}
+                  onClick={() => {
+                    const term = voiceTranscript.trim() || query.trim()
+                    stopVoice()
+                    if (term) goSearch(term)
+                  }}
+                  className="rounded-xl text-xs font-semibold gap-1.5 flex-1 sm:flex-none"
+                >
+                  <Search className="size-3.5" />
+                  Search
+                </Button>
+              </>
+            ) : (
+              !voiceError && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled
+                  className="rounded-xl text-xs opacity-60 flex-1 sm:flex-none"
+                >
+                  Listening...
+                </Button>
+              )
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -215,23 +512,32 @@ export default function UserHome() {
               <ShieldCheck className="size-3.5" />
               Verified patient access
             </Badge>
-            <button
-              onClick={() => setShowManualLoc(true)}
-              className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-primary/30"
-            >
-              <MapPin className="size-3.5 text-primary" />
-              {location}
-              <span className="text-primary">Change</span>
-            </button>
+            {location ? (
+              <button
+                onClick={() => setShowManualLoc(true)}
+                className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-primary/30 cursor-pointer"
+              >
+                <MapPin className="size-3.5 text-primary" />
+                <span>{location}</span>
+                <span className="text-primary font-bold ml-1">Change</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowManualLoc(true)}
+                className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-primary/30 cursor-pointer"
+              >
+                <MapPin className="size-3.5 text-muted-foreground" />
+                <span className="text-primary font-bold">Set location</span>
+              </button>
+            )}
           </div>
 
           <div className="flex max-w-2xl flex-col gap-1.5">
             <h1 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-              Find medicine availability near you
+              {t('findAvailability', 'Find medicine availability near you')}
             </h1>
             <p className="text-sm text-muted-foreground sm:text-base">
-              Search a medicine to see real-time availability confidence from
-              verified pharmacies — powered by MediBase™ and ZoikoAvail™.
+              {t('heroSubtitle', 'Search a medicine to see real-time availability confidence from verified pharmacies — powered by MediBase™ and ZoikoAvail™.')}
             </p>
           </div>
 
@@ -246,7 +552,7 @@ export default function UserHome() {
                   onFocus={() => setShowSuggestions(true)}
                   onBlur={() => setShowSuggestions(false)}
                   onKeyDown={onHeroKeyDown}
-                  placeholder="Search by medicine, brand, or generic — e.g. Dolo 650"
+                  placeholder={t('searchPlaceholder', 'Search by medicine, brand, or generic — e.g. Dolo 650')}
                   aria-label="Search medicines"
                   autoComplete="off"
                   role="combobox"
@@ -279,7 +585,7 @@ export default function UserHome() {
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Popular:
+                {t('popularSearches', 'POPULAR:')}
               </span>
               {QUICK_CHIPS.map((chip) => (
                 <button
@@ -297,7 +603,11 @@ export default function UserHome() {
 
       {/* Quick actions */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {QUICK_ACTIONS.map((a) => {
+        {[
+          { title: t('scanPrescription', 'Scan a prescription'), desc: t('scanDesc', 'Snap or upload it — we extract the medicines for you.'), icon: ScanLine, to: '/search?mode=scan', gradient: 'from-primary to-teal' },
+          { title: t('yourZoikoSignal', 'Your ZoikoSignal™'), desc: t('zoikoSignalDesc', 'Get alerts when saved medicines run low or return.'), icon: Radar, to: '/signal', gradient: 'from-violet-500 to-primary' },
+          { title: t('savedMedicines', 'Saved medicines'), desc: t('savedMedicinesDesc', 'Track availability for the medicines you follow.'), icon: Heart, to: '/saved', gradient: 'from-rose-500 to-red-500' },
+        ].map((a) => {
           const Icon = a.icon
           return (
             <button
@@ -324,17 +634,22 @@ export default function UserHome() {
       <div className="flex items-start gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4">
         <Info className="mt-0.5 size-5 shrink-0 text-primary" />
         <p className="text-sm leading-relaxed text-muted-foreground">
-          {CONFIRM_NOTE}
+          {t('homeDisclaimer', 'Availability is a governed confidence signal from verified pharmacies — not exact stock. Please confirm with the pharmacy before visiting.')}
         </p>
       </div>
 
       {/* Summary tiles */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {SUMMARY_META.map((s) => {
+        {[
+          { key: 'savedMedicines', label: t('savedMedicines', 'Saved medicines'), icon: Heart, to: '/saved' },
+          { key: 'recentSearches', label: t('recentSearches', 'Recent searches'), icon: Search, to: '/search' },
+          { key: 'verifiedPharmacies', label: t('verifiedPharmacies', 'Verified pharmacies'), icon: Building2, to: '/search' },
+          { key: 'activeAlerts', label: t('activeAlerts', 'Active alerts'), icon: Bell, to: '/signal' },
+        ].map((s) => {
           const Icon = s.icon
           return (
             <button
-              key={s.label}
+              key={s.key}
               onClick={() => navigate(s.to)}
               className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
             >
@@ -352,14 +667,23 @@ export default function UserHome() {
       <section className="flex flex-col gap-4">
         <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
           <Sparkles className="size-4 text-teal" />
-          Browse by health need
+          {t('browseByHealthNeed', 'BROWSE BY HEALTH NEED')}
         </h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {CATEGORIES.map((c) => {
+          {[
+            { label: t('feverPain', 'Fever & Pain'), med: 'Paracetamol', icon: Thermometer },
+            { label: t('coldCough', 'Cold & Cough'), med: 'Cetirizine', icon: Wind },
+            { label: t('diabetes', 'Diabetes'), med: 'Metformin', icon: Activity },
+            { label: t('heartBp', 'Heart & BP'), med: 'Amlodipine', icon: HeartPulse },
+            { label: t('antibiotics', 'Antibiotics'), med: 'Azithromycin', icon: Pill },
+            { label: t('acidity', 'Acidity'), med: 'Pantoprazole', icon: Flame },
+            { label: t('allergy', 'Allergy'), med: 'Levocetirizine', icon: Droplets },
+            { label: t('vitamins', 'Vitamins'), med: 'Vitamin D3', icon: Sparkles },
+          ].map((c) => {
             const Icon = c.icon
             return (
               <button
-                key={c.label}
+                key={c.med}
                 onClick={() => goSearch(c.med)}
                 className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
               >

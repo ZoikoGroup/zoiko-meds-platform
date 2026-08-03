@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   Pill, ShieldCheck, Heart, MapPin, Navigation, Clock, Info,
@@ -12,9 +12,10 @@ import { ConfidenceBadge } from '@/components/shared/status'
 import { PageHeader } from '@/components/shared/page-header'
 import { Seo } from '@/components/shared/seo'
 import { Flash, useFlash } from '@/components/shared/flash'
+import { cn } from '@/lib/utils'
 import { AVAILABILITY, CONFIRM_NOTE, SCOPE_NOTE, mapsHref, byConfidence } from '@/lib/availability'
 import { getMedicineById, getMedicineAvailability, matchMedicines } from '@/services/medicine-api'
-import { saveMedicine } from '@/services/user-api'
+import { useSavedMedicines, useSaveMedicine, useUnsaveMedicine } from '@/hooks/use-saved-medicines'
 
 // Governance-approved FAQ (no clinical advice, dosing, or substitution guidance).
 const FAQS = [
@@ -64,7 +65,17 @@ export default function MedicineDetail() {
   const [alternatives, setAlternatives] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
-  const [saving, setSaving] = useState(false)
+
+  const { data: savedMedicines = [] } = useSavedMedicines()
+  const saveMutation = useSaveMedicine()
+  const unsaveMutation = useUnsaveMedicine()
+
+  const isSaved = useMemo(() => {
+    if (!id || !Array.isArray(savedMedicines)) return false
+    return savedMedicines.some((m) => m.id === id)
+  }, [id, savedMedicines])
+
+  const saving = saveMutation.isPending || unsaveMutation.isPending
 
   useEffect(() => {
     let alive = true
@@ -85,17 +96,31 @@ export default function MedicineDetail() {
     return () => { alive = false }
   }, [id])
 
-  const handleSave = useCallback(async () => {
-    setSaving(true)
-    try {
-      await saveMedicine(id)
-      flash('Added to your saved medicines.')
-    } catch (err) {
-      flash(err?.message?.includes('already') ? 'Already in your saved medicines.' : 'Could not save — please sign in and try again.')
-    } finally {
-      setSaving(false)
+  const handleSaveToggle = useCallback(async () => {
+    if (saving) return
+    if (isSaved) {
+      try {
+        await unsaveMutation.mutateAsync(id)
+        flash('Removed from your saved medicines.')
+      } catch (err) {
+        flash(err?.message || 'Could not remove medicine from saved list.')
+      }
+    } else {
+      try {
+        await saveMutation.mutateAsync(id)
+        flash('Added to your saved medicines.')
+      } catch (err) {
+        const msg = err?.message ?? ''
+        if (msg.includes('already')) {
+          flash('Already in your saved medicines.')
+        } else if (msg.toLowerCase().includes('unauthorized') || msg.toLowerCase().includes('sign in')) {
+          flash('Please sign in to save medicines.')
+        } else {
+          flash(`Could not save medicine: ${msg || 'Unknown error'}`)
+        }
+      }
     }
-  }, [id, flash])
+  }, [id, isSaved, saving, saveMutation, unsaveMutation, flash])
 
   if (loading) {
     return (
@@ -158,9 +183,21 @@ export default function MedicineDetail() {
         }
         actions={
           <>
-            <Button variant="outline" onClick={handleSave} disabled={saving}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : <Heart className="size-4" />}
-              Save medicine
+            <Button
+              variant={isSaved ? 'secondary' : 'outline'}
+              onClick={handleSaveToggle}
+              disabled={saving}
+              className={cn(
+                'transition-all duration-200',
+                isSaved && 'border-red-500/30 bg-red-500/10 text-red-500 hover:bg-red-500/20 hover:text-red-600'
+              )}
+            >
+              {saving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Heart className={cn('size-4 transition-transform active:scale-125', isSaved ? 'fill-red-500 text-red-500' : '')} />
+              )}
+              {isSaved ? 'Saved medicine' : 'Save medicine'}
             </Button>
             <Button asChild>
               <Link to={`/search?q=${encodeURIComponent(medicine.name)}`}>

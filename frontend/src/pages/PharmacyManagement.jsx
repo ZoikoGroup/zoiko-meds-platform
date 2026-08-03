@@ -27,6 +27,7 @@ import * as admin from '@/services/admin-api'
 
 const STATUS_LABEL = {
   VERIFIED: 'Verified',
+  INFO_REQUESTED: 'Information Requested',
   PENDING: 'Pending',
   SUSPENDED: 'Suspended',
   UNVERIFIED: 'Unverified',
@@ -34,6 +35,7 @@ const STATUS_LABEL = {
 }
 const STATUS_VARIANT = {
   VERIFIED: 'success',
+  INFO_REQUESTED: 'warning',
   PENDING: 'secondary',
   SUSPENDED: 'destructive',
   UNVERIFIED: 'outline',
@@ -59,8 +61,8 @@ export default function PharmacyManagement() {
     availabilityScore: 100,
   })
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (isSilent = false) => {
+    if (!isSilent) setLoading(true)
     setError('')
     try {
       const res = await admin.listPharmacies({ pageSize: 200 })
@@ -68,12 +70,20 @@ export default function PharmacyManagement() {
     } catch (err) {
       setError(err.message || 'Failed to load pharmacies')
     } finally {
-      setLoading(false)
+      if (!isSilent) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     load()
+
+    const handleSync = () => load(true)
+    window.addEventListener('pharmacy-status-updated', handleSync)
+    window.addEventListener('focus', handleSync)
+    return () => {
+      window.removeEventListener('pharmacy-status-updated', handleSync)
+      window.removeEventListener('focus', handleSync)
+    }
   }, [load])
 
   const run = useCallback(
@@ -81,7 +91,8 @@ export default function PharmacyManagement() {
       setError('')
       try {
         await action()
-        await load()
+        window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+        await load(true)
       } catch (err) {
         setError(err.message || 'Action failed')
       }
@@ -188,7 +199,7 @@ export default function PharmacyManagement() {
       header: 'Location',
       cell: (row) => (
         <span className="text-muted-foreground">
-          {[row.city, row.country].filter(Boolean).join(', ') || '—'}
+          {[row.addressLine1, row.city, row.region, row.postalCode, row.country].filter(Boolean).join(', ') || '—'}
         </span>
       ),
     },
@@ -230,8 +241,11 @@ export default function PharmacyManagement() {
       >
         <option value="All">All Statuses</option>
         <option value="VERIFIED">Verified</option>
+        <option value="INFO_REQUESTED">Information Requested</option>
         <option value="PENDING">Pending</option>
         <option value="SUSPENDED">Suspended</option>
+        <option value="REJECTED">Rejected</option>
+        <option value="UNVERIFIED">Unverified</option>
       </select>
 
       <select
@@ -362,7 +376,7 @@ export default function PharmacyManagement() {
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Headquarters Location</span>
-                <span>{[selectedPharmacy.city, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
+                <span className="text-right max-w-[240px] font-medium">{[selectedPharmacy.addressLine1, selectedPharmacy.city, selectedPharmacy.region, selectedPharmacy.postalCode, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Availability Engine Score</span>

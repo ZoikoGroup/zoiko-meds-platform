@@ -33,6 +33,9 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOrigins,
     credentials: true,
+    // Expose the request id so browser clients (e.g. the ZoikoAvail sandbox)
+    // can read it and surface a trace id for each request.
+    exposedHeaders: ['X-Request-Id'],
   });
 
   app.useGlobalPipes(
@@ -63,7 +66,10 @@ async function bootstrap() {
   const port = config.get<number>('PORT', 8000);
   try {
     await app.listen(port);
-    logger.log(`ZoikoMeds API listening on port ${port} (prefix /${apiPrefix})`);
+    logger.log(`🚀 Server running at: http://localhost:${port}/${apiPrefix}`);
+    if (!isProd) {
+      logger.log(`📚 Swagger Docs: http://localhost:${port}/${apiPrefix}/docs`);
+    }
   } catch (err: unknown) {
     const error = err as { code?: string };
     if (error?.code === 'EADDRINUSE') {

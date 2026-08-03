@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -9,28 +9,115 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
-import { useTheme } from '@/providers/theme-provider'
-import { User, Lock, LogOut, Palette, ShieldCheck, Sun, Moon } from 'lucide-react'
+import { useLanguage } from '@/providers/language-provider'
+import { User, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import { PhoneInput, COUNTRY_MIN_DIGITS, COUNTRY_MAX_DIGITS } from '@/components/ui/phone-input'
+import { isValidPhoneNumber, isPossiblePhoneNumber, getCountryCallingCode } from 'react-phone-number-input'
 
 export default function UserProfile() {
   const { user, logout, updateProfile, changePassword } = useAuth()
-  const { theme, toggleTheme } = useTheme()
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const [flashMsg, flash] = useFlash()
   const [error, setError] = useState('')
 
   const [form, setForm] = useState({
     name: user?.name || '',
-    email: user?.email || '',
     phone: user?.phone || '',
   })
-  const [pwd, setPwd] = useState({ current: '', next: '' })
+  const [phoneCountry, setPhoneCountry] = useState('IN')
+  const [phoneTouched, setPhoneTouched] = useState(false)
 
-  const isDark = theme === 'dark'
+  useEffect(() => {
+    if (user) {
+      setForm({
+        name: user.name || '',
+        phone: user.phone || '',
+      })
+    }
+  }, [user])
+
+  const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
+  const [pwdError, setPwdError] = useState('')
+  const [showPwd, setShowPwd] = useState({ current: false, next: false, confirm: false })
+
+  const isPasswordTooShort = Boolean(pwd.next && pwd.next.length < 8)
+  const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
+  const isPasswordFormInvalid = !pwd.current || !pwd.next || !pwd.confirm || pwd.next !== pwd.confirm || pwd.next.length < 8
+
+  // Calculate country-specific phone number validity
+  const phoneError = useMemo(() => {
+    const rawPhone = form.phone
+    if (!rawPhone || !rawPhone.trim() || rawPhone.trim() === '+') {
+      return ''
+    }
+
+    const trimmed = rawPhone.trim()
+    const digitsOnly = trimmed.replace(/\D/g, '')
+
+    if (!digitsOnly) {
+      return 'Please enter a valid phone number.'
+    }
+
+    let dialCodeDigits = '91'
+    try {
+      dialCodeDigits = getCountryCallingCode(phoneCountry)
+    } catch {
+      dialCodeDigits = '91'
+    }
+
+    let localDigits = digitsOnly
+    if (digitsOnly.startsWith(dialCodeDigits)) {
+      localDigits = digitsOnly.slice(dialCodeDigits.length)
+    }
+
+    if (!localDigits) {
+      return ''
+    }
+
+    const minAllowed = COUNTRY_MIN_DIGITS[phoneCountry] || 7
+    const maxAllowed = COUNTRY_MAX_DIGITS[phoneCountry] || 15
+
+    if (phoneCountry === 'IN') {
+      if (!/^[6-9]/.test(localDigits)) {
+        return 'Please enter a valid Indian mobile number.'
+      }
+      if (localDigits.length < 10) {
+        return 'Phone number is too short.'
+      }
+      if (localDigits.length > 10) {
+        return 'Phone number is too long.'
+      }
+      return ''
+    }
+
+    if (localDigits.length < minAllowed) {
+      return 'Phone number is too short.'
+    }
+    if (localDigits.length > maxAllowed) {
+      return 'Phone number is too long.'
+    }
+
+    const isValid =
+      isValidPhoneNumber(trimmed, phoneCountry) ||
+      isPossiblePhoneNumber(trimmed, phoneCountry) ||
+      (phoneCountry === 'US' && localDigits.length === 10)
+
+    if (!isValid) {
+      return 'Invalid phone number for the selected country.'
+    }
+
+    return ''
+  }, [form.phone, phoneCountry])
 
   const saveProfile = async (e) => {
     e.preventDefault()
     setError('')
+    if (phoneError) {
+      setPhoneTouched(true)
+      setError(phoneError)
+      return
+    }
     try {
       await updateProfile({ fullName: form.name, phone: form.phone })
       flash('Profile updated')
@@ -42,20 +129,26 @@ export default function UserProfile() {
   const savePassword = async (e) => {
     e.preventDefault()
     setError('')
+    setPwdError('')
+    if (pwd.next !== pwd.confirm) {
+      setPwdError('New passwords do not match.')
+      return
+    }
     if (pwd.next.length < 8) {
-      setError('New password must be at least 8 characters.')
+      setPwdError('New password must be at least 8 characters.')
       return
     }
     try {
       await changePassword(pwd.current, pwd.next)
-      setPwd({ current: '', next: '' })
+      setPwd({ current: '', next: '', confirm: '' })
+      setShowPwd({ current: false, next: false, confirm: false })
       flash('Password updated')
     } catch (err) {
-      setError(err.message || 'Could not update password')
+      setPwdError(err.message || 'Could not update password')
     }
   }
 
-  const handleLogout = () => {
+  const _handleLogout = () => {
     logout()
     navigate('/login')
   }
@@ -63,8 +156,8 @@ export default function UserProfile() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="My profile"
-        subtitle="Manage your contact details and account security."
+        title={t('myProfile', 'My profile')}
+        subtitle={t('contactDetailsDesc', 'Manage your contact details and account security.')}
       />
 
       {/* Identity card */}
@@ -74,8 +167,8 @@ export default function UserProfile() {
             <AvatarFallback className="text-lg">{user?.initials || 'ZM'}</AvatarFallback>
           </Avatar>
           <div className="flex flex-col gap-1">
-            <span className="text-lg font-bold text-foreground">{form.name}</span>
-            <span className="text-sm text-muted-foreground">{form.email}</span>
+            <span className="text-lg font-bold text-foreground">{user?.name || ''}</span>
+            <span className="text-sm text-muted-foreground">{user?.email || ''}</span>
           </div>
           <Badge variant="teal" className="gap-1.5 sm:ml-auto">
             <ShieldCheck className="size-3.5" />
@@ -98,33 +191,55 @@ export default function UserProfile() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User className="size-4 text-primary" />
-                Contact details
+                {t('contactDetails', 'Contact details')}
               </CardTitle>
-              <CardDescription>Update how verified pharmacies and ZoikoMeds can reach you.</CardDescription>
+              <CardDescription>{t('updateContactDesc', 'Update how verified pharmacies and ZoikoMeds can reach you.')}</CardDescription>
             </CardHeader>
             <CardContent className="pt-5">
               <form onSubmit={saveProfile} className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="name">Full name</Label>
+                  <Label htmlFor="name">{t('fullName', 'Full name')}</Label>
                   <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
                 </div>
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      required
-                    />
+                    <Label htmlFor="email">{t('emailAddress', 'Email address')}</Label>
+                    <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3.5 py-2.5 text-sm">
+                      <span className="font-medium text-foreground">{user?.email || '—'}</span>
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Read-only
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Email is linked to your login account and cannot be changed.
+                    </p>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="phone">Phone</Label>
-                    <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
+                    <Label htmlFor="phone">{t('phone', 'Phone')}</Label>
+                    <PhoneInput
+                      id="phone"
+                      value={form.phone}
+                      countryProp={phoneCountry}
+                      onChange={(val) => {
+                        setForm((prev) => ({ ...prev, phone: val }))
+                        if (val && !phoneTouched) setPhoneTouched(true)
+                      }}
+                      onCountryChange={(iso2) => {
+                        setPhoneCountry(iso2)
+                      }}
+                      onBlur={() => setPhoneTouched(true)}
+                      error={Boolean(phoneTouched && phoneError)}
+                      aria-invalid={Boolean(phoneTouched && phoneError)}
+                      aria-describedby={phoneTouched && phoneError ? 'phone-error-msg' : undefined}
+                    />
+                    {phoneTouched && phoneError && (
+                      <span id="phone-error-msg" role="alert" className="text-[11px] font-medium text-red-500 leading-snug">
+                        {phoneError}
+                      </span>
+                    )}
                   </div>
                 </div>
-                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">Save changes</Button>
+                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">{t('saveChanges', 'Save changes')}</Button>
               </form>
             </CardContent>
           </Card>
@@ -145,40 +260,104 @@ export default function UserProfile() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Lock className="size-4 text-primary" />
-                Password
+                {t('password', 'Password')}
               </CardTitle>
-              <CardDescription>Update your account password.</CardDescription>
+              <CardDescription>{t('updatePasswordDesc', 'Update your account password.')}</CardDescription>
             </CardHeader>
             <CardContent className="pt-5">
               <form onSubmit={savePassword} className="flex flex-col gap-5">
+                {pwdError && (
+                  <div className="rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-xs font-semibold text-danger leading-snug">
+                    ⚠️ {pwdError}
+                  </div>
+                )}
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="current">Current password</Label>
-                  <Input id="current" type="password" placeholder="••••••••" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} required />
+                  <Label htmlFor="current">{t('currentPassword', 'Current password')}</Label>
+                  <div className="relative flex items-center">
+                    <Input
+                      id="current"
+                      type={showPwd.current ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={pwd.current}
+                      onChange={(e) => setPwd({ ...pwd, current: e.target.value })}
+                      className="pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((prev) => ({ ...prev, current: !prev.current }))}
+                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      tabIndex={-1}
+                      aria-label={showPwd.current ? 'Hide current password' : 'Show current password'}
+                    >
+                      {showPwd.current ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="next">New password</Label>
-                  <Input id="next" type="password" placeholder="••••••••" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} required />
-                </div>
-                <Button type="submit" variant="teal" className="mt-1 w-fit cursor-pointer">Update password</Button>
-              </form>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardContent className="py-4">
-              <button
-                onClick={toggleTheme}
-                className="flex w-full items-center justify-between rounded-lg px-2.5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-accent cursor-pointer"
-              >
-                <span className="flex items-center gap-2">
-                  <Palette className="size-4 text-muted-foreground" />
-                  Interface theme
-                </span>
-                <span className="flex items-center gap-1 text-xs uppercase text-muted-foreground">
-                  {isDark ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}
-                  {theme}
-                </span>
-              </button>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="next">{t('newPassword', 'New password')}</Label>
+                  <div className="relative flex items-center">
+                    <Input
+                      id="next"
+                      type={showPwd.next ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={pwd.next}
+                      onChange={(e) => setPwd({ ...pwd, next: e.target.value })}
+                      className={`pr-10 ${isPasswordTooShort ? 'border-danger focus-visible:ring-danger/30' : ''}`}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((prev) => ({ ...prev, next: !prev.next }))}
+                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      tabIndex={-1}
+                      aria-label={showPwd.next ? 'Hide new password' : 'Show new password'}
+                    >
+                      {showPwd.next ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {isPasswordTooShort && (
+                    <p className="text-xs font-medium text-danger">Password must be at least 8 characters long.</p>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="confirm">{t('confirmNewPassword', 'Confirm new password')}</Label>
+                  <div className="relative flex items-center">
+                    <Input
+                      id="confirm"
+                      type={showPwd.confirm ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={pwd.confirm}
+                      onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })}
+                      className={`pr-10 ${passwordsMismatch ? 'border-danger focus-visible:ring-danger/30' : ''}`}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((prev) => ({ ...prev, confirm: !prev.confirm }))}
+                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      tabIndex={-1}
+                      aria-label={showPwd.confirm ? 'Hide confirm password' : 'Show confirm password'}
+                    >
+                      {showPwd.confirm ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {passwordsMismatch && (
+                    <p className="text-xs font-medium text-danger">Passwords do not match.</p>
+                  )}
+                </div>
+
+                <Button
+                  type="submit"
+                  variant="teal"
+                  className="mt-1 w-fit cursor-pointer"
+                  disabled={isPasswordFormInvalid}
+                >
+                  Update password
+                </Button>
+              </form>
             </CardContent>
           </Card>
         </div>
