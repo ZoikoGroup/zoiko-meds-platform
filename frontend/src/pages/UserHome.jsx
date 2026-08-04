@@ -702,13 +702,13 @@ export default function UserHome() {
         <Card className="p-6 md:col-span-6">
           <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
             <Webhook className="size-4 text-teal" />
-            How availability works
+            {t('howAvailabilityWorksCaps', 'HOW AVAILABILITY WORKS')}
           </h3>
           <ul className="mt-4 flex flex-col gap-3">
             {[
-              { icon: Network, t: 'MediBase™ identifies the medicine', d: 'Brands, generics, and strengths map to one governed identity.' },
-              { icon: Webhook, t: 'ZoikoAvail™ scores confidence', d: 'Verified-pharmacy signals are weighted by freshness and reliability.' },
-              { icon: ShieldCheck, t: 'You confirm before visiting', d: 'We show confidence, never exact stock. Always confirm with the pharmacy.' },
+              { icon: Network, t: t('medibaseIdentifies', 'MediBase™ identifies the medicine'), d: t('medibaseDesc', 'Brands, generics, and strengths map to one governed identity.') },
+              { icon: Webhook, t: t('zoikoAvailScores', 'ZoikoAvail™ scores confidence'), d: t('zoikoAvailDescSummary', 'Verified-pharmacy signals are weighted by freshness and reliability.') },
+              { icon: ShieldCheck, t: t('confirmBeforeVisiting', 'You confirm before visiting'), d: t('confirmBeforeVisitingDesc', 'We show confidence, never exact stock. Always confirm with the pharmacy.') },
             ].map((row) => {
               const Icon = row.icon
               return (
@@ -735,7 +735,7 @@ export default function UserHome() {
       <section className="flex flex-col gap-4">
         <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
           <MapPin className="size-4 text-teal" />
-          Nearby verified pharmacies
+          {t('nearbyVerifiedPharmacies', 'NEARBY VERIFIED PHARMACIES')}
         </h3>
         <div className="grid grid-cols-1 gap-5 md:grid-cols-12">
           <Card className="overflow-hidden p-0 md:col-span-8">
@@ -769,8 +769,8 @@ export default function UserHome() {
                 })}
               </svg>
               <div className="absolute bottom-3 left-3 flex items-center gap-3 rounded-xl border border-border bg-card/90 px-3 py-2 text-xs backdrop-blur-sm">
-                <span className="font-semibold text-muted-foreground">Confidence:</span>
-                {[['High', 'var(--success)'], ['Moderate', 'var(--info)'], ['Low', 'var(--warning)']].map(([l, c]) => (
+                <span className="font-semibold text-muted-foreground">{t('confidenceLabel', 'Confidence:')}</span>
+                {[[t('confidenceHigh', 'High'), 'var(--success)'], [t('confidenceModerate', 'Moderate'), 'var(--info)'], [t('confidenceLow', 'Low'), 'var(--warning)']].map(([l, c]) => (
                   <span key={l} className="flex items-center gap-1.5 text-muted-foreground">
                     <span className="size-2.5 rounded-full" style={{ background: c }} />{l}
                   </span>
@@ -792,21 +792,21 @@ export default function UserHome() {
                       <span className="text-xs text-muted-foreground">{active.address}</span>
                     </div>
                     <Badge variant={active.open ? 'success' : 'secondary'} size="sm">
-                      {active.open ? 'Open' : 'Closed'}
+                      {active.open ? t('openNow', 'Open') : t('closed', 'Closed')}
                     </Badge>
                   </div>
 
                   <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-muted/40 p-3.5 text-sm">
                     <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Availability</span>
+                      <span className="text-muted-foreground">{t('availability', 'Availability')}</span>
                       <ConfidenceBadge level={active.confidence} size="sm" />
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Distance</span>
+                      <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                       <span className="font-semibold text-foreground tabular">{active.distance} km · {active.eta}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Last confirmed</span>
+                      <span className="text-muted-foreground">{t('lastConfirmed', 'Last confirmed')}</span>
                       <span className="font-semibold text-foreground">{active.updated}</span>
                     </div>
                   </div>
@@ -835,7 +835,7 @@ export default function UserHome() {
       <section className="flex flex-col gap-4">
         <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
           <Pill className="size-4 text-teal" />
-          Featured medicines
+          {t('featuredMedicines', 'FEATURED MEDICINES')}
         </h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {featured.map((med) => (
@@ -856,9 +856,9 @@ export default function UserHome() {
                   <span className="font-semibold text-foreground tabular">{med.distance == null ? '—' : `${med.distance} km`}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1"><Clock className="size-3.5" />Confirmed {med.updated}</span>
+                  <span className="flex items-center gap-1"><Clock className="size-3.5" />{t('confirmed', 'Confirmed')} {med.updated}</span>
                   <button onClick={() => goSearch(med.name)} className="flex items-center gap-1 font-semibold text-primary hover:underline">
-                    Check availability <ArrowRight className="size-3.5" />
+                    {t('checkAvailability', 'Check availability')} <ArrowRight className="size-3.5" />
                   </button>
                 </div>
               </CardContent>
@@ -872,7 +872,7 @@ export default function UserHome() {
         <section className="flex flex-col gap-4">
           <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
             <Clock className="size-4 text-muted-foreground" />
-            Recent searches
+            {t('recentSearchesCaps', 'RECENT SEARCHES')}
           </h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {recent.map((r) => (

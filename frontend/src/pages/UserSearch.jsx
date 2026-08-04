@@ -227,7 +227,7 @@ export default function UserSearch() {
         <div className="inline-flex rounded-xl border border-border bg-muted/50 p-1">
           {[
             { key: 'name', label: t('searchByName', 'Search by name'), icon: Search },
-            { key: 'scan', label: 'Scan prescription', icon: ScanLine },
+            { key: 'scan', label: t('scanPrescription', 'Scan prescription'), icon: ScanLine },
           ].map((tTab) => {
             const Icon = tTab.icon
             const activeTab = mode === tTab.key
@@ -443,7 +443,7 @@ export default function UserSearch() {
                 </div>
                 {result.identity.rx != null && (
                   <Badge variant={result.identity.rx ? 'warning' : 'secondary'} size="sm">
-                    {result.identity.rx ? 'Prescription' : 'OTC'}
+                    {result.identity.rx ? t('prescription', 'Prescription') : t('otc', 'OTC')}
                   </Badge>
                 )}
               </div>
@@ -463,11 +463,11 @@ export default function UserSearch() {
               <div className="flex items-center justify-between gap-2">
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ShieldCheck className="size-3.5 shrink-0 text-primary" />
-                  Governed medicine identity — MediBase™. Availability below is a confidence signal, not exact stock.
+                  {t('governedIdentityNotice', 'Governed medicine identity — MediBase™. Availability below is a confidence signal, not exact stock.')}
                 </p>
                 {result.identity.id && (
                   <Link to={`/medicine/${result.identity.id}`} className="shrink-0 text-xs font-semibold text-primary hover:underline">
-                    View details
+                    {t('viewDetails', 'View details')}
                   </Link>
                 )}
               </div>
@@ -481,7 +481,7 @@ export default function UserSearch() {
                 {result?.medicine ? `${result.medicine} — ${t('availabilityNearYou', 'Availability near you')}` : t('availabilityNearYou', 'Availability near you')}
               </h3>
               {hasSearched && result && items.length > 0 && (
-                <Badge size="sm">{result.availableCount} of {result.total} pharmacies</Badge>
+                <Badge size="sm">{result.availableCount} {t('of', 'of')} {result.total} {t('pharmacies', 'pharmacies')}</Badge>
               )}
               <Link to="/availability" className="ml-auto flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
                 <Info className="size-3.5" />
@@ -566,13 +566,13 @@ export default function UserSearch() {
                           {band !== 'high' && (
                             <p className="flex items-center gap-1.5 rounded-lg bg-warning/10 px-2.5 py-1.5 text-[11px] font-medium text-warning">
                               <AlertTriangle className="size-3" />
-                              Requires confirmation — call before visiting.
+                              {t('requiresConfirmation', 'Requires confirmation — call before visiting.')}
                             </p>
                           )}
 
                           <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-3 text-xs">
                             <div className="flex items-center justify-between">
-                              <span className="text-muted-foreground">Distance</span>
+                              <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                               <span className="flex items-center gap-1.5 font-semibold text-foreground tabular">
                                 {p.is24x7 && (
                                   <Badge variant="success" size="sm" className="gap-1">
@@ -586,7 +586,7 @@ export default function UserSearch() {
                             <div className="flex items-center justify-between">
                               <span className="flex items-center gap-1 text-muted-foreground">
                                 <Clock className="size-3" />
-                                Signal updated
+                                {t('signalUpdated', 'Signal updated')}
                               </span>
                               <span className="font-medium text-foreground">{p.updated}</span>
                             </div>
@@ -596,13 +596,13 @@ export default function UserSearch() {
                             <Button variant="outline" size="sm" className="flex-1" asChild>
                               <a href={telHref(p.phone)}>
                                 <Phone className="size-3.5" />
-                                Call
+                                {t('call', 'Call')}
                               </a>
                             </Button>
                             <Button size="sm" className="flex-1" asChild>
                               <a href={mapsHref(`${p.name}, ${p.address}`)} target="_blank" rel="noopener noreferrer">
                                 <Navigation className="size-3.5" />
-                                Directions
+                                {t('directions', 'Directions')}
                               </a>
                             </Button>
                           </div>
@@ -627,7 +627,7 @@ export default function UserSearch() {
             <section className="flex flex-col gap-4">
               <div className="flex items-center gap-2.5">
                 <Globe className="size-4 text-primary" />
-                <h3 className="text-base font-bold text-foreground">More pharmacies near you (from the web)</h3>
+                <h3 className="text-base font-bold text-foreground">{t('morePharmaciesWeb', 'More pharmacies near you (from the web)')}</h3>
                 {result.internet.pharmacies.length > 0 && (
                   <Badge size="sm">{result.internet.pharmacies.length}</Badge>
                 )}
@@ -660,14 +660,14 @@ export default function UserSearch() {
                             </div>
                             {p.openNow != null && (
                               <StatusBadge tone={p.openNow ? 'good' : 'neutral'} size="sm">
-                                {p.openNow ? 'Open now' : 'Closed'}
+                                {p.openNow ? t('openNow', 'Open now') : t('closed', 'Closed')}
                               </StatusBadge>
                             )}
                           </div>
 
                           <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-3 text-xs">
                             <div className="flex items-center justify-between">
-                              <span className="text-muted-foreground">Distance</span>
+                              <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                               <span className="font-semibold text-foreground tabular">
                                 {p.distance == null ? '—' : `${(p.distance / KM_PER_MILE).toFixed(1)} mi`}
                               </span>
@@ -676,7 +676,7 @@ export default function UserSearch() {
                               <div className="flex items-center justify-between">
                                 <span className="flex items-center gap-1 text-muted-foreground">
                                   <Star className="size-3" />
-                                  Rating
+                                  {t('rating', 'Rating')}
                                 </span>
                                 <span className="font-medium text-foreground">
                                   {p.rating}
@@ -691,7 +691,7 @@ export default function UserSearch() {
                               <Button variant="outline" size="sm" className="flex-1" asChild>
                                 <a href={telHref(p.phone)}>
                                   <Phone className="size-3.5" />
-                                  Call
+                                  {t('call', 'Call')}
                                 </a>
                               </Button>
                             )}
@@ -702,7 +702,7 @@ export default function UserSearch() {
                                 rel="noopener noreferrer"
                               >
                                 <Navigation className="size-3.5" />
-                                Directions
+                                {t('directions', 'Directions')}
                               </a>
                             </Button>
                           </div>
@@ -713,7 +713,7 @@ export default function UserSearch() {
 
                   <p className="flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
                     <Info className="mt-0.5 size-3.5 shrink-0" />
-                    Found on the web by location and outside the ZoikoMeds verified network. Stock isn’t confirmed — please call ahead.
+                    {t('webPharmaciesDisclaimer', "Found on the web by location and outside the ZoikoMeds verified network. Stock isn't confirmed — please call ahead.")}
                   </p>
                 </>
               )}

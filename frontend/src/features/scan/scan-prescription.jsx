@@ -14,15 +14,8 @@ const MAX_BYTES = 10 * 1024 * 1024
 const ACCEPT = '.jpg,.jpeg,.png,.pdf,.heic,.heif,image/jpeg,image/png,application/pdf,image/heic,image/heif'
 const DISTANCES = [5, 10, 25, 50]
 
-// Simulated on-device extraction. No image ever leaves the browser — this
-// mirrors the app's other client-side mocks (e.g. voice search) until a real
-// OCR/extraction service is wired in.
-const SAMPLE_EXTRACTION = [
-  { name: 'Dolo 650', detail: 'Paracetamol · 650 mg' },
-  { name: 'Metformin 500', detail: 'Metformin · 500 mg' },
-  { name: 'Pantoprazole 40', detail: 'Pantoprazole · 40 mg' },
-  { name: 'Cetirizine', detail: 'Cetirizine · 10 mg' },
-]
+import { extractPrescriptionMeds } from './extract-prescription'
+import { useLanguage } from '@/providers/language-provider'
 
 function isAcceptedFile(file) {
   if (file.size > MAX_BYTES) return { ok: false, reason: 'File is larger than 10 MB.' }
@@ -33,6 +26,7 @@ function isAcceptedFile(file) {
 }
 
 export function ScanPrescription({ onSearchMedicine, flash }) {
+  const { t } = useLanguage()
   const fileInput = useRef(null)
   const cameraInput = useRef(null)
   const galleryInput = useRef(null)
@@ -58,7 +52,7 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
   const [distance, setDistance] = useState(25)
   const [locating, setLocating] = useState(false)
 
-  const handleFiles = (files) => {
+  const handleFiles = async (files) => {
     const file = files?.[0]
     if (!file) return
     const check = isAcceptedFile(file)
@@ -68,11 +62,15 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
     }
     setFileName(file.name)
     setStatus('extracting')
-    // Simulated extraction — the image is read only in-memory and discarded.
-    setTimeout(() => {
-      setExtracted(SAMPLE_EXTRACTION)
+    try {
+      const meds = await extractPrescriptionMeds(file)
+      setExtracted(meds)
       setStatus('done')
-    }, 1900)
+    } catch (err) {
+      console.error('Prescription OCR/extraction failed:', err)
+      flash?.('Failed to extract medicines from prescription. Please try again.')
+      setStatus('idle')
+    }
   }
 
   const onDrop = (e) => {
@@ -131,7 +129,7 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
                   </span>
                   <div className="flex flex-col">
                     <span className="text-sm font-bold text-foreground">
-                      {extracted.length} medicines found
+                      {extracted.length} {t('medicinesFound', 'medicines found')}
                     </span>
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <FileText className="size-3" />
@@ -141,12 +139,12 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
                 </div>
                 <Button variant="ghost" size="sm" onClick={reset}>
                   <RotateCcw className="size-3.5" />
-                  Scan another
+                  {t('scanAnother', 'Scan another')}
                 </Button>
               </div>
 
               <p className="text-sm text-muted-foreground">
-                Choose which medicines to search for availability near you.
+                {t('chooseMedicinesToSearch', 'Choose which medicines to search for availability near you.')}
               </p>
 
               <ul className="flex flex-col gap-2">
@@ -168,7 +166,7 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
                       </span>
                     </span>
                     <Button size="sm" onClick={() => onSearchMedicine(m.name)}>
-                      Search
+                      {t('search', 'Search')}
                       <ArrowRight className="size-3.5" />
                     </Button>
                   </motion.li>
@@ -176,8 +174,7 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
               </ul>
 
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Extracted names are read from your image only. Confirm the exact medicine and
-                strength with your prescription — ZoikoMeds does not validate prescriptions.
+                {t('extractedNamesNotice', 'Extracted names are read from your image only. Confirm the exact medicine and strength with your prescription — ZoikoMeds does not validate prescriptions.')}
               </p>
             </Card>
           </motion.div>
@@ -185,10 +182,9 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
           <motion.div key="extracting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <Card className="flex flex-col items-center justify-center gap-3 rounded-2xl border-dashed border-teal/40 bg-teal/[0.04] px-6 py-16 text-center">
               <Loader2 className="size-8 animate-spin text-teal" />
-              <p className="text-base font-semibold text-foreground">Reading your prescription…</p>
+              <p className="text-base font-semibold text-foreground">{t('readingPrescription', 'Reading your prescription…')}</p>
               <p className="max-w-sm text-sm text-muted-foreground">
-                Extracting medicine names from <span className="font-medium">{fileName}</span>. This
-                happens on your device — the image is not uploaded.
+                {t('extractingNamesFrom', 'Extracting medicine names from')} <span className="font-medium">{fileName}</span>. {t('deviceOnlyNotice', 'This happens on your device — the image is not uploaded.')}
               </p>
             </Card>
           </motion.div>
@@ -212,10 +208,9 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
                 <UploadCloud className="size-6" />
               </span>
               <div className="flex flex-col gap-1">
-                <p className="text-lg font-bold text-foreground">Drop your prescription here</p>
+                <p className="text-lg font-bold text-foreground">{t('dropPrescriptionHere', 'Drop your prescription here')}</p>
                 <p className="max-w-md text-sm text-muted-foreground">
-                  We&apos;ll extract the medicine names — you choose which ones to search. Your image
-                  is never stored or shared.
+                  {t('extractMedicineDesc', "We'll extract the medicine names — you choose which ones to search. Your image is never stored or shared.")}
                 </p>
               </div>
               <Button
@@ -224,21 +219,21 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
                 onClick={(e) => { e.stopPropagation(); fileInput.current?.click() }}
               >
                 <UploadCloud className="size-4" />
-                Browse file
+                {t('browseFile', 'Browse file')}
               </Button>
-              <p className="text-xs text-muted-foreground">JPG, PNG, PDF, HEIC — max 10 MB</p>
+              <p className="text-xs text-muted-foreground">{t('maxFileNotice', 'JPG, PNG, PDF, HEIC — max 10 MB')}</p>
             </div>
 
             {/* or — camera / gallery */}
-            <div className="my-4 text-center text-sm text-muted-foreground">or</div>
+            <div className="my-4 text-center text-sm text-muted-foreground">{t('or', 'or')}</div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button variant="outline" size="lg" className="h-12" onClick={() => cameraInput.current?.click()}>
                 <Camera className="size-4" />
-                Take a photo
+                {t('takePhoto', 'Take a photo')}
               </Button>
               <Button variant="outline" size="lg" className="h-12" onClick={() => galleryInput.current?.click()}>
                 <ImageIcon className="size-4" />
-                From gallery
+                {t('fromGallery', 'From gallery')}
               </Button>
             </div>
           </motion.div>
@@ -254,18 +249,14 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
       <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning/[0.08] p-3.5">
         <ShieldCheck className="mt-0.5 size-5 shrink-0 text-warning" />
         <p className="text-sm leading-relaxed text-muted-foreground">
-          <span className="font-semibold text-foreground">Privacy notice:</span> Your prescription
-          image is used only to extract medicine names for this search. It is{' '}
-          <span className="font-semibold text-foreground">never stored, shared, or used to identify you</span>.
-          ZoikoMeds does not process, validate, or fulfil prescriptions.{' '}
-          <span className="font-semibold text-foreground">No medical advice is provided.</span>
+          {t('prescriptionPrivacyNotice', 'Privacy notice: Your prescription image is used only to extract medicine names for this search. It is never stored, shared, or used to identify you. ZoikoMeds does not process, validate, or fulfil prescriptions. No medical advice is provided.')}
         </p>
       </div>
 
       {/* Location + distance */}
       <div className="flex flex-col gap-2">
         <label htmlFor="scan-location" className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-          Your location (for nearby search)
+          {t('yourLocationForNearbySearch', 'Your location (for nearby search)')}
         </label>
         <div className="relative">
           <MapPin className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -273,7 +264,7 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
             id="scan-location"
             value={location}
             onChange={(e) => persistLocation(e.target.value)}
-            placeholder="City, ZIP code, postcode, or current location"
+            placeholder={t('searchAreaPlaceholder', 'City, ZIP code, or postcode')}
             className="h-11 rounded-xl pl-10"
           />
         </div>
@@ -284,12 +275,12 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
           className="flex w-fit items-center gap-1.5 text-sm font-semibold text-teal transition-colors hover:text-teal/80 disabled:opacity-60"
         >
           {locating ? <Loader2 className="size-4 animate-spin" /> : <LocateFixed className="size-4" />}
-          Use my current location
+          {t('useMyCurrentLocation', 'Use my current location')}
         </button>
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="text-sm font-medium text-foreground">Distance from me:</span>
+        <span className="text-sm font-medium text-foreground">{t('distanceFromMe', 'Distance from me:')}</span>
         <select
           value={distance}
           onChange={(e) => setDistance(Number(e.target.value))}
@@ -297,7 +288,7 @@ export function ScanPrescription({ onSearchMedicine, flash }) {
           className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {DISTANCES.map((d) => (
-            <option key={d} value={d}>{d} miles</option>
+            <option key={d} value={d}>{d} {t('miles', 'miles')}</option>
           ))}
         </select>
       </div>

@@ -172,7 +172,7 @@ export default function UserProfile() {
           </div>
           <Badge variant="teal" className="gap-1.5 sm:ml-auto">
             <ShieldCheck className="size-3.5" />
-            Verified account
+            {t('verifiedAccount', 'Verified account')}
           </Badge>
         </div>
       </Card>
@@ -207,11 +207,11 @@ export default function UserProfile() {
                     <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3.5 py-2.5 text-sm">
                       <span className="font-medium text-foreground">{user?.email || '—'}</span>
                       <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Read-only
+                        {t('readOnly', 'READ-ONLY')}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Email is linked to your login account and cannot be changed.
+                      {t('emailReadOnlyNotice', 'Email is linked to your login account and cannot be changed.')}
                     </p>
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -248,8 +248,7 @@ export default function UserProfile() {
           <div className="flex items-start gap-3 rounded-2xl border border-teal/15 bg-teal/5 p-4">
             <ShieldCheck className="mt-0.5 size-4.5 shrink-0 text-teal" />
             <p className="text-xs leading-relaxed text-muted-foreground">
-              ZoikoMeds does not collect prescriptions or health records. We store
-              only the contact details you provide to power your alerts.
+              {t('profilePrivacyNotice', 'ZoikoMeds does not collect prescriptions or health records. We store only the contact details you provide to power your alerts.')}
             </p>
           </div>
         </div>
@@ -277,7 +276,7 @@ export default function UserProfile() {
                     <Input
                       id="current"
                       type={showPwd.current ? 'text' : 'password'}
-                      placeholder="Enter password"
+                      placeholder={t('enterPassword', 'Enter password')}
                       value={pwd.current}
                       onChange={(e) => setPwd({ ...pwd, current: e.target.value })}
                       className="pr-10"
@@ -301,7 +300,7 @@ export default function UserProfile() {
                     <Input
                       id="next"
                       type={showPwd.next ? 'text' : 'password'}
-                      placeholder="Enter password"
+                      placeholder={t('enterPassword', 'Enter password')}
                       value={pwd.next}
                       onChange={(e) => setPwd({ ...pwd, next: e.target.value })}
                       className={`pr-10 ${isPasswordTooShort ? 'border-danger focus-visible:ring-danger/30' : ''}`}
@@ -318,7 +317,7 @@ export default function UserProfile() {
                     </button>
                   </div>
                   {isPasswordTooShort && (
-                    <p className="text-xs font-medium text-danger">Password must be at least 8 characters long.</p>
+                    <p className="text-xs font-medium text-danger">{t('passwordMinLength', 'Password must be at least 8 characters long.')}</p>
                   )}
                 </div>
 
@@ -328,7 +327,7 @@ export default function UserProfile() {
                     <Input
                       id="confirm"
                       type={showPwd.confirm ? 'text' : 'password'}
-                      placeholder="Enter password"
+                      placeholder={t('enterPassword', 'Enter password')}
                       value={pwd.confirm}
                       onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })}
                       className={`pr-10 ${passwordsMismatch ? 'border-danger focus-visible:ring-danger/30' : ''}`}
@@ -345,7 +344,7 @@ export default function UserProfile() {
                     </button>
                   </div>
                   {passwordsMismatch && (
-                    <p className="text-xs font-medium text-danger">Passwords do not match.</p>
+                    <p className="text-xs font-medium text-danger">{t('passwordsDoNotMatch', 'Passwords do not match.')}</p>
                   )}
                 </div>
 
@@ -355,7 +354,7 @@ export default function UserProfile() {
                   className="mt-1 w-fit cursor-pointer"
                   disabled={isPasswordFormInvalid}
                 >
-                  Update password
+                  {t('updatePasswordBtn', 'Update password')}
                 </Button>
               </form>
             </CardContent>

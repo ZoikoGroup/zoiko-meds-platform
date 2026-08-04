@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { NOTIF_META } from '@/features/signal/signal-meta'
 import { getSignalDigest } from '@/services/signal-api'
+import { useLanguage } from '@/providers/language-provider'
 
 // Compact ZoikoSignal summary for the patient home page.
 export function SignalWidget() {
+  const { t } = useLanguage()
   const [digest, setDigest] = useState(null)
 
   useEffect(() => {
@@ -32,7 +34,7 @@ export function SignalWidget() {
         </h3>
         {unread > 0 && (
           <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
-            {unread} new
+            {unread} {t('new', 'new')}
           </span>
         )}
       </div>
@@ -40,7 +42,7 @@ export function SignalWidget() {
       {alerts.length === 0 ? (
         <div className="flex flex-col items-center gap-1 py-4 text-center">
           <BellOff className="size-5 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">No new signals for your saved medicines.</p>
+          <p className="text-xs text-muted-foreground">{t('noNewSignals', 'No new signals for your saved medicines.')}</p>
         </div>
       ) : (
         <ul className="flex flex-col gap-2.5">
@@ -52,7 +54,11 @@ export function SignalWidget() {
                 <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                   <span className="font-semibold">{a.medicine}</span>{' '}
                   <span className="text-muted-foreground">
-                    {a.type === 'back-in-stock' ? 'is back in stock' : a.type === 'limited' ? 'has limited availability' : 'is running low'}
+                    {a.type === 'back-in-stock'
+                      ? t('isBackInStock', 'is back in stock')
+                      : a.type === 'limited'
+                      ? t('hasLimitedAvailability', 'has limited availability')
+                      : t('isRunningLow', 'is running low')}
                   </span>
                 </span>
               </li>
@@ -63,7 +69,7 @@ export function SignalWidget() {
 
       <Button asChild variant="ghost" size="sm" className="w-fit px-2 text-primary hover:bg-primary/5">
         <Link to="/signal">
-          View all
+          {t('viewAll', 'View all')}
           <ArrowRight className="size-3.5" />
         </Link>
       </Button>
