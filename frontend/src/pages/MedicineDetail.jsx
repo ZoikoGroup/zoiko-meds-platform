@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { AVAILABILITY, CONFIRM_NOTE, SCOPE_NOTE, mapsHref, byConfidence } from '@/lib/availability'
 import { getMedicineById, getMedicineAvailability, matchMedicines } from '@/services/medicine-api'
 import { useSavedMedicines, useSaveMedicine, useUnsaveMedicine } from '@/hooks/use-saved-medicines'
+import { useLanguage } from '@/providers/language-provider'
 
 // Governance-approved FAQ (no clinical advice, dosing, or substitution guidance).
 const FAQS = [
@@ -58,6 +59,7 @@ function AlternativeCard({ med }) {
 }
 
 export default function MedicineDetail() {
+  const { t } = useLanguage()
   const { id } = useParams()
   const [flashMsg, flash] = useFlash()
   const [medicine, setMedicine] = useState(null)
@@ -140,11 +142,11 @@ export default function MedicineDetail() {
         <div className="flex size-14 items-center justify-center rounded-2xl bg-warning/10 text-warning">
           <AlertTriangle className="size-7" />
         </div>
-        <h1 className="text-xl font-bold text-foreground">Medicine not found</h1>
+        <h1 className="text-xl font-bold text-foreground">{t('medicineNotFound', 'Medicine not found')}</h1>
         <p className="max-w-md text-sm text-muted-foreground">
           We couldn’t find this medicine in MediBase™. It may have been suppressed or the link is out of date.
         </p>
-        <Button asChild><Link to="/search">Back to search</Link></Button>
+        <Button asChild><Link to="/search">{t('backToSearch', 'Back to search')}</Link></Button>
       </div>
     )
   }
@@ -173,12 +175,12 @@ export default function MedicineDetail() {
         eyebrow="MediBase™ identity"
         title={medicine.name}
         subtitle={medicine.description || `${medicine.generic || medicine.name} — governed medicine identity.`}
-        breadcrumbs={[{ label: 'Search', to: '/search' }, { label: medicine.name }]}
+        breadcrumbs={[{ label: t('search', 'Search'), to: '/search' }, { label: medicine.name }]}
         meta={
           <>
-            <Badge variant={medicine.rx ? 'warning' : 'secondary'} size="sm">{medicine.rx ? 'Prescription' : 'OTC'}</Badge>
+            <Badge variant={medicine.rx ? 'warning' : 'secondary'} size="sm">{medicine.rx ? t('prescription', 'Prescription') : t('otc', 'OTC')}</Badge>
             {bestBand && <ConfidenceBadge level={bestBand} size="sm" />}
-            {medicine.isGeneric && <Badge variant="outline" size="sm">Generic</Badge>}
+            {medicine.isGeneric && <Badge variant="outline" size="sm">{t('generic', 'Generic')}</Badge>}
           </>
         }
         actions={
@@ -197,12 +199,12 @@ export default function MedicineDetail() {
               ) : (
                 <Heart className={cn('size-4 transition-transform active:scale-125', isSaved ? 'fill-red-500 text-red-500' : '')} />
               )}
-              {isSaved ? 'Saved medicine' : 'Save medicine'}
+              {isSaved ? t('savedMedicine', 'Saved medicine') : t('saveMedicine', 'Save medicine')}
             </Button>
             <Button asChild>
               <Link to={`/search?q=${encodeURIComponent(medicine.name)}`}>
                 <MapPin className="size-4" />
-                Find near me
+                {t('findNearMe', 'Find near me')}
               </Link>
             </Button>
           </>
@@ -214,23 +216,23 @@ export default function MedicineDetail() {
         <Card className="flex flex-col gap-1 p-6 lg:col-span-2">
           <h2 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
             <Info className="size-4 text-primary" />
-            Medicine information
+            {t('medicineInformation', 'Medicine information')}
           </h2>
-          <InfoRow label="Brand name" value={medicine.name} />
-          <InfoRow label="Generic name" value={medicine.generic} />
-          <InfoRow label="Strength" value={medicine.strength} />
-          <InfoRow label="Dosage form" value={medicine.form} />
-          <InfoRow label="Route" value={medicine.route} />
-          <InfoRow label="Manufacturer" value={medicine.manufacturer} />
-          <InfoRow label="Also sold as" value={medicine.brands?.length ? medicine.brands.join(', ') : null} />
-          <InfoRow label="Category" value={medicine.category?.replace(/_/g, ' ').toLowerCase()} />
+          <InfoRow label={t('brandName', 'Brand name')} value={medicine.name} />
+          <InfoRow label={t('genericName', 'Generic name')} value={medicine.generic} />
+          <InfoRow label={t('strength', 'Strength')} value={medicine.strength} />
+          <InfoRow label={t('dosageForm', 'Dosage form')} value={medicine.form} />
+          <InfoRow label={t('route', 'Route')} value={medicine.route} />
+          <InfoRow label={t('manufacturer', 'Manufacturer')} value={medicine.manufacturer} />
+          <InfoRow label={t('alsoSoldAs', 'Also sold as')} value={medicine.brands?.length ? medicine.brands.join(', ') : null} />
+          <InfoRow label={t('category', 'Category')} value={medicine.category?.replace(/_/g, ' ').toLowerCase()} />
         </Card>
 
         {/* Availability summary (historical timeline needs backend snapshots) */}
         <Card className="flex flex-col gap-3 p-6">
           <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
             <LineChart className="size-4 text-primary" />
-            Availability now
+            {t('availabilityNow', 'Availability now')}
           </h2>
           {bestBand ? (
             <>
@@ -257,7 +259,7 @@ export default function MedicineDetail() {
       <section className="flex flex-col gap-4">
         <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
           <ShieldCheck className="size-5 text-primary" />
-          Available pharmacies
+          {t('availablePharmacies', 'Available pharmacies')}
           {sortedPharmacies.length > 0 && <Badge size="sm">{sortedPharmacies.length}</Badge>}
         </h2>
         {sortedPharmacies.length === 0 ? (
@@ -280,12 +282,12 @@ export default function MedicineDetail() {
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <ConfidenceBadge level={p.confidence} size="sm" />
-                    <span className="text-[11px] text-muted-foreground">Updated {p.updated}</span>
+                    <span className="text-[11px] text-muted-foreground">{t('signalUpdated', 'Updated')} {p.updated}</span>
                   </div>
                 </div>
                 {p.confidence !== 'high' && (
                   <p className="rounded-lg bg-warning/10 px-2.5 py-1.5 text-[11px] font-medium text-warning">
-                    Requires confirmation — call before visiting.
+                    {t('requiresConfirmation', 'Requires confirmation — call before visiting.')}
                   </p>
                 )}
                 <Button variant="outline" size="sm" className="w-full" asChild>
@@ -295,7 +297,7 @@ export default function MedicineDetail() {
                     rel="noopener noreferrer"
                   >
                     <Navigation className="size-3.5" />
-                    Directions
+                    {t('directions', 'Directions')}
                   </a>
                 </Button>
               </Card>
@@ -309,13 +311,13 @@ export default function MedicineDetail() {
         <div className="grid gap-6 md:grid-cols-2">
           {brandAlts.length > 0 && (
             <section className="flex flex-col gap-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Brand alternatives</h2>
+              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">{t('brandAlternatives', 'Brand alternatives')}</h2>
               <div className="flex flex-col gap-2.5">{brandAlts.slice(0, 6).map((m) => <AlternativeCard key={m.id} med={m} />)}</div>
             </section>
           )}
           {genericAlts.length > 0 && (
             <section className="flex flex-col gap-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Generic alternatives</h2>
+              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">{t('genericAlternatives', 'Generic alternatives')}</h2>
               <div className="flex flex-col gap-2.5">{genericAlts.slice(0, 6).map((m) => <AlternativeCard key={m.id} med={m} />)}</div>
             </section>
           )}
@@ -324,7 +326,7 @@ export default function MedicineDetail() {
 
       {/* FAQ */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-base font-bold text-foreground">Frequently asked questions</h2>
+        <h2 className="text-base font-bold text-foreground">{t('frequentlyAskedQuestions', 'Frequently asked questions')}</h2>
         <div className="flex flex-col gap-2.5">
           {FAQS.map((f) => (
             <Card key={f.q} className="flex flex-col gap-1.5 p-5">

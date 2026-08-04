@@ -63,7 +63,7 @@ export default function UserSettings() {
                 aria-label="Interface language"
                 className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="en">English (India)</option>
+                <option value="en">English</option>
                 <option value="hi">हिन्दी (Hindi)</option>
                 <option value="te">తెలుగు (Telugu)</option>
                 <option value="es">Español (Spanish)</option>
