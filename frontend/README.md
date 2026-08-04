@@ -121,6 +121,25 @@ src/
 
 ---
 
+## Deployment (Vercel) — how the API is reached
+
+`VITE_API_BASE_URL` is set to the **relative** path `/api` by
+[`vercel.json`](../vercel.json), which also rewrites `/api/:path*` to the
+backend. Two reasons it is relative rather than the backend's absolute URL:
+
+- **No CORS.** The rewrite is a server-side proxy, so browser requests stay
+  same-origin and the backend's `CORS_ORIGIN` does not need to list this host.
+- **OAuth works.** `oauthUrl()` builds a full-page navigation to
+  `/api/auth/<provider>`; the proxy forwards it and the provider's redirect
+  comes back through the backend's own callback URL.
+
+Leaving `VITE_API_BASE_URL` unset would fall back to `/api` anyway, but the
+build then logs an error and depends on the rewrite existing — set it explicitly
+so the intent is visible. To point a deployment at a different backend, change
+the rewrite destination in `vercel.json`.
+
+---
+
 ## Notes
 
 - The project is authored in **JSX/JavaScript** with a `jsconfig.json` providing
