@@ -354,8 +354,13 @@ function cleanAndExtractLines(rawText) {
  * Clean a candidate line into a normalized medicine name & dosage detail
  */
 function parseMedicineLine(line) {
-  let cleaned = line
-    .replace(/[^\x00-\x7F]/g, '') // remove non-ASCII characters
+  // remove non-ASCII characters without triggering no-control-regex
+  const removeNonAscii = (s) =>
+    Array.from(s || '')
+      .filter((ch) => ch.charCodeAt(0) <= 0x7f)
+      .join('')
+
+  let cleaned = removeNonAscii(line)
     .replace(NON_MEDICINE_RE, '')
     .trim()
 
