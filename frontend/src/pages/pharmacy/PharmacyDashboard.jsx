@@ -32,8 +32,17 @@ export default function PharmacyDashboard() {
 
   useEffect(() => {
     let alive = true
-    getDashboard().then((d) => alive && setData(d)).catch(() => {})
-    return () => { alive = false }
+    const load = () => {
+      getDashboard().then((d) => alive && setData(d)).catch(() => {})
+    }
+    load()
+    window.addEventListener('pharmacy-inventory-updated', load)
+    window.addEventListener('focus', load)
+    return () => {
+      alive = false
+      window.removeEventListener('pharmacy-inventory-updated', load)
+      window.removeEventListener('focus', load)
+    }
   }, [])
 
   if (!data) {

@@ -5,12 +5,12 @@
   "framework": "vite",
   "build": {
     "env": {
-      "VITE_API_BASE_URL": "/api"
+      "VITE_API_BASE_URL": "/internal"
     }
   },
   "rewrites": [
     {
-      "source": "/api/:path*",
+      "source": "/internal/:path*",
       "destination": "https://get.zoikomeds.com/api/:path*"
     },
     {

@@ -223,6 +223,7 @@ export class PharmacyService {
       generic: s.medicine.genericName || '',
       strength: s.medicine.strength || '',
       dosageForm: s.medicine.dosageForm || 'Tablet',
+      dosageform: s.medicine.dosageForm || 'Tablet',
       status: CONFIDENCE_TO_STATUS[s.confidence] || 'out-of-stock',
       confidence: s.confidence.toLowerCase(),
       updated: this.timeAgo(s.computedAt),
@@ -548,7 +549,7 @@ export class PharmacyService {
           canonicalName: dto.name,
           genericName: dto.generic || null,
           strength: dto.strength || null,
-          dosageForm: dto.dosageForm || 'Tablet',
+          dosageForm: dto.dosageForm || dto.dosageform || 'Tablet',
         },
       });
     }
@@ -623,6 +624,7 @@ export class PharmacyService {
       generic: medicine.genericName || '',
       strength: medicine.strength || '',
       dosageForm: medicine.dosageForm || 'Tablet',
+      dosageform: medicine.dosageForm || 'Tablet',
       status,
       confidence: confidence.toLowerCase(),
       updated: 'just now',
@@ -759,7 +761,7 @@ export class PharmacyService {
       }
       const generic = row.generic || row.genericName || '';
       const strength = row.strength || '';
-      const dosageForm = row.dosageForm || row.form || 'Tablet';
+      const dosageForm = row.dosageform || row.dosageForm || row.form || 'Tablet';
       const statusRaw = (row.status || row.availability || 'available').toLowerCase();
       const confidence = STATUS_TO_CONFIDENCE[statusRaw] || AvailabilityConfidence.HIGH;
       const reportedInStock = statusRaw !== 'out-of-stock';

@@ -12,8 +12,10 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { validateLocationLive } from '@/lib/location-api'
 import { cn } from '@/lib/utils'
+import { useLanguage } from '@/providers/language-provider'
 
 export function LocationModal({ open, onOpenChange, currentLocation = '', onSave }) {
+  const { t } = useLanguage()
   const [inputVal, setInputVal] = useState(currentLocation)
   const [errorMsg, setErrorMsg] = useState('')
   const [isNetworkError, setIsNetworkError] = useState(false)
@@ -60,7 +62,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
 
       if (res.error) {
         setIsNetworkError(true)
-        setErrorMsg(res.message || 'Network issue reaching location service.')
+        setErrorMsg(res.message || t('networkErrorVerifyingLocation', 'Network error verifying location. Please retry.'))
         setSuggestions([])
       } else if (res.isValid && res.suggestions) {
         setSuggestions(res.suggestions)
@@ -70,7 +72,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
     }, 350)
 
     return () => clearTimeout(timer)
-  }, [inputVal])
+  }, [inputVal, t])
 
   const handleInputChange = (e) => {
     setInputVal(e.target.value)
@@ -87,7 +89,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
 
   const saveLocation = async (targetVal = inputVal) => {
     if (!targetVal || !targetVal.trim()) {
-      setErrorMsg('Please enter a city, area, or 6-digit PIN code.')
+      setErrorMsg(t('enterCityOrPinCode', 'Please enter a city, area, or 6-digit PIN code.'))
       return
     }
 
@@ -100,12 +102,12 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
 
     if (res.error) {
       setIsNetworkError(true)
-      setErrorMsg(res.message || 'Network error verifying location. Please retry.')
+      setErrorMsg(res.message || t('networkErrorVerifyingLocation', 'Network error verifying location. Please retry.'))
       return
     }
 
     if (!res.isValid) {
-      setErrorMsg(res.message || `No matching location found for "${targetVal}".`)
+      setErrorMsg(res.message || t('noMatchingLocationFound', 'No matching location found.'))
       return
     }
 
@@ -138,10 +140,10 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
             <MapPin className="size-6 text-teal" />
           </div>
           <DialogTitle className="text-lg font-bold text-foreground">
-            Set your delivery location
+            {t('setDeliveryLocationTitle', 'Set your delivery location')}
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
-            Enter a city, area, or 6-digit PIN code to check live medicine availability.
+            {t('deliveryLocationDesc', 'Enter a city, area, or 6-digit PIN code to check live medicine availability.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -154,7 +156,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
               value={inputVal}
               onChange={handleInputChange}
               onFocus={() => setShowDropdown(true)}
-              placeholder="e.g. Austin, TX, Nizampet, or 500043"
+              placeholder={t('deliveryLocationPlaceholder', 'e.g. Austin, TX, Nizampet, or 500043')}
               disabled={isSaving}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -188,7 +190,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
                   className="h-6 px-2 text-[11px] font-semibold text-red-500 hover:bg-red-500/20 cursor-pointer shrink-0 gap-1"
                 >
                   <RefreshCw className="size-3" />
-                  Retry
+                  {t('retry', 'Retry')}
                 </Button>
               )}
             </div>
@@ -198,7 +200,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
           {showDropdown && suggestions.length > 0 && (
             <div className="absolute top-12 left-0 right-0 z-50 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 shadow-2xl text-popover-foreground">
               <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground tracking-wider uppercase">
-                Live Geocoding Suggestions
+                {t('liveGeocodingSuggestions', 'Live Geocoding Suggestions')}
               </div>
               {suggestions.map((s) => (
                 <button
@@ -222,7 +224,7 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
             <div className="flex flex-col gap-1.5 mt-1">
               <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
                 <Sparkles className="size-3 text-amber-500" />
-                Recent locations:
+                {t('recentLocations', 'Recent locations:')}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {recentLocations.map((chip) => (
@@ -242,16 +244,16 @@ export function LocationModal({ open, onOpenChange, currentLocation = '', onSave
 
         <DialogFooter className="mt-4 flex gap-2 sm:justify-end">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl text-xs" disabled={isSaving}>
-            Cancel
+            {t('cancel', 'Cancel')}
           </Button>
           <Button variant="teal" onClick={() => saveLocation()} className="rounded-xl text-xs font-semibold" disabled={isSaving || isLoading}>
             {isSaving ? (
               <>
                 <Loader2 className="size-3.5 animate-spin mr-1.5" />
-                Verifying...
+                {t('verifying', 'Verifying...')}
               </>
             ) : (
-              'Save location'
+              t('saveLocation', 'Save location')
             )}
           </Button>
         </DialogFooter>

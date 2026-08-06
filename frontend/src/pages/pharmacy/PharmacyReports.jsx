@@ -54,9 +54,11 @@ export default function PharmacyReports() {
 
     const handleSync = () => loadReports()
     window.addEventListener('pharmacy-status-updated', handleSync)
+    window.addEventListener('pharmacy-inventory-updated', handleSync)
     window.addEventListener('focus', handleSync)
     return () => {
       window.removeEventListener('pharmacy-status-updated', handleSync)
+      window.removeEventListener('pharmacy-inventory-updated', handleSync)
       window.removeEventListener('focus', handleSync)
     }
   }, [loadReports])

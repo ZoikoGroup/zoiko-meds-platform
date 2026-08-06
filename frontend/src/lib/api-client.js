@@ -2,20 +2,12 @@
 // encoding, bearer-token auth, and normalizing Nest error responses.
 
 // Resolve the API base URL. Vite inlines env at build time, so a missing
-// VITE_API_BASE_URL in a production build must NOT silently ship a localhost
-// URL to users. In production we warn loudly and fall back to same-origin
-// "/api" (correct when the SPA is served from the same domain as the API);
-// only local dev defaults to the dev server.
+// VITE_API_BASE_URL in a production build defaults to the same-origin
+// internal proxy route "/internal"; local dev also uses "/internal" proxied via Vite.
 function resolveApiBaseUrl() {
   const configured = import.meta.env.VITE_API_BASE_URL
   if (configured) return configured
-  if (import.meta.env.PROD) {
-    console.error(
-      '[ZoikoMeds] VITE_API_BASE_URL was not set at build time. Falling back to same-origin "/api". Set VITE_API_BASE_URL to your API URL when building for production.'
-    )
-    return '/api'
-  }
-  return 'http://localhost:8000/api'
+  return '/internal'
 }
 
 const BASE_URL = resolveApiBaseUrl()
