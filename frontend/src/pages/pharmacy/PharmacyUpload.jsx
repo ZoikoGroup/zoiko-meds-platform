@@ -14,19 +14,48 @@ import { importCsv, getProfile } from '@/services/pharmacy-api'
 import { cn } from '@/lib/utils'
 import { UploadCloud, FileText, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react'
 
-// Minimal CSV parse (comma-separated; first row = header).
+// CSV parser (comma-separated; first row = header).
 function parseCsv(text) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean)
   if (lines.length === 0) return { headers: [], rows: [], error: 'The file is empty.' }
-  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase())
-  if (!headers.includes('name')) return { headers, rows: [], error: 'Missing required “name” column.' }
-  const rows = lines.slice(1).map((line) => {
-    const cells = line.split(',')
+  const rawHeaders = lines[0].split(',').map((h) => h.trim().toLowerCase().replace(/^["']|["']$/g, ''))
+  
+  const hasName = rawHeaders.some((h) => h === 'name' || h === 'medicinename' || h === 'canonicalname')
+  if (!hasName) {
+    return {
+      headers: rawHeaders,
+      rows: [],
+      error: 'CSV file missing required "name" header column. Required column: name (optional: generic, strength, dosageform, status).',
+    }
+  }
+
+  const rows = []
+  let invalidRowCount = 0
+
+  lines.slice(1).forEach((line) => {
+    const cells = line.split(',').map((c) => c.trim().replace(/^["']|["']$/g, ''))
     const row = {}
-    headers.forEach((h, i) => { row[h] = (cells[i] ?? '').trim() })
-    return row
+    rawHeaders.forEach((h, i) => { row[h] = (cells[i] ?? '').trim() })
+    const nameVal = row.name || row.medicinename || row.canonicalname
+    if (nameVal) {
+      // Normalize keys to standard names
+      row.name = nameVal
+      row.generic = row.generic || row.genericname || ''
+      row.strength = row.strength || ''
+      row.dosageform = row.dosageform || row.dosageForm || row.form || 'Tablet'
+      row.status = (row.status || row.availability || 'available').toLowerCase()
+      rows.push(row)
+    } else {
+      invalidRowCount++
+    }
   })
-  return { headers, rows, error: null }
+
+  if (rows.length === 0) {
+    return { headers: rawHeaders, rows: [], error: 'No valid rows containing a medicine name were found.' }
+  }
+
+  const standardHeaders = ['name', 'generic', 'strength', 'dosageform', 'status']
+  return { headers: standardHeaders, rows, invalidRowCount, error: null }
 }
 
 export default function PharmacyUpload() {
@@ -91,6 +120,7 @@ export default function PharmacyUpload() {
       setResult(r)
       setStatus('success')
       setShowConfirmModal(false)
+      window.dispatchEvent(new CustomEvent('pharmacy-inventory-updated'))
     } catch (err) {
       setErrorMsg(err.message || 'Upload failed. Please try again.')
       setStatus('error')

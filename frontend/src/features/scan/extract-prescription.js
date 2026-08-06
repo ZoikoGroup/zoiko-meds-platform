@@ -5,41 +5,227 @@ import { matchMedicines } from '@/services/medicine-api'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker
 
-// Known medicine dictionary for offline or direct fallback lookup
+// Known medicine dictionary for offline, direct fallback, and fuzzy handwriting matching
 const KNOWN_DRUGS = [
-  { name: 'Naproxen', generic: 'Naproxen', defaultStrength: '500 mg' },
-  { name: 'Paracetamol', generic: 'Paracetamol', defaultStrength: '500 mg' },
-  { name: 'Paracetamol 500 mg', generic: 'Paracetamol', defaultStrength: '500 mg' },
-  { name: 'Dolo 650', generic: 'Paracetamol', defaultStrength: '650 mg' },
-  { name: 'Acetaminophen', generic: 'Paracetamol / Acetaminophen', defaultStrength: '500 mg' },
-  { name: 'Metformin 500 mg', generic: 'Metformin', defaultStrength: '500 mg' },
-  { name: 'Metformin', generic: 'Metformin', defaultStrength: '500 mg' },
-  { name: 'Pantoprazole 40 mg', generic: 'Pantoprazole', defaultStrength: '40 mg' },
-  { name: 'Pantoprazole', generic: 'Pantoprazole', defaultStrength: '40 mg' },
-  { name: 'Cetirizine 10 mg', generic: 'Cetirizine', defaultStrength: '10 mg' },
-  { name: 'Cetirizine', generic: 'Cetirizine', defaultStrength: '10 mg' },
-  { name: 'Amoxicillin 500 mg', generic: 'Amoxicillin', defaultStrength: '500 mg' },
-  { name: 'Amoxicillin', generic: 'Amoxicillin', defaultStrength: '500 mg' },
-  { name: 'Azithromycin 500 mg', generic: 'Azithromycin', defaultStrength: '500 mg' },
-  { name: 'Azithromycin', generic: 'Azithromycin', defaultStrength: '500 mg' },
-  { name: 'Ibuprofen 400 mg', generic: 'Ibuprofen', defaultStrength: '400 mg' },
-  { name: 'Ibuprofen', generic: 'Ibuprofen', defaultStrength: '400 mg' },
-  { name: 'Insulin Glargine', generic: 'Insulin glargine', defaultStrength: '100 U/mL' },
-  { name: 'Lantus Pen', generic: 'Insulin glargine', defaultStrength: '100 U/mL' },
-  { name: 'Basaglar Pen', generic: 'Insulin glargine', defaultStrength: '100 U/mL' },
-  { name: 'Aspirin', generic: 'Aspirin', defaultStrength: '75 mg' },
-  { name: 'Lipitor', generic: 'Atorvastatin', defaultStrength: '20 mg' },
-  { name: 'Atorvastatin', generic: 'Atorvastatin', defaultStrength: '20 mg' },
-  { name: 'Amlodipine', generic: 'Amlodipine', defaultStrength: '5 mg' },
-  { name: 'Omeprazole', generic: 'Omeprazole', defaultStrength: '20 mg' },
-  { name: 'Losartan', generic: 'Losartan', defaultStrength: '50 mg' },
-  { name: 'Ciprofloxacin', generic: 'Ciprofloxacin', defaultStrength: '500 mg' },
-  { name: 'Augmentin', generic: 'Amoxicillin / Clavulanate', defaultStrength: '625 mg' },
-  { name: 'Combiflam', generic: 'Ibuprofen / Paracetamol', defaultStrength: '400 mg' },
+  {
+    name: 'Calpol',
+    generic: 'Paracetamol',
+    defaultStrength: '250mg/5ml Syrup',
+    aliases: ['calpol', 'colpol', 'calpl', 'syp calpol', 'calpol 250', 'calpol 500', 'calpol 650', 'calpol syrup'],
+  },
+  {
+    name: 'Delcon',
+    generic: 'Phenylephrine / Chlorpheniramine',
+    defaultStrength: 'Syrup',
+    aliases: ['delcon', 'oblon', 'deicon', 'delco', 'syp delcon', 'delcon syrup', 'delcon tds'],
+  },
+  {
+    name: 'Levolin',
+    generic: 'Levosalbutamol',
+    defaultStrength: 'Syrup',
+    aliases: ['levolin', 'levoun', 'levoln', 'levo', 'syp levolin', 'levolin syrup', 'levolin tds'],
+  },
+  {
+    name: 'Meftal-P',
+    generic: 'Mefenamic Acid / Paracetamol',
+    defaultStrength: '100mg/5ml Suspension',
+    aliases: ['meftal-p', 'meftal p', 'meftal', 'meltal', 'syp meftal-p', 'meftal-p 100/5', 'meftal-p syp', 'meftal p syp'],
+  },
+  {
+    name: 'Dolo 650',
+    generic: 'Paracetamol',
+    defaultStrength: '650 mg',
+    aliases: ['dolo', 'dolo 650', 'dolo650'],
+  },
+  {
+    name: 'Crocin',
+    generic: 'Paracetamol',
+    defaultStrength: '500 mg',
+    aliases: ['crocin', 'crocin 500', 'crocin advance', 'crocin 650'],
+  },
+  {
+    name: 'Augmentin 625',
+    generic: 'Amoxicillin / Clavulanate',
+    defaultStrength: '625 mg',
+    aliases: ['augmentin', 'augmentin 625', 'augmentin duo'],
+  },
+  {
+    name: 'Clavam 625',
+    generic: 'Amoxicillin / Clavulanate',
+    defaultStrength: '625 mg',
+    aliases: ['clavam', 'clavam 625'],
+  },
+  {
+    name: 'Combiflam',
+    generic: 'Ibuprofen / Paracetamol',
+    defaultStrength: '400 mg / 325 mg',
+    aliases: ['combiflam', 'combiflam tab'],
+  },
+  {
+    name: 'Azithromycin',
+    generic: 'Azithromycin',
+    defaultStrength: '500 mg',
+    aliases: ['azithromycin', 'azithral', 'aziwok', 'azithral 500'],
+  },
+  {
+    name: 'Pantoprazole',
+    generic: 'Pantoprazole',
+    defaultStrength: '40 mg',
+    aliases: ['pantoprazole', 'panto', 'pantocid', 'pantodac', 'pan 40'],
+  },
+  {
+    name: 'Pan-D',
+    generic: 'Pantoprazole / Domperidone',
+    defaultStrength: '40 mg / 30 mg',
+    aliases: ['pan-d', 'pan d', 'pantocid-d'],
+  },
+  {
+    name: 'Cetirizine',
+    generic: 'Cetirizine',
+    defaultStrength: '10 mg',
+    aliases: ['cetirizine', 'cetzine', 'okacet', 'alerid'],
+  },
+  {
+    name: 'Montair-LC',
+    generic: 'Montelukast / Levocetirizine',
+    defaultStrength: '10 mg / 5 mg',
+    aliases: ['montair-lc', 'montair lc', 'montair', 'montek-lc'],
+  },
+  {
+    name: 'Asthalin',
+    generic: 'Salbutamol',
+    defaultStrength: 'Syrup / Inhaler',
+    aliases: ['asthalin', 'asthalin syp', 'asthalin inhaler'],
+  },
+  {
+    name: 'Ascoril',
+    generic: 'Terbutaline / Bromhexine / Guaiphenesin',
+    defaultStrength: 'Syrup',
+    aliases: ['ascoril', 'ascoril-d', 'ascoril ls'],
+  },
+  {
+    name: 'Alex Syrup',
+    generic: 'Dextromethorphan / Chlorpheniramine / Phenylephrine',
+    defaultStrength: 'Syrup',
+    aliases: ['alex', 'alex syrup', 'alex syp'],
+  },
+  {
+    name: 'Cheston Cold',
+    generic: 'Paracetamol / Phenylephrine / Cetirizine',
+    defaultStrength: 'Syrup / Tablet',
+    aliases: ['cheston cold', 'cheston', 'cheston cold syp'],
+  },
+  {
+    name: 'Zerodol-SP',
+    generic: 'Aceclofenac / Paracetamol / Serratiopeptidase',
+    defaultStrength: '100 mg / 325 mg / 15 mg',
+    aliases: ['zerodol-sp', 'zerodol sp', 'zerodol-p', 'zerodol'],
+  },
+  {
+    name: 'Taxim-O',
+    generic: 'Cefixime',
+    defaultStrength: '200 mg',
+    aliases: ['taxim-o', 'taxim o', 'cefixime'],
+  },
+  {
+    name: 'Sumo',
+    generic: 'Nimesulide / Paracetamol',
+    defaultStrength: '100 mg / 325 mg',
+    aliases: ['sumo', 'sumo tab', 'sumo syp'],
+  },
+  {
+    name: 'Flexon',
+    generic: 'Ibuprofen / Paracetamol',
+    defaultStrength: '400 mg / 325 mg',
+    aliases: ['flexon', 'flexon mr'],
+  },
+  {
+    name: 'Sinarest',
+    generic: 'Paracetamol / Chlorpheniramine / Phenylephrine',
+    defaultStrength: 'Tablet / Syrup',
+    aliases: ['sinarest', 'sinarest syp'],
+  },
+  {
+    name: 'Allegra',
+    generic: 'Fexofenadine',
+    defaultStrength: '120 mg',
+    aliases: ['allegra', 'allegra 120', 'allegra 180'],
+  },
+  {
+    name: 'Amoxicillin',
+    generic: 'Amoxicillin',
+    defaultStrength: '500 mg',
+    aliases: ['amoxicillin', 'mox', 'novamox', 'amoxil'],
+  },
+  {
+    name: 'Ibuprofen',
+    generic: 'Ibuprofen',
+    defaultStrength: '400 mg',
+    aliases: ['ibuprofen', 'brufen'],
+  },
+  {
+    name: 'Metformin',
+    generic: 'Metformin',
+    defaultStrength: '500 mg',
+    aliases: ['metformin', 'glycomet'],
+  },
+  {
+    name: 'Amlodipine',
+    generic: 'Amlodipine',
+    defaultStrength: '5 mg',
+    aliases: ['amlodipine', 'amlong', 'stamlo'],
+  },
 ]
 
 /**
- * Extract text from a PDF file preserving line breaks (using Y position & hasEOL)
+ * Calculate Levenshtein distance between two strings
+ */
+function levenshteinDistance(a, b) {
+  if (!a || !b) return (a || b).length
+  const matrix = []
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i]
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1]
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        )
+      }
+    }
+  }
+  return matrix[b.length][a.length]
+}
+
+/**
+ * Calculate normalized similarity ratio (0.0 to 1.0)
+ */
+function similarityRatio(s1, s2) {
+  const str1 = (s1 || '').toLowerCase().trim()
+  const str2 = (s2 || '').toLowerCase().trim()
+  if (str1 === str2) return 1.0
+  const dist = levenshteinDistance(str1, str2)
+  const maxLen = Math.max(str1.length, str2.length)
+  return maxLen === 0 ? 1.0 : (maxLen - dist) / maxLen
+}
+
+/**
+ * Regex identifying non-medicine prescription content (doctor, qualification, hospital, dates, vitals, patient)
+ */
+const NON_MEDICINE_RE = /(doctor|dr\.?\b|mbbs|paediatrics|pediatrics|jipmer|govt|medical|college|reg\.?\s*no|ph\.?\s*:?|phone|tel\b|contact|chc\b|phc\b|hospital|clinic|thrissur|nemmara|narayanan|date|name\s*:|ashvika|weight|kg\b|lbs\b|age|gender|yr\b|yrs\b|clinical|description|urti\b|rr\s*-|rs\s*-|b\/l|aee\b|min\b|bp\b|pulse|temp|advice|advise|morning|evening|night|timings|7\.00|8\.45|3\.30|7\.30|page|\d{10}|\d{6,})/i
+
+/**
+ * Detect dosage form prefix (Syp, Tab, Cap, Inj, etc.)
+ */
+const FORM_PREFIX_RE = /^(syp|syrup|tab|tablet|cap|capsule|inj|injection|oint|cream|drops|soln|susp|sachet|respules|lotion|gel|soap|inhaler)\b/i
+
+/**
+ * Extract text from a PDF file preserving line breaks
  */
 async function extractTextFromPDF(file) {
   try {
@@ -117,40 +303,47 @@ async function extractTextFromImage(file) {
 }
 
 /**
- * Clean raw OCR text into individual candidate medicine lines/terms
+ * Clean raw OCR text and extract ONLY candidate prescription medicine lines
  */
-function cleanAndExtractLines(rawText, fileName = '') {
-  const IGNORE_RE = /^(doctor|patient|date|address|rx|sig|qty|dispense|refill|phone|tel|signature|hospital|clinic|prescription|zoikomeds|page|scan|instructions|notes|take|tablet|capsule|mg|ml|daily|once|twice|thrice|after|before|food|water|bedtime|morning|night)\b/i
-
+function cleanAndExtractLines(rawText) {
   const rawLines = (rawText || '').split(/[\r\n]+/)
   const candidateTerms = []
+  let inAdviceSection = false
 
   for (const line of rawLines) {
-    const trimmed = line.replace(/^[^a-zA-Z0-9]+/, '').replace(/[^a-zA-Z0-9.\s%/-]+$/, '').trim()
-    if (!trimmed || trimmed.length < 3 || IGNORE_RE.test(trimmed)) continue
+    const trimmed = line.trim()
+    if (!trimmed) continue
 
-    // Split line further if it contains multiple items separated by comma, slash, plus, or 'and'
-    const subTerms = trimmed
-      .split(/[,/+]|\band\b/i)
-      .map((t) => t.trim())
-      .filter((t) => t.length >= 3 && !IGNORE_RE.test(t))
-
-    if (subTerms.length > 1) {
-      candidateTerms.push(...subTerms)
-    } else {
-      candidateTerms.push(trimmed)
+    // Detect start of Advice / Rx section
+    if (/\b(advice|advise|rx|r\/|treatment|medicines)\b/i.test(trimmed)) {
+      inAdviceSection = true
+      continue
     }
-  }
 
-  // If raw text yielded no usable lines, use the file name as a candidate term
-  if (candidateTerms.length === 0 && fileName) {
-    const cleanedName = fileName
-      .replace(/\.[^/.]+$/, '')
-      .replace(/[-_]/g, ' ')
-      .replace(/\(\d+\)/g, '')
-      .trim()
-    if (cleanedName.length >= 2) {
-      candidateTerms.push(cleanedName)
+    // Reject non-Latin Malayalam/Hindi lines
+    const latinChars = (trimmed.match(/[a-zA-Z]/g) || []).length
+    if (latinChars < 2) continue
+
+    // Check if line starts with dosage form prefix or is inside Advice section
+    const hasFormPrefix = FORM_PREFIX_RE.test(trimmed)
+    const isNonMedicine = NON_MEDICINE_RE.test(trimmed)
+
+    if (isNonMedicine && !hasFormPrefix) {
+      continue
+    }
+
+    // Line is candidate if inside Advice section OR has clear Form Prefix
+    if (inAdviceSection || hasFormPrefix) {
+      candidateTerms.push(trimmed)
+    } else {
+      // Check if line matches any drug alias directly
+      const lower = trimmed.toLowerCase()
+      const matchesDrug = KNOWN_DRUGS.some((d) =>
+        d.aliases.some((a) => lower.includes(a) || similarityRatio(lower, a) >= 0.6)
+      )
+      if (matchesDrug) {
+        candidateTerms.push(trimmed)
+      }
     }
   }
 
@@ -158,7 +351,76 @@ function cleanAndExtractLines(rawText, fileName = '') {
 }
 
 /**
- * Extract medicines dynamically from uploaded prescription file
+ * Clean a candidate line into a normalized medicine name & dosage detail
+ */
+function parseMedicineLine(line) {
+  // remove non-ASCII characters without triggering no-control-regex
+  const removeNonAscii = (s) =>
+    Array.from(s || '')
+      .filter((ch) => ch.charCodeAt(0) <= 0x7f)
+      .join('')
+
+  let cleaned = removeNonAscii(line)
+    .replace(NON_MEDICINE_RE, '')
+    .trim()
+
+  // Extract strength pattern e.g. (250/5), (100/5), 500mg, 4ml
+  const ratioMatch = cleaned.match(/\((\d+[/.]\d+)\)|\b(\d+\s*(mg|g|mcg|ml|iu|u))\b/i)
+  const strengthStr = ratioMatch ? (ratioMatch[1] ? `${ratioMatch[1]} mg/ml` : ratioMatch[0]) : ''
+
+  // Detect dosage form prefix
+  const formMatch = line.match(FORM_PREFIX_RE)
+  const formStr = formMatch ? formMatch[0].toUpperCase() : ''
+
+  // Strip form prefix, strength, volume, frequency (TDS, Q6H, SOS, BD, OD), duration (x 3 d, x 5 d)
+  let cleanName = cleaned
+    .replace(FORM_PREFIX_RE, '')
+    .replace(/\((\d+[/.]\d+)\)/g, '')
+    .replace(/\b\d+\s*(mg|g|mcg|ml|iu|u)\b/gi, '')
+    .replace(/\b(tds|bd|od|qid|q6h|q8h|sos|stat|hs|bbf|abf)\b/gi, '')
+    .replace(/\bx\s*\d+\s*[ds]?\b/gi, '')
+    .replace(/\b\d+\s*[ds]\b/gi, '')
+    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (cleanName.length < 2) return null
+
+  return {
+    rawName: cleanName,
+    form: formStr,
+    strength: strengthStr,
+  }
+}
+
+/**
+ * Perform fuzzy matching against KNOWN_DRUGS and handwriting aliases
+ */
+function fuzzyMatchKnownDrugs(candidateName) {
+  const lowerCand = candidateName.toLowerCase().trim()
+  if (!lowerCand || lowerCand.length < 2) return null
+
+  let bestMatch = null
+  let highestScore = 0
+
+  for (const drug of KNOWN_DRUGS) {
+    for (const alias of drug.aliases) {
+      if (lowerCand === alias || lowerCand.includes(alias) || alias.includes(lowerCand)) {
+        return drug
+      }
+      const score = similarityRatio(lowerCand, alias)
+      if (score > highestScore && score >= 0.55) {
+        highestScore = score
+        bestMatch = drug
+      }
+    }
+  }
+
+  return highestScore >= 0.55 ? bestMatch : null
+}
+
+/**
+ * Main export: Extract medicines dynamically from uploaded prescription file
  */
 export async function extractPrescriptionMeds(file) {
   const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
@@ -170,26 +432,48 @@ export async function extractPrescriptionMeds(file) {
     rawText = await extractTextFromImage(file)
   }
 
-  const candidateLines = cleanAndExtractLines(rawText, file.name)
+  const candidateLines = cleanAndExtractLines(rawText)
   const results = []
   const seenNames = new Set()
 
   for (const line of candidateLines) {
-    // 1. Query live MediBase catalog for accurate medicine match & clinical details
+    const parsed = parseMedicineLine(line)
+    if (!parsed || !parsed.rawName) continue
+
+    // 1. Check local KNOWN_DRUGS fuzzy handwriting matching first
+    const drugMatch = fuzzyMatchKnownDrugs(parsed.rawName)
+    if (drugMatch) {
+      const nameKey = drugMatch.name.toLowerCase()
+      if (!seenNames.has(nameKey)) {
+        seenNames.add(nameKey)
+        const detailParts = []
+        if (drugMatch.generic) detailParts.push(drugMatch.generic)
+        if (parsed.strength) detailParts.push(parsed.strength)
+        else if (drugMatch.defaultStrength) detailParts.push(drugMatch.defaultStrength)
+
+        results.push({
+          name: drugMatch.name,
+          detail: detailParts.join(' · ') || 'Prescription medicine',
+        })
+      }
+      continue
+    }
+
+    // 2. Query live MediBase catalog for accurate medicine match
     let matched = null
     try {
-      const apiMatches = await matchMedicines(line, 3)
+      const apiMatches = await matchMedicines(parsed.rawName, 3)
       if (apiMatches && apiMatches.length > 0) {
-        // Ensure match quality
         const topMatch = apiMatches[0]
-        const lineLower = line.toLowerCase()
+        const lineLower = parsed.rawName.toLowerCase()
         const matchNameLower = topMatch.name.toLowerCase()
         const genericLower = (topMatch.generic || '').toLowerCase()
 
         if (
           lineLower.includes(matchNameLower) ||
           matchNameLower.includes(lineLower) ||
-          (genericLower && (lineLower.includes(genericLower) || genericLower.includes(lineLower)))
+          (genericLower && (lineLower.includes(genericLower) || genericLower.includes(lineLower))) ||
+          similarityRatio(lineLower, matchNameLower) >= 0.6
         ) {
           matched = topMatch
         }
@@ -206,8 +490,8 @@ export async function extractPrescriptionMeds(file) {
         if (matched.generic && matched.generic.toLowerCase() !== matched.name.toLowerCase()) {
           detailParts.push(matched.generic)
         }
-        if (matched.strength) detailParts.push(matched.strength)
-        else if (matched.form) detailParts.push(matched.form)
+        if (parsed.strength) detailParts.push(parsed.strength)
+        else if (matched.strength) detailParts.push(matched.strength)
 
         results.push({
           name: matched.name,
@@ -217,57 +501,32 @@ export async function extractPrescriptionMeds(file) {
       continue
     }
 
-    // 2. Check local KNOWN_DRUGS dictionary
-    const lowerLine = line.toLowerCase()
-    const knownMatch = KNOWN_DRUGS.find(
-      (d) => lowerLine.includes(d.name.toLowerCase()) || lowerLine.includes(d.generic.toLowerCase()) || d.name.toLowerCase().includes(lowerLine)
-    )
-
-    if (knownMatch) {
-      const nameKey = knownMatch.name.toLowerCase()
+    // 3. Fallback: Accept candidate ONLY IF it had an explicit dosage form prefix (Syp, Tab, Cap, Inj, etc.)
+    if (parsed.form && parsed.rawName.length >= 3 && !NON_MEDICINE_RE.test(parsed.rawName)) {
+      const capName = parsed.rawName.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase())
+      const nameKey = capName.toLowerCase()
       if (!seenNames.has(nameKey)) {
         seenNames.add(nameKey)
         results.push({
-          name: knownMatch.name,
-          detail: `${knownMatch.generic} · ${knownMatch.defaultStrength}`,
-        })
-      }
-      continue
-    }
-
-    // 3. Fallback: Extract medicine name & strength dynamically from line text
-    const strengthMatch = line.match(/\b\d+\s*(mg|g|mcg|ml|iu|u)\b/i)
-    const strengthStr = strengthMatch ? strengthMatch[0] : ''
-
-    let nameCandidate = line
-      .replace(/\b\d+\s*(mg|g|mcg|ml|iu|u)\b/gi, '')
-      .replace(/\b(tablet|tab|capsule|cap|syrup|injection|suspension)\b/gi, '')
-      .trim()
-
-    if (nameCandidate.length >= 3) {
-      nameCandidate = nameCandidate.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase())
-      const nameKey = nameCandidate.toLowerCase()
-      if (!seenNames.has(nameKey)) {
-        seenNames.add(nameKey)
-        results.push({
-          name: nameCandidate,
-          detail: strengthStr ? `${nameCandidate} · ${strengthStr}` : `${nameCandidate} · Prescription medicine`,
+          name: capName,
+          detail: parsed.strength ? `${capName} · ${parsed.strength}` : `${capName} · Prescription ${parsed.form || 'medicine'}`,
         })
       }
     }
   }
 
-  // 4. Final fallback if nothing found
+  // Final safety fallback: If raw text produced zero valid medicines, check if file name is a drug candidate
   if (results.length === 0 && file.name) {
     const fileBase = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim()
-    if (fileBase) {
-      const capName = fileBase.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase())
+    const drugMatch = fuzzyMatchKnownDrugs(fileBase)
+    if (drugMatch) {
       results.push({
-        name: capName,
-        detail: `${capName} · Extracted from prescription`,
+        name: drugMatch.name,
+        detail: `${drugMatch.generic} · ${drugMatch.defaultStrength}`,
       })
     }
   }
 
   return results
 }
+

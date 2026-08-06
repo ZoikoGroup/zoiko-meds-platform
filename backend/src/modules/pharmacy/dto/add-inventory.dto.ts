@@ -25,6 +25,11 @@ export class AddInventoryDto {
   @IsOptional()
   dosageForm?: string;
 
+  @ApiPropertyOptional({ example: 'Tablet' })
+  @IsString()
+  @IsOptional()
+  dosageform?: string;
+
   @ApiPropertyOptional({
     example: 'available',
     enum: ['available', 'limited', 'out-of-stock'],

@@ -56,7 +56,7 @@ export default function UserProfile() {
     const digitsOnly = trimmed.replace(/\D/g, '')
 
     if (!digitsOnly) {
-      return 'Please enter a valid phone number.'
+      return t('validPhone', 'Please enter a valid phone number.')
     }
 
     let dialCodeDigits = '91'
@@ -80,22 +80,22 @@ export default function UserProfile() {
 
     if (phoneCountry === 'IN') {
       if (!/^[6-9]/.test(localDigits)) {
-        return 'Please enter a valid Indian mobile number.'
+        return t('validIndianMobile', 'Please enter a valid Indian mobile number.')
       }
       if (localDigits.length < 10) {
-        return 'Phone number is too short.'
+        return t('phoneTooShort', 'Phone number is too short.')
       }
       if (localDigits.length > 10) {
-        return 'Phone number is too long.'
+        return t('phoneTooLong', 'Phone number is too long.')
       }
       return ''
     }
 
     if (localDigits.length < minAllowed) {
-      return 'Phone number is too short.'
+      return t('phoneTooShort', 'Phone number is too short.')
     }
     if (localDigits.length > maxAllowed) {
-      return 'Phone number is too long.'
+      return t('phoneTooLong', 'Phone number is too long.')
     }
 
     const isValid =
@@ -104,11 +104,11 @@ export default function UserProfile() {
       (phoneCountry === 'US' && localDigits.length === 10)
 
     if (!isValid) {
-      return 'Invalid phone number for the selected country.'
+      return t('invalidPhoneCountry', 'Invalid phone number for the selected country.')
     }
 
     return ''
-  }, [form.phone, phoneCountry])
+  }, [form.phone, phoneCountry, t])
 
   const saveProfile = async (e) => {
     e.preventDefault()
@@ -120,9 +120,9 @@ export default function UserProfile() {
     }
     try {
       await updateProfile({ fullName: form.name, phone: form.phone })
-      flash('Profile updated')
+      flash(t('profileUpdated', 'Profile updated'))
     } catch (err) {
-      setError(err.message || 'Could not update profile')
+      setError(err.message || t('couldNotUpdateProfile', 'Could not update profile'))
     }
   }
 
@@ -131,20 +131,20 @@ export default function UserProfile() {
     setError('')
     setPwdError('')
     if (pwd.next !== pwd.confirm) {
-      setPwdError('New passwords do not match.')
+      setPwdError(t('passwordsDoNotMatch', 'Passwords do not match.'))
       return
     }
     if (pwd.next.length < 8) {
-      setPwdError('New password must be at least 8 characters.')
+      setPwdError(t('passwordMinLength', 'Password must be at least 8 characters long.'))
       return
     }
     try {
       await changePassword(pwd.current, pwd.next)
       setPwd({ current: '', next: '', confirm: '' })
       setShowPwd({ current: false, next: false, confirm: false })
-      flash('Password updated')
+      flash(t('passwordUpdated', 'Password updated'))
     } catch (err) {
-      setPwdError(err.message || 'Could not update password')
+      setPwdError(err.message || t('couldNotUpdatePassword', 'Could not update password'))
     }
   }
 
@@ -157,7 +157,7 @@ export default function UserProfile() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title={t('myProfile', 'My profile')}
-        subtitle={t('contactDetailsDesc', 'Manage your contact details and account security.')}
+        subtitle={t('contactDetailsDescSubtitle', 'Manage your contact details and account security.')}
       />
 
       {/* Identity card */}
