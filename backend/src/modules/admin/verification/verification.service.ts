@@ -18,83 +18,15 @@ export class VerificationService {
     private readonly audit: AuditWriter,
   ) {}
 
-  private async syncUnlinkedPharmacyUsers() {
-    const unlinked = await this.prisma.user.findMany({
-      where: {
-        role: { in: ['PHARMACY_ADMIN', 'PHARMACY_STAFF'] },
-        pharmacyId: null,
-      },
-    });
-
-    for (const user of unlinked) {
-      const userEmail = user.email.toLowerCase();
-      const defaultLicense = `LIC-${user.id.slice(-6).toUpperCase()}`;
-
-      let pharmacy = await this.prisma.pharmacy.findFirst({
-        where: {
-          OR: [
-            { name: `${user.fullName} Pharmacy` },
-            { licenseNumber: defaultLicense },
-          ],
-        },
-      });
-
-      if (!pharmacy) {
-        pharmacy = await this.prisma.pharmacy.create({
-          data: {
-            name: `${user.fullName} Pharmacy`,
-            licenseNumber: defaultLicense,
-            verificationStatus: VerificationStatus.PENDING,
-            isParticipating: false,
-            reliabilityScore: 0.8,
-            addressLine1: 'Main Branch Address',
-            city: 'Main City',
-            country: 'India',
-          },
-        });
-      }
-
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { pharmacyId: pharmacy.id },
-      });
-
-      const existing = await this.prisma.verificationRequest.findFirst({
-        where: {
-          OR: [
-            { pharmacyId: pharmacy.id },
-            { submittedBy: { contains: userEmail, mode: 'insensitive' } },
-            { licenseNumber: defaultLicense },
-          ],
-        },
-      });
-
-      if (existing) {
-        await this.prisma.verificationRequest.update({
-          where: { id: existing.id },
-          data: {
-            pharmacyId: pharmacy.id,
-            pharmacyName: pharmacy.name,
-            licenseNumber: pharmacy.licenseNumber || defaultLicense,
-          },
-        });
-      } else {
-        await this.prisma.verificationRequest.create({
-          data: {
-            pharmacyId: pharmacy.id,
-            pharmacyName: pharmacy.name,
-            licenseNumber: pharmacy.licenseNumber || defaultLicense,
-            submittedBy: `${user.fullName} (${user.email})`,
-            status: VerificationRequestStatus.PENDING,
-            notes: 'Automated pending verification request created for pharmacy user.',
-          },
-        });
-      }
-    }
-  }
-
   async list() {
-    await this.syncUnlinkedPharmacyUsers();
+    // NOTE: pharmacy records are no longer fabricated for unlinked pharmacy
+    // users here. This used to invent a "<Full Name> Pharmacy" at "Main Branch
+    // Address, Main City" plus a PENDING request the operator never filed, so a
+    // reviewer saw placeholder text as if it were submitted detail, and the
+    // pharmacy's own profile page opened pre-filled with that invented address
+    // instead of a blank form. Onboarding now runs the other way round: the
+    // pharmacy fills in its profile (PATCH /pharmacies/me) and that submission
+    // creates the record and the request that lands in this queue.
     await this.prisma.pharmacy.updateMany({
       where: {
         country: 'US',

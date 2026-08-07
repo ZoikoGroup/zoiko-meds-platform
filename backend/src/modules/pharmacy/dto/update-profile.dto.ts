@@ -22,6 +22,11 @@ export class UpdatePharmacyProfileDto {
   @IsString()
   addressLine1?: string;
 
+  @ApiPropertyOptional({ example: 'Near Metro Station' })
+  @IsOptional()
+  @IsString()
+  addressLine2?: string;
+
   @ApiPropertyOptional({ example: 'Hyderabad' })
   @IsOptional()
   @IsString()

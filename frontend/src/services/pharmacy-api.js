@@ -7,7 +7,7 @@
 import { apiFetch } from '@/lib/api-client'
 import {
   RECENT_UPDATES, PENDING_UPDATES, NOTIFICATIONS,
-  PARTICIPATION, INTEGRATION, PROFILE, REPORTS, INVENTORY,
+  PARTICIPATION, INTEGRATION, REPORTS, INVENTORY,
 } from './pharmacy-data'
 
 // Resolve a (deep-cloned) value after a short latency so skeletons are exercised.
@@ -119,36 +119,38 @@ export const getIntegration = () => settle(INTEGRATION)
 // TODO(backend): POST /pharmacy/integration/sync
 export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' })
 
+// The pharmacy's own identity, licence and address. Deliberately has NO demo
+// fallback: this is the operator's real record, and quietly substituting another
+// pharmacy's sample details would read as their own saved data. Callers surface
+// the failure instead.
 export const getProfile = async () => {
-  try {
-    const profile = await apiFetch('/pharmacies/me')
-    // A 200 with an empty body means the request never reached the profile
-    // handler — e.g. an older backend where GET /pharmacies/:id shadows
-    // GET /pharmacies/me and resolves to a null pharmacy. Returning that null
-    // straight through leaves the page stuck on its loading state forever, so
-    // treat it as a failure and fall back to demo data like the routes above.
-    if (!profile || typeof profile !== 'object') {
-      throw new Error('Profile endpoint returned an empty response')
-    }
-    return profile
-  } catch (err) {
-    console.warn('[pharmacy-api] Get profile API failed, fallback to demo profile', err)
-    return structuredClone(PROFILE)
+  const profile = await apiFetch('/pharmacies/me')
+  // A 200 with an empty body means the request never reached the profile
+  // handler — e.g. an older backend where GET /pharmacies/:id shadows
+  // GET /pharmacies/me and resolves to a null pharmacy.
+  if (!profile || typeof profile !== 'object') {
+    throw new Error('The profile service is unavailable. Please try again shortly.')
   }
+  return profile
 }
 
+// Fields the pharmacy may edit — mirrors UpdatePharmacyProfileDto on the API.
+// The global ValidationPipe runs with forbidNonWhitelisted, so posting the whole
+// profile object back (id, verificationStatus, notes, …) is rejected with a 400.
+const EDITABLE_FIELDS = [
+  'name', 'licenseNumber', 'phone',
+  'addressLine1', 'addressLine2', 'city', 'region', 'country', 'postalCode',
+]
+
 export const updateProfile = async (patch) => {
-  try {
-    const res = await apiFetch('/pharmacies/me', {
-      method: 'PATCH',
-      body: patch,
-    })
-    window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
-    return res
-  } catch (err) {
-    console.warn('[pharmacy-api] Update profile API failed', err)
-    throw err
+  const body = {}
+  for (const key of EDITABLE_FIELDS) {
+    if (patch?.[key] !== undefined && patch[key] !== null) body[key] = patch[key]
   }
+
+  const res = await apiFetch('/pharmacies/me', { method: 'PATCH', body })
+  window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+  return res
 }
 
 export const getReports = async () => {

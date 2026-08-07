@@ -4,7 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AvailabilityConfidence } from '@prisma/client';
+import {
+  AvailabilityConfidence,
+  VerificationRequestStatus,
+  VerificationStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
@@ -81,14 +85,18 @@ export class PharmacyService {
       orderBy: { createdAt: 'desc' },
     });
 
+    // Every field below is the stored value or empty — never a fabricated
+    // placeholder. The profile page renders this as the pharmacy's own record,
+    // so invented contact details would read as real data to the operator.
     return {
       id: pharmacy.id,
+      isDraft: false,
       name: pharmacy.name,
       licenseNumber: pharmacy.licenseNumber || '',
       verificationStatus: pharmacy.verificationStatus,
       isParticipating: pharmacy.isParticipating,
-      phone: pharmacy.phone || '+91 40 2345 6789',
-      email: user?.email || 'pharmacy@zoikomeds.io',
+      phone: pharmacy.phone || '',
+      email: user?.email || '',
       addressLine1: pharmacy.addressLine1 || '',
       addressLine2: pharmacy.addressLine2 || '',
       city: pharmacy.city || '',
@@ -96,13 +104,147 @@ export class PharmacyService {
       country: pharmacy.country || '',
       postalCode: pharmacy.postalCode || '',
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      reviewStatus: latestReq?.status ?? null,
+      reviewedBy: latestReq?.reviewer ?? null,
+      submittedAt: latestReq?.createdAt ?? null,
       notes: latestReq?.notes || null,
-      hours: [
-        { day: 'Mon–Fri', open: '08:00', close: '22:00' },
-        { day: 'Saturday', open: '08:00', close: '22:00' },
-        { day: 'Sunday', open: '09:00', close: '21:00' },
-      ],
     };
+  }
+
+  /**
+   * Profile for the logged-in pharmacy user, resolved from Pharmacy Management.
+   *
+   * An account with no pharmacy link yet gets an empty draft rather than an
+   * error: that is the self-onboarding path, where the operator fills in their
+   * own details and `saveMyProfile` files the verification request. Inventory
+   * routes still hard-fail on a missing link via `resolvePharmacyId`.
+   */
+  async getMyProfile(user: AuthenticatedUser) {
+    const pharmacyId = await this.findMyPharmacyId(user);
+    if (pharmacyId) return this.getProfile(pharmacyId, user);
+
+    return {
+      id: null,
+      isDraft: true,
+      name: '',
+      licenseNumber: '',
+      verificationStatus: VerificationStatus.UNVERIFIED,
+      isParticipating: false,
+      phone: '',
+      email: user?.email || '',
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      region: '',
+      country: '',
+      postalCode: '',
+      reliabilityScore: 0,
+      reviewStatus: null,
+      reviewedBy: null,
+      submittedAt: null,
+      notes: null,
+    };
+  }
+
+  /** Pharmacy link for the caller, or null when the account has none yet. */
+  private async findMyPharmacyId(user: AuthenticatedUser): Promise<string | null> {
+    if (user?.pharmacyId) return user.pharmacyId;
+    if (!user?.id) return null;
+    const row = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { pharmacyId: true },
+    });
+    return row?.pharmacyId ?? null;
+  }
+
+  /**
+   * Save the logged-in pharmacy's own profile, creating the Pharmacy record on
+   * first submit, and file a verification request for the admin panel.
+   *
+   * Re-review is triggered when the pharmacy is not yet verified, and when an
+   * already-verified pharmacy changes its name or licence number — those are the
+   * two fields verification actually attests to, so a change has to be re-checked.
+   * Address and phone edits on a verified pharmacy do not drop its status.
+   */
+  async saveMyProfile(
+    user: AuthenticatedUser,
+    dto: UpdatePharmacyProfileDto,
+    ipAddress?: string,
+  ) {
+    const pharmacyId = await this.findMyPharmacyId(user);
+    if (pharmacyId) {
+      return this.updateProfile(pharmacyId, dto, user, ipAddress);
+    }
+
+    const name = dto.name?.trim();
+    const licenseNumber = dto.licenseNumber?.trim();
+    if (!name || !licenseNumber) {
+      throw new BadRequestException(
+        'Pharmacy name and licence number are required to submit your pharmacy for verification.',
+      );
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const pharmacy = await tx.pharmacy.create({
+        data: {
+          name,
+          licenseNumber,
+          phone: dto.phone?.trim() || null,
+          addressLine1: dto.addressLine1?.trim() || null,
+          addressLine2: dto.addressLine2?.trim() || null,
+          city: dto.city?.trim() || null,
+          region: dto.region?.trim() || null,
+          country: dto.country?.trim() || null,
+          postalCode: dto.postalCode?.trim() || null,
+          // Awaiting review — a self-declared pharmacy is never trusted on
+          // submit, so it stays out of public results until an admin approves.
+          verificationStatus: VerificationStatus.PENDING,
+          isParticipating: false,
+          reliabilityScore: 0,
+        },
+      });
+
+      await tx.user.update({
+        where: { id: user.id },
+        data: { pharmacyId: pharmacy.id },
+      });
+
+      // Adopt any request an admin raised for this licence before the record
+      // existed, so the Verification Center shows one row, not two.
+      const orphan = await tx.verificationRequest.findFirst({
+        where: { pharmacyId: null, licenseNumber },
+      });
+      if (orphan) {
+        await tx.verificationRequest.update({
+          where: { id: orphan.id },
+          data: { pharmacyId: pharmacy.id, pharmacyName: name },
+        });
+      } else {
+        await tx.verificationRequest.create({
+          data: {
+            pharmacyId: pharmacy.id,
+            pharmacyName: name,
+            licenseNumber,
+            submittedBy: `${user.fullName} (${user.email})`,
+            status: VerificationRequestStatus.PENDING,
+            notes: 'Submitted by the pharmacy from the pharmacy portal profile.',
+          },
+        });
+      }
+
+      return pharmacy;
+    });
+
+    await this.auditWriter.write(
+      user?.id ?? null,
+      'pharmacy.profile.submit',
+      'Pharmacy',
+      created.id,
+      { userId: user?.id, pharmacyId: created.id, name, licenseNumber },
+      ipAddress,
+    );
+
+    return this.getProfile(created.id, user);
   }
 
   async updateProfile(
@@ -139,6 +281,25 @@ export class PharmacyService {
       });
     }
 
+    // A pharmacy that is not verified yet always goes (back) into the review
+    // queue on save. A verified one only does so if the attested identity —
+    // name or licence — actually changed.
+    //
+    // SUSPENDED is deliberately excluded: it is an enforcement state, so letting
+    // a save move it to PENDING would let a suspended pharmacy clear its own
+    // suspension. Only an admin can lift it from the Verification Center.
+    const identityChanged =
+      existing.name !== updated.name ||
+      (existing.licenseNumber || '') !== (updated.licenseNumber || '');
+    const suspended = existing.verificationStatus === VerificationStatus.SUSPENDED;
+    const needsReview =
+      !suspended &&
+      (existing.verificationStatus !== VerificationStatus.VERIFIED || identityChanged);
+
+    if (needsReview && user) {
+      await this.submitForReview(updated, user, identityChanged);
+    }
+
     await this.auditWriter.write(
       user?.id ?? null,
       'pharmacy.profile.update',
@@ -149,11 +310,72 @@ export class PharmacyService {
         pharmacyId,
         name: updated.name,
         licenseNumber: updated.licenseNumber,
+        resubmittedForReview: needsReview,
       },
       ipAddress,
     );
 
     return this.getProfile(pharmacyId, user);
+  }
+
+  /**
+   * Put a pharmacy into the admin Verification Center queue. Reuses an open
+   * request when one exists so repeated saves do not flood the reviewer with
+   * duplicate rows for the same pharmacy.
+   */
+  private async submitForReview(
+    pharmacy: { id: string; name: string; licenseNumber: string | null },
+    user: AuthenticatedUser,
+    identityChanged: boolean,
+  ) {
+    const OPEN = [
+      VerificationRequestStatus.PENDING,
+      VerificationRequestStatus.UNDER_REVIEW,
+      VerificationRequestStatus.ESCALATED,
+      VerificationRequestStatus.REQUEST_INFO,
+    ];
+
+    await this.prisma.pharmacy.update({
+      where: { id: pharmacy.id },
+      data: {
+        verificationStatus: VerificationStatus.PENDING,
+        isParticipating: false,
+        updatedAt: new Date(),
+      },
+    });
+
+    const open = await this.prisma.verificationRequest.findFirst({
+      where: { pharmacyId: pharmacy.id, status: { in: OPEN } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const note = identityChanged
+      ? 'Pharmacy updated its name or licence number — re-verification required.'
+      : 'Pharmacy updated its profile and resubmitted for verification.';
+
+    if (open) {
+      await this.prisma.verificationRequest.update({
+        where: { id: open.id },
+        data: {
+          pharmacyName: pharmacy.name,
+          licenseNumber: pharmacy.licenseNumber || '',
+          status: VerificationRequestStatus.PENDING,
+          notes: open.notes ? `${open.notes}\n${note}` : note,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.verificationRequest.create({
+      data: {
+        pharmacyId: pharmacy.id,
+        pharmacyName: pharmacy.name,
+        licenseNumber: pharmacy.licenseNumber || '',
+        submittedBy: `${user.fullName} (${user.email})`,
+        status: VerificationRequestStatus.PENDING,
+        notes: note,
+      },
+    });
   }
 
   async getUserNotifications(userId: string) {
