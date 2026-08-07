@@ -63,7 +63,11 @@ export class PharmacyService {
   }
 
   async findById(id: string) {
-    return this.prisma.pharmacy.findUnique({ where: { id } });
+    const pharmacy = await this.prisma.pharmacy.findUnique({ where: { id } });
+    // Returning null here would serialize as a 200 with an empty body, which
+    // clients cannot distinguish from a successful fetch — surface a 404.
+    if (!pharmacy) throw new NotFoundException('Pharmacy not found');
+    return pharmacy;
   }
 
   async getProfile(pharmacyId: string, user?: AuthenticatedUser) {
