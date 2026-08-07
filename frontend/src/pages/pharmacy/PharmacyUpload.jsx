@@ -152,11 +152,21 @@ export default function PharmacyUpload() {
         <div className="flex items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 text-warning">
           <AlertTriangle className="size-5 shrink-0" />
           <div className="flex flex-col gap-0.5 text-xs">
-            <span className="font-bold text-sm">Pharmacy Verification Notice ({profile.verificationStatus})</span>
-            <span>
-              Your pharmacy identity <strong>{profile.name}</strong> ({profile.licenseNumber}) has status <strong>{profile.verificationStatus}</strong>.
-              {profile.verificationStatus === 'INFO_REQUESTED' ? ' Reviewer requested additional information. Please check your Pharmacy Profile.' : ' Verification must be active for public availability signals.'}
+            <span className="font-bold text-sm">
+              Pharmacy Verification Notice{profile.isDraft ? '' : ` (${profile.verificationStatus})`}
             </span>
+            {profile.isDraft ? (
+              <span>
+                We do not have your pharmacy details yet. Add your name, licence number and
+                address on the Pharmacy Profile page to submit for verification — verification
+                must be active for public availability signals.
+              </span>
+            ) : (
+              <span>
+                Your pharmacy identity <strong>{profile.name}</strong> ({profile.licenseNumber}) has status <strong>{profile.verificationStatus}</strong>.
+                {profile.verificationStatus === 'INFO_REQUESTED' ? ' Reviewer requested additional information. Please check your Pharmacy Profile.' : ' Verification must be active for public availability signals.'}
+              </span>
+            )}
           </div>
         </div>
       )}

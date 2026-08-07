@@ -21,6 +21,7 @@ import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { ImportInventoryDto } from './dto/import-inventory.dto';
+import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 
 @ApiTags('pharmacy')
 @Controller('pharmacies')
@@ -38,26 +39,34 @@ export class PharmacyController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get profile details for the logged-in pharmacy' })
+  @ApiOperation({
+    summary: 'Get profile details for the logged-in pharmacy',
+    description:
+      'Returns the pharmacy record managed in Pharmacy Management. An account ' +
+      'with no pharmacy linked yet gets an empty draft (isDraft: true) to fill in.',
+  })
   async getProfile(
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
-    return this.pharmacy.getProfile(resolvedId, user);
+    return this.pharmacy.getMyProfile(user);
   }
 
   @Patch('me')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update profile details for the logged-in pharmacy' })
+  @ApiOperation({
+    summary: 'Save the logged-in pharmacy profile and submit it for verification',
+    description:
+      'Creates the pharmacy record on first submit, links it to the caller, and ' +
+      'files a verification request for the admin Verification Center.',
+  })
   async updateProfile(
     @CurrentUser() user: AuthenticatedUser,
     @Ip() ipAddress: string,
-    @Body() body: any,
+    @Body() dto: UpdatePharmacyProfileDto,
   ) {
-    const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
-    return this.pharmacy.updateProfile(resolvedId, body, user, ipAddress);
+    return this.pharmacy.saveMyProfile(user, dto, ipAddress);
   }
 
   @Get('notifications')
