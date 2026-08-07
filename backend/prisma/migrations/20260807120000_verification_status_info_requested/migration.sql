@@ -1,0 +1,15 @@
+-- AlterEnum
+--
+-- INFO_REQUESTED was added to the VerificationStatus enum in schema.prisma but
+-- never made it into a migration, so the database type still only carries the
+-- five values from 0_init. Any write of it fails with
+--   invalid input value for enum "VerificationStatus": "INFO_REQUESTED"
+-- which breaks the admin "Request info" review action
+-- (VerificationService.update -> REQUEST_INFO) and the pharmacy-admin status
+-- mapping that mirrors it.
+--
+-- IF NOT EXISTS keeps this idempotent: an environment where the value was
+-- already applied out-of-band (e.g. `prisma db push`) still migrates cleanly
+-- rather than aborting the deploy on a duplicate. Requires PostgreSQL 12+;
+-- every compose file here pins postgres:16-alpine.
+ALTER TYPE "VerificationStatus" ADD VALUE IF NOT EXISTS 'INFO_REQUESTED';
