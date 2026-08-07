@@ -119,19 +119,82 @@ export const getIntegration = () => settle(INTEGRATION)
 // TODO(backend): POST /pharmacy/integration/sync
 export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' })
 
+// Shape a raw Pharmacy row (GET /pharmacies/:id) like the /pharmacies/me
+// payload, so the profile page renders identically from either source.
+const toProfile = (row, email) => ({
+  id: row.id,
+  isDraft: false,
+  name: row.name || '',
+  licenseNumber: row.licenseNumber || '',
+  verificationStatus: row.verificationStatus || 'UNVERIFIED',
+  isParticipating: !!row.isParticipating,
+  phone: row.phone || '',
+  email: email || '',
+  addressLine1: row.addressLine1 || '',
+  addressLine2: row.addressLine2 || '',
+  city: row.city || '',
+  region: row.region || '',
+  country: row.country || '',
+  postalCode: row.postalCode || '',
+  reliabilityScore: Math.round((row.reliabilityScore || 0) * 100),
+  // Reviewer correspondence lives behind /pharmacies/me only.
+  reviewStatus: null,
+  reviewedBy: null,
+  submittedAt: null,
+  notes: null,
+})
+
+const emptyDraft = (email) => ({
+  id: null,
+  isDraft: true,
+  name: '',
+  licenseNumber: '',
+  verificationStatus: 'UNVERIFIED',
+  isParticipating: false,
+  phone: '',
+  email: email || '',
+  addressLine1: '',
+  addressLine2: '',
+  city: '',
+  region: '',
+  country: '',
+  postalCode: '',
+  reliabilityScore: 0,
+  reviewStatus: null,
+  reviewedBy: null,
+  submittedAt: null,
+  notes: null,
+})
+
+// Read the pharmacy's own record straight from Pharmacy Management using the
+// account's pharmacy link. This is the compatibility path for a deployed API
+// that predates /pharmacies/me: that build answers the aggregate route with an
+// empty 200 (it falls through to GET /pharmacies/:id), but the underlying
+// pharmacy row and /auth/me are both still available, so the operator's real
+// details can be shown rather than an error. Retires itself the moment
+// /pharmacies/me responds properly.
+const getProfileViaPharmacyRecord = async () => {
+  const me = await apiFetch('/auth/me')
+  if (!me?.pharmacyId) return emptyDraft(me?.email)
+
+  const row = await apiFetch(`/pharmacies/${me.pharmacyId}`)
+  if (!row || typeof row !== 'object') return emptyDraft(me?.email)
+  return toProfile(row, me.email)
+}
+
 // The pharmacy's own identity, licence and address. Deliberately has NO demo
 // fallback: this is the operator's real record, and quietly substituting another
-// pharmacy's sample details would read as their own saved data. Callers surface
-// the failure instead.
+// pharmacy's sample details would read as their own saved data.
 export const getProfile = async () => {
   const profile = await apiFetch('/pharmacies/me')
-  // A 200 with an empty body means the request never reached the profile
-  // handler — e.g. an older backend where GET /pharmacies/:id shadows
-  // GET /pharmacies/me and resolves to a null pharmacy.
-  if (!profile || typeof profile !== 'object') {
-    throw new Error('The profile service is unavailable. Please try again shortly.')
-  }
-  return profile
+  if (profile && typeof profile === 'object') return profile
+
+  // An empty 200 means the request never reached the profile handler. Fall back
+  // to the pharmacy record itself. Note this is only reached for that specific
+  // signature — a 401/403 still propagates, so a genuine authorization failure
+  // is never masked by the fallback.
+  console.warn('[pharmacy-api] /pharmacies/me returned no payload, reading the pharmacy record directly')
+  return getProfileViaPharmacyRecord()
 }
 
 // Fields the pharmacy may edit — mirrors UpdatePharmacyProfileDto on the API.
@@ -148,7 +211,23 @@ export const updateProfile = async (patch) => {
     if (patch?.[key] !== undefined && patch[key] !== null) body[key] = patch[key]
   }
 
-  const res = await apiFetch('/pharmacies/me', { method: 'PATCH', body })
+  let res
+  try {
+    res = await apiFetch('/pharmacies/me', { method: 'PATCH', body })
+  } catch (err) {
+    // There is no read-only fallback for writing: an API build without
+    // PATCH /pharmacies/me answers "Cannot PATCH /api/pharmacies/me". Say the
+    // save did not happen rather than leaking the router message, and never
+    // report success for a write that never landed.
+    if (/cannot patch/i.test(err.message || '')) {
+      console.warn('[pharmacy-api] PATCH /pharmacies/me is missing on this API build', err)
+      throw new Error(
+        'Saving is unavailable right now — your changes were not saved. Please try again later or contact ZoikoMeds support.',
+      )
+    }
+    throw err
+  }
+
   window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
   return res
 }
