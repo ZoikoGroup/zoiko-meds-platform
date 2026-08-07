@@ -48,6 +48,16 @@ const REVIEW_NOTICE = {
   },
 }
 
+// A draft whose account already has a request queued by an admin. The pharmacy
+// record does not exist yet, so verificationStatus is still UNVERIFIED — but
+// telling the operator nothing has been submitted would contradict the reviewer
+// note they can see, so key the notice off the request instead.
+const AWAITING_DETAILS_NOTICE = {
+  tone: 'info',
+  title: 'The ZoikoMeds team is waiting for your pharmacy details',
+  body: 'Your account is queued for verification but we do not have your pharmacy details yet. Fill in the name, licence number and address below, then save to send them for review.',
+}
+
 const TONE_CLASS = {
   info: 'border-info/40 bg-info/10 text-info',
   warning: 'border-warning/40 bg-warning/10 text-warning',
@@ -171,7 +181,10 @@ export default function PharmacyProfile() {
   }
 
   const verify = VERIFY_META[profile.verificationStatus] ?? VERIFY_META.UNVERIFIED
-  const notice = REVIEW_NOTICE[profile.verificationStatus]
+  const awaitingDetails = profile.isDraft && !!profile.reviewStatus
+  const notice = awaitingDetails
+    ? AWAITING_DETAILS_NOTICE
+    : REVIEW_NOTICE[profile.verificationStatus]
   const isVerified = profile.verificationStatus === 'VERIFIED'
   const initials = profile.name?.trim()?.slice(0, 2).toUpperCase()
 
@@ -208,7 +221,12 @@ export default function PharmacyProfile() {
           tone={notice.tone}
           title={notice.title}
           body={notice.body}
-          detail={profile.verificationStatus === 'INFO_REQUESTED' ? profile.notes : null}
+          detail={
+            profile.verificationStatus === 'INFO_REQUESTED' ||
+            profile.reviewStatus === 'REQUEST_INFO'
+              ? profile.notes
+              : null
+          }
         />
       )}
 

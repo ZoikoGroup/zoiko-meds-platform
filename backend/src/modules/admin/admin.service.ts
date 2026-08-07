@@ -612,15 +612,9 @@ export class AdminService {
     if (!user || user.pharmacyId) return;
 
     const userEmail = user.email.toLowerCase();
-    const defaultLicense = `LIC-${user.id.slice(-6).toUpperCase()}`;
 
     const existing = await this.prisma.verificationRequest.findFirst({
-      where: {
-        OR: [
-          { submittedBy: { contains: userEmail, mode: 'insensitive' } },
-          { licenseNumber: defaultLicense },
-        ],
-      },
+      where: { submittedBy: { contains: userEmail, mode: 'insensitive' } },
     });
 
     if (existing) {
@@ -636,14 +630,21 @@ export class AdminService {
         });
       }
     } else {
-      const pharmacyName = `${user.fullName} Pharmacy`;
+      // Placeholder row so reviewers can see the account is waiting to onboard.
+      // The licence is left blank rather than synthesised as "LIC-<user id>": a
+      // made-up value renders in the Verification Center exactly like a licence
+      // the pharmacy supplied, and it can never match the real one, which used
+      // to leave a second row behind once the operator submitted for real.
+      // PharmacyService.saveMyProfile adopts this row by submitter and fills in
+      // the true name and licence.
+      const pharmacyName = `${user.fullName} Pharmacy (awaiting details)`;
       const req = await this.prisma.verificationRequest.create({
         data: {
           pharmacyName,
-          licenseNumber: defaultLicense,
+          licenseNumber: '',
           submittedBy: `${user.fullName} (${user.email})`,
           status: VerificationRequestStatus.PENDING,
-          notes: `Automated pending verification request created upon role assignment to ${roleLabel(user.role)}.`,
+          notes: `Account given the ${roleLabel(user.role)} role. Awaiting the pharmacy's own details from the pharmacy portal profile.`,
         },
       });
 

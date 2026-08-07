@@ -185,6 +185,52 @@ describe('PharmacyService self-service profile onboarding', () => {
       expect(result.verificationStatus).toBe('PENDING');
     });
 
+    it('adopts the admin-provisioned request matched by submitter, filling in the real licence', async () => {
+      prisma.user.findUnique.mockResolvedValue({ pharmacyId: null });
+      prisma.pharmacy.create.mockResolvedValue({ id: 'ph_new', name: 'Apollo Kompally' });
+      // AdminService.ensurePharmacyVerificationRequest leaves licenceNumber blank,
+      // so licence matching alone would miss it and duplicate the row.
+      prisma.verificationRequest.findFirst.mockResolvedValue({
+        id: 'vr_admin',
+        notes: 'Account given the Pharmacy Manager role.',
+      });
+      prisma.pharmacy.findUnique.mockResolvedValue({
+        id: 'ph_new', name: 'Apollo Kompally', licenseNumber: 'LIC-REAL',
+        verificationStatus: 'PENDING', isParticipating: false, reliabilityScore: 0,
+      });
+
+      await service.saveMyProfile(USER, {
+        name: 'Apollo Kompally',
+        licenseNumber: 'LIC-REAL',
+      });
+
+      expect(prisma.verificationRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'vr_admin' },
+          data: expect.objectContaining({
+            pharmacyId: 'ph_new',
+            pharmacyName: 'Apollo Kompally',
+            licenseNumber: 'LIC-REAL',
+            status: 'PENDING',
+          }),
+        }),
+      );
+      expect(prisma.verificationRequest.create).not.toHaveBeenCalled();
+      // The lookup must consider the submitting account, not just the licence.
+      expect(prisma.verificationRequest.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            pharmacyId: null,
+            OR: expect.arrayContaining([
+              expect.objectContaining({
+                submittedBy: { contains: 'owner@apollo.in', mode: 'insensitive' },
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
     it('adopts an admin-raised orphan request for the same licence instead of duplicating', async () => {
       prisma.user.findUnique.mockResolvedValue({ pharmacyId: null });
       prisma.pharmacy.create.mockResolvedValue({ id: 'ph_new', name: 'Apollo' });
@@ -198,7 +244,14 @@ describe('PharmacyService self-service profile onboarding', () => {
 
       expect(prisma.verificationRequest.update).toHaveBeenCalledWith({
         where: { id: 'vr_orphan' },
-        data: { pharmacyId: 'ph_new', pharmacyName: 'Apollo' },
+        data: {
+          pharmacyId: 'ph_new',
+          pharmacyName: 'Apollo',
+          licenseNumber: 'LIC-9',
+          submittedBy: 'Asha Rao (owner@apollo.in)',
+          status: 'PENDING',
+          notes: 'Submitted by the pharmacy from the pharmacy portal profile.',
+        },
       });
       expect(prisma.verificationRequest.create).not.toHaveBeenCalled();
     });
