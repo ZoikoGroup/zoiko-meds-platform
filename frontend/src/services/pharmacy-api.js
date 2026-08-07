@@ -87,7 +87,9 @@ import { listNotifications } from './admin-api'
 export const getNotifications = async () => {
   let userNotifications = []
   try {
-    userNotifications = await apiFetch('/pharmacies/notifications')
+    const res = await apiFetch('/pharmacies/notifications')
+    // Guard against a 200 with an empty body — spreading a null below throws.
+    userNotifications = Array.isArray(res) ? res : []
   } catch {
     userNotifications = []
   }
@@ -119,7 +121,16 @@ export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' }
 
 export const getProfile = async () => {
   try {
-    return await apiFetch('/pharmacies/me')
+    const profile = await apiFetch('/pharmacies/me')
+    // A 200 with an empty body means the request never reached the profile
+    // handler — e.g. an older backend where GET /pharmacies/:id shadows
+    // GET /pharmacies/me and resolves to a null pharmacy. Returning that null
+    // straight through leaves the page stuck on its loading state forever, so
+    // treat it as a failure and fall back to demo data like the routes above.
+    if (!profile || typeof profile !== 'object') {
+      throw new Error('Profile endpoint returned an empty response')
+    }
+    return profile
   } catch (err) {
     console.warn('[pharmacy-api] Get profile API failed, fallback to demo profile', err)
     return structuredClone(PROFILE)
@@ -142,7 +153,11 @@ export const updateProfile = async (patch) => {
 
 export const getReports = async () => {
   try {
-    return await apiFetch('/pharmacies/reports')
+    const reports = await apiFetch('/pharmacies/reports')
+    if (!reports || typeof reports !== 'object') {
+      throw new Error('Reports endpoint returned an empty response')
+    }
+    return reports
   } catch (err) {
     console.warn('[pharmacy-api] Get reports API failed', err)
     return settle(REPORTS)
