@@ -110,6 +110,11 @@ export const getNotifications = async () => {
     userNotifications = []
   }
 
+  // Platform broadcasts. listNotifications() hits /admin/notifications, which is
+  // SUPER_ADMIN-only — a pharmacy account gets 403 here every load, so this only
+  // ever resolves for an admin browsing the pharmacy portal. Reaching real
+  // broadcasts for pharmacy accounts needs a pharmacy-facing endpoint;
+  // TODO(backend): GET /pharmacies/announcements.
   let announcements = []
   try {
     const raw = await listNotifications()
@@ -126,9 +131,14 @@ export const getNotifications = async () => {
         unread: true,
       }))
   } catch {
-    // fallback gracefully
+    // Not reachable for pharmacy roles — leave broadcasts empty rather than
+    // substituting samples.
   }
-  return [...userNotifications, ...announcements, ...NOTIFICATIONS]
+
+  // Demo NOTIFICATIONS used to be appended unconditionally, so a fully verified
+  // pharmacy still saw fabricated alerts mixed in with its real ones — including
+  // invented verification messages that contradicted its actual status.
+  return [...userNotifications, ...announcements]
 }
 export const getParticipation = () => settle(PARTICIPATION)
 export const getIntegration = () => settle(INTEGRATION)
