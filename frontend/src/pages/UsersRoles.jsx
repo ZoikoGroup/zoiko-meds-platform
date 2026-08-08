@@ -23,7 +23,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
-import { ROLE_OPTIONS, ROLE_LABELS, ROLE_BADGE, ROLES } from '@/lib/roles'
+import { ROLE_OPTIONS, ROLE_LABELS, ROLE_BADGE, ROLES, isPharmacy } from '@/lib/roles'
 
 export default function UsersRoles() {
   const [users, setUsers] = useState([])
@@ -45,6 +45,7 @@ export default function UsersRoles() {
   })
   const [resetPw, setResetPw] = useState('')
   const [formError, setFormError] = useState('')
+  const [pharmacies, setPharmacies] = useState([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,9 +60,27 @@ export default function UsersRoles() {
     }
   }, [])
 
+  // Pharmacy-role accounts are locked out of the whole pharmacy portal until
+  // they are linked to a pharmacy — /pharmacies/inventory and /dashboard answer
+  // 403 without it — so the console needs to be able to make that link.
+  const loadPharmacies = useCallback(async () => {
+    try {
+      const res = await admin.listPharmacies({ pageSize: 200 })
+      setPharmacies(res?.items ?? [])
+    } catch {
+      setPharmacies([])
+    }
+  }, [])
+
   useEffect(() => {
     load()
-  }, [load])
+    loadPharmacies()
+  }, [load, loadPharmacies])
+
+  const pharmacyNameById = useMemo(
+    () => new Map(pharmacies.map((p) => [p.id, p.name])),
+    [pharmacies],
+  )
 
   const filteredUsers = useMemo(() => {
     if (roleFilter === 'All') return users
@@ -83,6 +102,14 @@ export default function UsersRoles() {
     },
     [load]
   )
+
+  // UpdateUserDto treats an empty string as "clear the association" — it is
+  // typed @IsString(), so '' is the documented signal rather than null.
+  const assignPharmacy = (row, pharmacyId) =>
+    run(row.id, async () => {
+      await admin.updateUser(row.id, { pharmacyId: pharmacyId || '' })
+      window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+    })
 
   const handleCreateUser = async (e) => {
     e.preventDefault()
@@ -162,6 +189,28 @@ export default function UsersRoles() {
       ),
     },
     {
+      key: 'pharmacy',
+      header: 'Pharmacy',
+      cell: (row) => {
+        if (!isPharmacy(row.role)) {
+          return <span className="text-xs text-muted-foreground">—</span>
+        }
+        if (!row.pharmacyId) {
+          return (
+            <Badge variant="warning" className="gap-1">
+              <AlertTriangle className="size-3" />
+              Not linked
+            </Badge>
+          )
+        }
+        return (
+          <span className="text-xs text-foreground">
+            {pharmacyNameById.get(row.pharmacyId) || row.pharmacyId}
+          </span>
+        )
+      },
+    },
+    {
       key: 'isActive',
       header: 'Status',
       sortable: true,
@@ -228,6 +277,22 @@ export default function UsersRoles() {
           </option>
         ))}
       </select>
+      {isPharmacy(row.role) && (
+        <select
+          value={row.pharmacyId || ''}
+          title="Assign pharmacy"
+          disabled={busyId === row.id}
+          onChange={(e) => assignPharmacy(row, e.target.value)}
+          className="max-w-[9rem] rounded-md border border-border bg-card px-1.5 py-1 text-[11px] text-foreground outline-none focus:border-primary"
+        >
+          <option value="">Not linked</option>
+          {pharmacies.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
       <Button
         variant="ghost"
         size="icon-sm"

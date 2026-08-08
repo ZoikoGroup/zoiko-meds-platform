@@ -14,11 +14,26 @@ import {
 const settle = (value, ms = 300) =>
   new Promise((resolve) => setTimeout(() => resolve(structuredClone(value)), ms))
 
+// Marker for "this account has no pharmacy linked yet". The API answers 403 with
+// this wording from PharmacyService.resolvePharmacyId. It is a real state with a
+// real remedy — finish the pharmacy profile — not a transport failure, so pages
+// must not paper over it with demo stock that looks like the operator's own.
+export class PharmacyNotLinkedError extends Error {
+  constructor(message) {
+    super(message || 'Your account is not linked to a pharmacy yet.')
+    this.name = 'PharmacyNotLinkedError'
+    this.notLinked = true
+  }
+}
+
+const isNotLinked = (err) => /not linked to a pharmacy/i.test(err?.message || '')
+
 // --- Inventory (REAL API) ---------------------------------------------------
 export const getInventory = async () => {
   try {
     return await apiFetch('/pharmacies/inventory')
-  } catch {
+  } catch (err) {
+    if (isNotLinked(err)) throw new PharmacyNotLinkedError(err.message)
     // Fallback to demo data if backend is unreachable or user is unauthenticated
     console.warn('[pharmacy-api] Inventory API failed, using demo data')
     return structuredClone(INVENTORY)
@@ -51,7 +66,8 @@ export const importCsv = (rows, mode = 'merge') =>
 export const getDashboard = async () => {
   try {
     return await apiFetch('/pharmacies/dashboard')
-  } catch {
+  } catch (err) {
+    if (isNotLinked(err)) throw new PharmacyNotLinkedError(err.message)
     console.warn('[pharmacy-api] Dashboard API failed, fallback to live inventory calculation')
     const inv = await getInventory()
     const available = inv.filter((m) => m.status === 'available').length
@@ -94,6 +110,11 @@ export const getNotifications = async () => {
     userNotifications = []
   }
 
+  // Platform broadcasts. listNotifications() hits /admin/notifications, which is
+  // SUPER_ADMIN-only — a pharmacy account gets 403 here every load, so this only
+  // ever resolves for an admin browsing the pharmacy portal. Reaching real
+  // broadcasts for pharmacy accounts needs a pharmacy-facing endpoint;
+  // TODO(backend): GET /pharmacies/announcements.
   let announcements = []
   try {
     const raw = await listNotifications()
@@ -110,9 +131,14 @@ export const getNotifications = async () => {
         unread: true,
       }))
   } catch {
-    // fallback gracefully
+    // Not reachable for pharmacy roles — leave broadcasts empty rather than
+    // substituting samples.
   }
-  return [...userNotifications, ...announcements, ...NOTIFICATIONS]
+
+  // Demo NOTIFICATIONS used to be appended unconditionally, so a fully verified
+  // pharmacy still saw fabricated alerts mixed in with its real ones — including
+  // invented verification messages that contradicted its actual status.
+  return [...userNotifications, ...announcements]
 }
 export const getParticipation = () => settle(PARTICIPATION)
 export const getIntegration = () => settle(INTEGRATION)

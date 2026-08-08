@@ -123,6 +123,20 @@ export class PharmacyService {
     const pharmacyId = await this.findMyPharmacyId(user);
     if (pharmacyId) return this.getProfile(pharmacyId, user);
 
+    // An admin may already have queued a placeholder request for this account
+    // (AdminService.ensurePharmacyVerificationRequest). Carry its reviewer
+    // correspondence into the draft so the operator sees where they stand
+    // instead of being told nothing has been submitted.
+    const pending = user?.email
+      ? await this.prisma.verificationRequest.findFirst({
+          where: {
+            pharmacyId: null,
+            submittedBy: { contains: user.email, mode: 'insensitive' },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : null;
+
     return {
       id: null,
       isDraft: true,
@@ -139,10 +153,10 @@ export class PharmacyService {
       country: '',
       postalCode: '',
       reliabilityScore: 0,
-      reviewStatus: null,
-      reviewedBy: null,
-      submittedAt: null,
-      notes: null,
+      reviewStatus: pending?.status ?? null,
+      reviewedBy: pending?.reviewer ?? null,
+      submittedAt: pending?.createdAt ?? null,
+      notes: pending?.notes ?? null,
     };
   }
 
@@ -209,15 +223,38 @@ export class PharmacyService {
         data: { pharmacyId: pharmacy.id },
       });
 
-      // Adopt any request an admin raised for this licence before the record
-      // existed, so the Verification Center shows one row, not two.
+      // Adopt any request raised before this pharmacy record existed so the
+      // Verification Center shows one row, not two.
+      //
+      // Matching on licence alone is not enough: AdminService provisions a
+      // request via ensurePharmacyVerificationRequest as soon as an account gets
+      // a pharmacy role, and it cannot know the real licence — so that row never
+      // matches what the operator later types. Match on the submitting account
+      // as well, which is the stable identifier across both paths, and overwrite
+      // the provisional name/licence with what was actually submitted.
       const orphan = await tx.verificationRequest.findFirst({
-        where: { pharmacyId: null, licenseNumber },
+        where: {
+          pharmacyId: null,
+          OR: [
+            { licenseNumber },
+            { submittedBy: { contains: user.email, mode: 'insensitive' } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
       });
       if (orphan) {
         await tx.verificationRequest.update({
           where: { id: orphan.id },
-          data: { pharmacyId: pharmacy.id, pharmacyName: name },
+          data: {
+            pharmacyId: pharmacy.id,
+            pharmacyName: name,
+            licenseNumber,
+            submittedBy: `${user.fullName} (${user.email})`,
+            status: VerificationRequestStatus.PENDING,
+            notes: orphan.notes
+              ? `${orphan.notes}\nPharmacy submitted its own details from the pharmacy portal profile.`
+              : 'Submitted by the pharmacy from the pharmacy portal profile.',
+          },
         });
       } else {
         await tx.verificationRequest.create({

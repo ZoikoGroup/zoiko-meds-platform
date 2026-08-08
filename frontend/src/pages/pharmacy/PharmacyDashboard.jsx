@@ -5,6 +5,7 @@ import { StatTile } from '@/components/shared/stat-tile'
 import { StatusBadge } from '@/components/shared/status'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
 import { getDashboard } from '@/services/pharmacy-api'
 import { STATUS_META } from '@/services/pharmacy-data'
 import {
@@ -29,11 +30,22 @@ const QUICK_ACTIONS = [
 export default function PharmacyDashboard() {
   const navigate = useNavigate()
   const [data, setData] = useState(null)
+  const [notLinked, setNotLinked] = useState(false)
 
   useEffect(() => {
     let alive = true
     const load = () => {
-      getDashboard().then((d) => alive && setData(d)).catch(() => {})
+      getDashboard()
+        .then((d) => {
+          if (!alive) return
+          setData(d)
+          setNotLinked(false)
+        })
+        .catch((err) => {
+          // No pharmacy linked yet: point at onboarding instead of leaving the
+          // spinner up or showing demo stats as if they were the operator's.
+          if (alive && err?.notLinked) setNotLinked(true)
+        })
     }
     load()
     window.addEventListener('pharmacy-inventory-updated', load)
@@ -44,6 +56,18 @@ export default function PharmacyDashboard() {
       window.removeEventListener('focus', load)
     }
   }, [])
+
+  if (notLinked) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Pharmacy dashboard"
+          subtitle="Your availability signals, stock health, and pending updates."
+        />
+        <PharmacyOnboardingState className="max-w-4xl" />
+      </div>
+    )
+  }
 
   if (!data) {
     return (

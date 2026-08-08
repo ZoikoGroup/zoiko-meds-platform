@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Flash, useFlash } from '@/components/shared/flash'
+import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog'
@@ -24,6 +25,7 @@ const EMPTY_FORM = { name: '', generic: '', strength: '', dosageForm: 'Tablet', 
 export default function PharmacyInventory() {
   const navigate = useNavigate()
   const [rows, setRows] = useState(null)
+  const [notLinked, setNotLinked] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
   const [flashMsg, flash] = useFlash()
 
@@ -35,8 +37,20 @@ export default function PharmacyInventory() {
 
   const loadData = () => {
     getInventory()
-      .then((r) => setRows(r || []))
-      .catch(() => setRows([]))
+      .then((r) => {
+        setRows(r || [])
+        setNotLinked(false)
+      })
+      .catch((err) => {
+        // No pharmacy linked yet — show the onboarding path, not an empty table
+        // that implies the pharmacy simply has no stock recorded.
+        if (err?.notLinked) {
+          setNotLinked(true)
+          setRows([])
+          return
+        }
+        setRows([])
+      })
   }
 
   useEffect(() => {
@@ -168,6 +182,21 @@ export default function PharmacyInventory() {
     return (
       <div className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" /> Loading inventory…
+      </div>
+    )
+  }
+
+  if (notLinked) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Inventory"
+          subtitle="Manage the medicines your pharmacy stocks and keep availability current."
+        />
+        <PharmacyOnboardingState
+          description="Inventory belongs to a verified pharmacy. Add your pharmacy name, licence number and address, and once the ZoikoMeds team verifies you, your stock list opens up here."
+          className="max-w-4xl"
+        />
       </div>
     )
   }
