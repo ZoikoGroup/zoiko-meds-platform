@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AvailabilityConfidence,
+  CommercialClassification,
   VerificationRequestStatus,
   VerificationStatus,
 } from '@prisma/client';
@@ -104,6 +105,10 @@ export class PharmacyService {
       country: pharmacy.country || '',
       postalCode: pharmacy.postalCode || '',
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      // Commercial standing, so the portal can show the plan without a second
+      // round trip. Deliberately not the price: what a pharmacy pays comes from
+      // the catalog, and the profile is not a billing surface (ZM-COM-BILL-001).
+      commercialClassification: pharmacy.commercialClassification,
       reviewStatus: latestReq?.status ?? null,
       reviewedBy: latestReq?.reviewer ?? null,
       submittedAt: latestReq?.createdAt ?? null,
@@ -153,6 +158,8 @@ export class PharmacyService {
       country: '',
       postalCode: '',
       reliabilityScore: 0,
+      // No pharmacy record exists yet, so there is nothing claimed either.
+      commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
       reviewStatus: pending?.status ?? null,
       reviewedBy: pending?.reviewer ?? null,
       submittedAt: pending?.createdAt ?? null,

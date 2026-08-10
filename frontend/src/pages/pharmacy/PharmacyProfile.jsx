@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { ErrorState } from '@/components/shared/states'
 import { getProfile, updateProfile } from '@/services/pharmacy-api'
-import { Building2, ShieldCheck, Loader2, AlertCircle, Info } from 'lucide-react'
+import { CLASSIFICATION_META } from '@/lib/commercial'
+import { Building2, ShieldCheck, Loader2, AlertCircle, Info, CreditCard } from 'lucide-react'
 
 const VERIFY_META = {
   VERIFIED: { variant: 'success', label: 'Verified' },
@@ -187,6 +188,7 @@ export default function PharmacyProfile() {
     : REVIEW_NOTICE[profile.verificationStatus]
   const isVerified = profile.verificationStatus === 'VERIFIED'
   const initials = profile.name?.trim()?.slice(0, 2).toUpperCase()
+  const plan = CLASSIFICATION_META[profile.commercialClassification] ?? null
 
   return (
     <form onSubmit={save} className="flex flex-col gap-6">
@@ -277,6 +279,33 @@ export default function PharmacyProfile() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Plan — read-only. The profile is not a billing surface: there is no
+            price, no payment method and no checkout here. */}
+        {plan && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="size-4 text-primary" /> Plan
+              </CardTitle>
+              <CardDescription>
+                Your participation in the ZoikoMeds network.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 pt-5">
+              <div className="flex items-center gap-2">
+                <Badge variant={plan.variant}>{plan.label}</Badge>
+                {!plan.billable && (
+                  <span className="text-xs text-muted-foreground">No charge</span>
+                )}
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Network Core participation is free during the supply-density build phase, and your
+                pharmacy&apos;s position in patient search is never affected by what you pay.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Address */}
         <Card>

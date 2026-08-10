@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Blocks,
   Building2,
@@ -12,6 +12,7 @@ import {
   Users as UsersIcon,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
+import { EmptyState } from '@/components/shared/states'
 import { StatusBadge, ServiceStatusBadge } from '@/components/shared/status'
 import { DataTable } from '@/components/shared/data-table'
 import {
@@ -46,8 +47,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Check, Minus } from 'lucide-react'
-import { apiKeys, auditLogs, billingSummary, integrations, roleMatrix, users } from '@/services/ops-data'
+import { Check, FileText, Minus } from 'lucide-react'
+import { apiKeys, auditLogs, integrations, roleMatrix, users } from '@/services/ops-data'
 import { useAuth } from '@/providers/auth-provider'
 import { initials } from '@/utils/format'
 
@@ -420,39 +421,23 @@ export default function Settings() {
             <Card className="lg:col-span-1">
               <CardHeader>
                 <CardTitle>Plan</CardTitle>
-                <CardDescription>Current subscription.</CardDescription>
+                <CardDescription>Commercial standing for this organization.</CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
+              <CardContent className="flex flex-col gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl font-semibold tracking-tight">
-                    {billingSummary.plan}
-                  </span>
-                  <Badge variant="default" size="sm">
-                    Active
-                  </Badge>
+                  <span className="text-2xl font-semibold tracking-tight">Not billed</span>
+                  <Badge variant="secondary" size="sm">No subscription</Badge>
                 </div>
-                <dl className="flex flex-col gap-2 text-sm">
-                  {[
-                    ['Seats', billingSummary.seats],
-                    ['API tier', billingSummary.apiTier],
-                    ['Renews', billingSummary.renewal],
-                  ].map(([k, v]) => (
-                    <div key={k} className="flex justify-between">
-                      <dt className="text-muted-foreground">{k}</dt>
-                      <dd className="font-medium">{v}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">API usage this cycle</span>
-                    <span className="font-medium tabular">{billingSummary.usageThisCycle}%</span>
-                  </div>
-                  <Progress value={billingSummary.usageThisCycle} className="h-1.5" />
-                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Live charging is not enabled on this platform yet. Nothing is being invoiced, so
+                  there is no plan, renewal date or usage figure to show. Prices and commercial
+                  policy are managed on the Commercial page.
+                </p>
               </CardContent>
               <CardFooter className="gap-2">
-                <Button className="flex-1">Manage plan</Button>
+                <Button asChild className="flex-1">
+                  <Link to="/admin/commercial">Open Commercial</Link>
+                </Button>
               </CardFooter>
             </Card>
 
@@ -461,31 +446,12 @@ export default function Settings() {
                 <CardTitle>Invoices</CardTitle>
                 <CardDescription>Billing history.</CardDescription>
               </CardHeader>
-              <CardContent className="py-2">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Invoice</TableHead>
-                      <TableHead>Period</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {billingSummary.invoices.map((inv) => (
-                      <TableRow key={inv.id}>
-                        <TableCell className="font-mono text-xs">{inv.id}</TableCell>
-                        <TableCell>{inv.period}</TableCell>
-                        <TableCell className="text-right tabular">{inv.amount}</TableCell>
-                        <TableCell className="text-right">
-                          <StatusBadge tone="good" size="sm">
-                            {inv.status}
-                          </StatusBadge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <CardContent className="pt-2">
+                <EmptyState
+                  icon={FileText}
+                  title="No invoices"
+                  description="Invoices appear here once billing is live. An invoice never shows patient names, medicine names or search queries."
+                />
               </CardContent>
             </Card>
           </div>

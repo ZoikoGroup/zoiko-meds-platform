@@ -240,6 +240,9 @@ export class PharmacyAdminService {
       country: p.country,
       phone: p.phone,
       status: p.verificationStatus,
+      // Commercial standing is a separate axis from verification: a pharmacy can
+      // be verified and still non-billable (ZM-COM-BILL-001 S-B1).
+      commercialClassification: p.commercialClassification,
       availabilityScore: Math.round(p.reliabilityScore * 100),
       isParticipating: p.isParticipating,
       createdAt: p.createdAt,
