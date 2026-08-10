@@ -17,6 +17,7 @@ import { SignalModule } from './modules/signal/signal.module';
 import { SearchModule } from './modules/search/search.module';
 import { PharmacyModule } from './modules/pharmacy/pharmacy.module';
 import { EnterpriseModule } from './modules/enterprise/enterprise.module';
+import { CommercialModule } from './modules/commercial/commercial.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { EnterpriseModule } from './modules/enterprise/enterprise.module';
     SearchModule, // Public medicine search
     PharmacyModule, // Pharmacy verification & participation
     EnterpriseModule, // Enterprise inquiries / lead capture
+    CommercialModule, // ZM-COM-BILL-001 billing, subscriptions & participation
   ],
   providers: [
     // Enforce the configured rate limit globally. Without this the
