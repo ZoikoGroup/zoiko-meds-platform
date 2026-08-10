@@ -21,8 +21,12 @@ import {
   Trash2,
   Loader2,
   AlertTriangle,
+  CreditCard,
+  ShieldCheck,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
+import * as commercial from '@/services/commercial-api'
+import { BILLING_CAPABILITIES } from '@/lib/commercial'
 import { ROLE_OPTIONS, ROLE_LABELS, ROLE_BADGE, ROLES, isPharmacy } from '@/lib/roles'
 
 export default function UsersRoles() {
@@ -46,6 +50,13 @@ export default function UsersRoles() {
   const [resetPw, setResetPw] = useState('')
   const [formError, setFormError] = useState('')
   const [pharmacies, setPharmacies] = useState([])
+
+  // Billing capability drawer state
+  const [isCapOpen, setIsCapOpen] = useState(false)
+  const [capUser, setCapUser] = useState(null)
+  const [capData, setCapData] = useState(null)
+  const [capError, setCapError] = useState('')
+  const [capBusy, setCapBusy] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -110,6 +121,62 @@ export default function UsersRoles() {
       await admin.updateUser(row.id, { pharmacyId: pharmacyId || '' })
       window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
     })
+
+  // --- Billing capabilities (ZM-COM-BILL-001) -------------------------------
+
+  const openCapabilities = async (row) => {
+    setCapUser(row)
+    setCapError('')
+    setCapData(null)
+    setIsCapOpen(true)
+    try {
+      setCapData(await commercial.getUserCapabilities(row.id))
+    } catch (err) {
+      setCapError(err.message || 'Could not load billing capabilities.')
+    }
+  }
+
+  const refreshCapabilities = async () => {
+    if (!capUser) return
+    try {
+      setCapData(await commercial.getUserCapabilities(capUser.id))
+    } catch (err) {
+      setCapError(err.message || 'Could not reload billing capabilities.')
+    }
+  }
+
+  const toggleCapability = async (capability, held, financial) => {
+    if (!capUser) return
+    setCapBusy(capability)
+    setCapError('')
+    try {
+      if (held) {
+        const grant = capData?.grants?.find((g) => g.capability === capability)
+        // A capability that comes from the role rather than a grant has no row to
+        // revoke — say so instead of failing silently.
+        if (!grant) {
+          setCapError(
+            `${capability} comes from the ${capUser.role} role, not a grant, so it cannot be revoked here.`,
+          )
+          return
+        }
+        await commercial.revokeCapability(grant.id)
+      } else {
+        await commercial.grantCapability({
+          userId: capUser.id,
+          capability,
+          // Granting financial authority to an operational role is a
+          // separation-of-duties trade-off the API refuses unless acknowledged.
+          acknowledgeSeparationOfDutiesConflict: !!financial,
+        })
+      }
+      await refreshCapabilities()
+    } catch (err) {
+      setCapError(err.message || 'Could not update the capability.')
+    } finally {
+      setCapBusy(null)
+    }
+  }
 
   const handleCreateUser = async (e) => {
     e.preventDefault()
@@ -292,6 +359,16 @@ export default function UsersRoles() {
             </option>
           ))}
         </select>
+      )}
+      {row.role !== ROLES.PUBLIC && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Billing capabilities"
+          onClick={() => openCapabilities(row)}
+        >
+          <CreditCard className="size-4" />
+        </Button>
       )}
       <Button
         variant="ghost"
@@ -480,6 +557,82 @@ export default function UsersRoles() {
             </Button>
             <Button variant="destructive" onClick={confirmDelete}>
               Delete permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Billing capabilities */}
+      <Dialog open={isCapOpen} onOpenChange={setIsCapOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Billing capabilities</DialogTitle>
+            <DialogDescription>
+              {capUser?.fullName} ({capUser?.email}) — {ROLE_LABELS[capUser?.role] || capUser?.role}.
+              Billing authority is separate from verification and inventory authority.
+            </DialogDescription>
+          </DialogHeader>
+
+          {capUser?.role === ROLES.SUPER_ADMIN && (
+            <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/10 px-3 py-2 text-xs text-info">
+              <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
+              <span className="text-foreground/90">
+                A Super Admin holds every billing capability implicitly and is the only role that can
+                delegate them. Nothing needs granting here.
+              </span>
+            </div>
+          )}
+
+          {capError && (
+            <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              {capError}
+            </div>
+          )}
+
+          {!capData ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Loading capabilities…
+            </div>
+          ) : (
+            <div className="flex flex-col divide-y divide-border">
+              {BILLING_CAPABILITIES.map((cap) => {
+                const held = capData.capabilities?.includes(cap.code)
+                const fromGrant = capData.grants?.some((g) => g.capability === cap.code)
+                const isSuper = capUser?.role === ROLES.SUPER_ADMIN
+                return (
+                  <div key={cap.code} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium text-foreground">{cap.label}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {isSuper
+                          ? 'Held by role'
+                          : held
+                            ? fromGrant
+                              ? 'Granted'
+                              : 'From role'
+                            : 'Not held'}
+                        {cap.financial && ' · financial authority'}
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={held ? 'outline' : 'default'}
+                      disabled={isSuper || capBusy === cap.code || (held && !fromGrant)}
+                      onClick={() => toggleCapability(cap.code, held, cap.financial)}
+                    >
+                      {capBusy === cap.code && <Loader2 className="size-3.5 animate-spin" />}
+                      {held ? 'Revoke' : 'Grant'}
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCapOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

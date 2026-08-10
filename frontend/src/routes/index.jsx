@@ -39,6 +39,7 @@ const Reports = lazyImport(() => import('@/pages/Reports'), 'Reports')
 const Notifications = lazyImport(() => import('@/pages/Notifications'), 'Notifications')
 const AuditLogs = lazyImport(() => import('@/pages/AuditLogs'), 'AuditLogs')
 const Settings = lazyImport(() => import('@/pages/Settings'), 'Settings')
+const Commercial = lazyImport(() => import('@/pages/Commercial'), 'Commercial')
 
 // User Portal page chunks
 const UserHome = lazyImport(() => import('@/pages/UserHome'), 'UserHome')
@@ -107,6 +108,7 @@ export const router = createBrowserRouter([
           { path: 'reports', element: <Reports /> },
           { path: 'notifications', element: <Notifications /> },
           { path: 'audit-logs', element: <AuditLogs /> },
+          { path: 'commercial', element: <Commercial /> },
           { path: 'settings', element: <Settings /> },
         ],
       },

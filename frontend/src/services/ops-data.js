@@ -48,15 +48,3 @@ export const integrations = [
     { id: 'i7', name: 'Okta SSO', category: 'Identity', status: 'operational', lastSync: '3m ago' },
     { id: 'i8', name: 'Power BI', category: 'Analytics', status: 'maintenance', lastSync: '2h ago' },
 ];
-export const billingSummary = {
-    plan: 'Enterprise',
-    seats: '48 of 60',
-    apiTier: '600 req/min',
-    renewal: 'Mar 1, 2027',
-    usageThisCycle: 72,
-    invoices: [
-        { id: 'inv-2026-06', period: 'Jun 2026', amount: '$48,000', status: 'Paid' },
-        { id: 'inv-2026-05', period: 'May 2026', amount: '$48,000', status: 'Paid' },
-        { id: 'inv-2026-04', period: 'Apr 2026', amount: '$44,000', status: 'Paid' },
-    ],
-};

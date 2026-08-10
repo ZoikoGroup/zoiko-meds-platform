@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { CLASSIFICATION_META } from '@/lib/commercial'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DataTable } from '@/components/shared/data-table'
@@ -243,6 +244,24 @@ export default function PharmacyManagement() {
           <span>{row.name}</span>
         </div>
       ),
+    },
+    {
+      // Commercial standing, separate from verification status: a pharmacy can be
+      // verified and still non-billable (ZM-COM-BILL-001).
+      key: 'commercial',
+      header: 'Commercial',
+      cell: (row) => {
+        const plan = CLASSIFICATION_META[row.commercialClassification]
+        if (!plan) return <span className="text-xs text-muted-foreground">—</span>
+        return (
+          <div className="flex items-center gap-1.5">
+            <Badge variant={plan.variant} size="sm">{plan.label}</Badge>
+            {plan.billable && (
+              <span className="text-[11px] font-medium text-warning">billable</span>
+            )}
+          </div>
+        )
+      },
     },
     {
       key: 'status',

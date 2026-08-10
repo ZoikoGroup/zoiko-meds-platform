@@ -1,4 +1,4 @@
-import { Building2, Blocks, FileText, LayoutDashboard, Network, Radar, Settings, Webhook, Users, ShieldCheck, Bell, History, Scale } from 'lucide-react';
+import { Building2, Blocks, CreditCard, FileText, LayoutDashboard, Network, Radar, Settings, Webhook, Users, ShieldCheck, Bell, History, Scale } from 'lucide-react';
 export const navSections = [
     {
         items: [
@@ -25,6 +25,7 @@ export const navSections = [
     {
         heading: 'Workspace',
         items: [
+            { label: 'Commercial', to: '/commercial', icon: CreditCard },
             { label: 'Reports & Analytics', to: '/reports', icon: FileText },
             { label: 'Notifications', to: '/notifications', icon: Bell },
             { label: 'Audit Logs', to: '/audit-logs', icon: History },
@@ -48,6 +49,7 @@ export const routeMeta = {
     '/medibase': { title: 'MediBase™', section: 'Medicine Intelligence' },
     '/zoikoavail': { title: 'ZoikoAvail™', section: 'Medicine Intelligence' },
     '/zoikosignal': { title: 'ZoikoSignal™', section: 'Medicine Intelligence' },
+    '/commercial': { title: 'Commercial', section: 'Workspace' },
     '/reports': { title: 'Reports & Analytics', section: 'Workspace' },
     '/notifications': { title: 'Notifications', section: 'Workspace' },
     '/audit-logs': { title: 'Audit Logs', section: 'Workspace' },
