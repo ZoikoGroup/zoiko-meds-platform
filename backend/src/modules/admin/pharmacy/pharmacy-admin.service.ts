@@ -88,8 +88,13 @@ export class PharmacyAdminService {
       const data: Prisma.PharmacyUpdateInput = { updatedAt: new Date() };
       if (dto.name !== undefined) data.name = dto.name;
       if (dto.licenseNumber !== undefined) data.licenseNumber = dto.licenseNumber || null;
+      if (dto.addressLine1 !== undefined) data.addressLine1 = dto.addressLine1 || null;
+      if (dto.addressLine2 !== undefined) data.addressLine2 = dto.addressLine2 || null;
       if (dto.city !== undefined) data.city = dto.city || null;
+      if (dto.region !== undefined) data.region = dto.region || null;
+      if (dto.postalCode !== undefined) data.postalCode = dto.postalCode || null;
       if (dto.country !== undefined) data.country = dto.country || null;
+      if (dto.phone !== undefined) data.phone = dto.phone || null;
       if (dto.availabilityScore !== undefined) {
         data.reliabilityScore = dto.availabilityScore / 100;
       }
@@ -228,10 +233,12 @@ export class PharmacyAdminService {
       name: p.name,
       licenseNumber: p.licenseNumber,
       addressLine1: p.addressLine1,
+      addressLine2: p.addressLine2,
       city: p.city,
       region: p.region,
       postalCode: p.postalCode,
       country: p.country,
+      phone: p.phone,
       status: p.verificationStatus,
       availabilityScore: Math.round(p.reliabilityScore * 100),
       isParticipating: p.isParticipating,
