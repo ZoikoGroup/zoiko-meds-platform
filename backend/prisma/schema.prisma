@@ -50,6 +50,8 @@ model User {
   passwordResets               PasswordResetToken[]
   signalNotifications          SignalNotification[]
   signalNotificationPreference SignalNotificationPreference?
+  capabilityGrants             CapabilityGrant[]             @relation("CapabilityGrantUser")
+  capabilityGrantsIssued       CapabilityGrant[]             @relation("CapabilityGrantIssuer")
 
   @@index([role])
 }
@@ -280,6 +282,13 @@ model Pharmacy {
   inventorySignals     InventorySignal[]
   availabilitySignals  AvailabilitySignal[]
   verificationRequests VerificationRequest[]
+
+  /// Commercial classification, deliberately separate from verificationStatus:
+  /// eligibility and billability are different questions (ZM-COM-BILL-001 S-B1).
+  /// Defaults to the non-billable directory state so a preloaded record can
+  /// never become a paying customer merely because billing launched (S-Q1).
+  commercialClassification CommercialClassification @default(DIRECTORY_UNCLAIMED)
+  subscriptionLocations    SubscriptionLocation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -792,4 +801,280 @@ model NotificationSuppression {
   updatedAt DateTime                      @updatedAt
 
   @@index([reason])
+}
+
+// ---------------------------------------------------------------------------
+// Commercial: billing, subscriptions & network participation
+// ZM-COM-BILL-001 v1.0
+//
+// Doctrine constraints encoded structurally here rather than left to callers:
+//  - Billing identity is the legal organization/location, deliberately separate
+//    from patient identity, which never acquires a billing profile.
+//  - Prices are catalog records, never source constants. A price referenced by a
+//    finalized invoice is immutable; a change is a new version (S21, S-P4).
+//  - Only a verified location on a commercial classification can be charged.
+//    Directory, pending, pilot, internal, demo, QA and sandbox records are
+//    non-billable by construction (S-Q1).
+//  - Usage counts once per idempotency key, and only for delivered,
+//    policy-permitted output (S-J3, S-K2).
+// ---------------------------------------------------------------------------
+
+/// Commercial classification of a pharmacy location. Distinct from
+/// VerificationStatus, which is eligibility: a location may be verified yet
+/// non-billable, or paid yet operationally restricted (S-B1, S-Q1).
+enum CommercialClassification {
+  DIRECTORY_UNCLAIMED // preloaded record, nobody has claimed it
+  CLAIMED_PENDING // claimed, authority not yet proven
+  VERIFICATION_IN_REVIEW
+  VERIFIED_NETWORK_CORE // verified, participating, zero cost (S-D1)
+  PRO_EVALUATION // time-boxed, no card, never auto-converts (S-E3)
+  PRO_ACTIVE // billable
+  ENTERPRISE_CONTRACT_ACTIVE // billable under an Order Form
+  PILOT_NON_BILLABLE
+  INTERNAL
+  DEMO
+  QA
+  STAGING
+  PARTNER_SANDBOX
+  SUSPENDED_COMPLIANCE
+  REJECTED
+  CLOSED
+}
+
+/// Commercial offers. Free access is modelled explicitly so that "free" is a
+/// deliberate catalog state rather than the absence of a record.
+enum CommercialOffer {
+  PATIENT_CAREGIVER_ACCESS // zero cost (S-A1)
+  PHARMACY_NETWORK_CORE // zero cost during the supply-density phase (S-D1)
+  PHARMACY_INTELLIGENCE_PRO // per verified paid location (S-C1)
+  ENTERPRISE_API_DATA // contract-defined (S-F2)
+}
+
+enum BillingInterval {
+  MONTH
+  YEAR
+  CONTRACT_DEFINED
+}
+
+/// How a commercial record reached the platform. Mobile is tracked separately
+/// because App Store rules constrain what may be sold in-app (S-O2).
+enum BillingChannel {
+  WEB_SELF_SERVE
+  SALES_CONTRACT
+  MOBILE_COMPANION_ENTITLEMENT
+}
+
+enum SubscriptionState {
+  EVALUATION
+  ACTIVE
+  PAST_DUE // payment failed, recovery in progress (S-L1)
+  EXPANSION_BLOCKED // day 7: no new paid locations
+  PAID_FEATURES_RESTRICTED // day 14: exports and advanced actions off
+  CANCELED // downgraded to Network Core
+  ELIGIBILITY_RESTRICTED // verification lapsed; cannot renew (S-B4)
+}
+
+/// Why usage was excluded from billing. Persisted rather than inferred so a
+/// dispute can be answered from the record (S-K2).
+enum UsageExclusionReason {
+  PLATFORM_ERROR // ZoikoMeds 5xx, never billable
+  CLIENT_ERROR // 4xx, rate-limit telemetry only, not paid usage
+  DUPLICATE // idempotency key already seen
+  DENIED_BY_POLICY
+  CANCELED
+  NOT_METERED // contract has no usage billing enabled
+  SYNC_OR_PARSE_FAILURE // failed inventory feed (S-H1)
+}
+
+/// Capabilities that can be granted to a user on top of their role. Lets a
+/// SUPER_ADMIN delegate specific authority without handing over the whole role,
+/// and keeps billing authority separable from verification and inventory
+/// authority (S-22).
+enum BillingCapability {
+  VIEW_PLAN_AND_USAGE
+  MANAGE_PAYMENT_METHODS
+  CHANGE_PLAN
+  CANCEL_SUBSCRIPTION
+  APPROVE_REFUND_OR_CREDIT
+  MANAGE_DISCOUNTS_AND_ADDONS
+  VIEW_INVOICES
+  MANAGE_PRICE_CATALOG
+  GRANT_CAPABILITIES
+}
+
+/// An explicit capability grant. SUPER_ADMIN bypasses these entirely; every
+/// other role must be granted authority, and each grant records who issued it.
+model CapabilityGrant {
+  id               String            @id @default(cuid())
+  userId           String
+  user             User              @relation("CapabilityGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  capability       BillingCapability
+  /// Null means platform-wide; set to scope the grant to one organization.
+  billingProfileId String?
+  /// Non-null mirror of the scope, used for uniqueness: the billingProfileId, or
+  /// the literal "PLATFORM" for a platform-wide grant. Required because Postgres
+  /// treats NULL as distinct in a unique index, so keying uniqueness on the
+  /// nullable column would let duplicate platform-wide grants accumulate for the
+  /// same user and capability.
+  scopeKey         String            @default("PLATFORM")
+  grantedById      String?
+  grantedBy        User?             @relation("CapabilityGrantIssuer", fields: [grantedById], references: [id], onDelete: SetNull)
+  reason           String?
+  revokedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([userId, capability, scopeKey])
+  @@index([userId, revokedAt])
+}
+
+/// Immutable, versioned price record: the only legitimate source of a charge
+/// amount. Engineering must never select a figure from a published marketing
+/// range such as the 99-299 Pro range (S-E2, S-M2).
+model PriceCatalogEntry {
+  id                String          @id @default(cuid())
+  offer             CommercialOffer
+  /// Market this price is approved for, ISO-3166-1 alpha-2.
+  market            String
+  /// ISO-4217, fixed per record. Never converted with live FX at checkout (S-M1).
+  currency          String
+  interval          BillingInterval
+  /// Minor units (cents) so money is never a float.
+  amountMinor       Int
+  channel           BillingChannel
+  /// Catalog version this record belongs to; a new price is a new version (S21).
+  catalogVersion    String
+  /// Provider identifiers, populated once the merchant entity is verified.
+  providerProductId String?
+  providerPriceId   String?
+  /// Jurisdiction-specific; never a hard-coded rate (S-M3).
+  taxBehavior       String          @default("UNSPECIFIED")
+  /// Who approved this price into the catalog (S-P4).
+  approvalReference String
+  legalTermsVersion String?
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  /// Set once referenced by a finalized invoice. A locked record can never be
+  /// mutated (S21).
+  lockedAt          DateTime?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+
+  @@unique([offer, market, currency, interval, channel, catalogVersion])
+  @@index([offer, market, currency, interval, effectiveFrom])
+}
+
+/// Billing identity of a paying organization. Only ever created for a pharmacy
+/// organization or institutional customer, never for a patient (S-A5).
+model BillingProfile {
+  id                 String  @id @default(cuid())
+  legalName          String
+  /// Verified merchant entity that appears on the invoice (S-P2).
+  merchantEntity     String?
+  billingEmail       String
+  addressLine1       String?
+  addressLine2       String?
+  city               String?
+  region             String?
+  postalCode         String?
+  country            String?
+  taxId              String?
+  taxExempt          Boolean @default(false)
+  providerCustomerId String?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+  usageEvents   UsageEvent[]
+
+  @@index([country])
+}
+
+/// A commercial agreement. For self-serve Pro, quantity is the number of
+/// verified paid locations and every unit must resolve to a real location
+/// (S-C1); for Enterprise the contracted quantity is authoritative (S-C5).
+model Subscription {
+  id                  String             @id @default(cuid())
+  billingProfileId    String
+  billingProfile      BillingProfile     @relation(fields: [billingProfileId], references: [id], onDelete: Cascade)
+  offer               CommercialOffer
+  state               SubscriptionState
+  channel             BillingChannel
+  /// Null for zero-cost offers and contracts priced outside the catalog.
+  priceCatalogEntryId String?
+  priceCatalogEntry   PriceCatalogEntry? @relation(fields: [priceCatalogEntryId], references: [id])
+  quantity            Int                @default(1)
+
+  /// When commercial obligation begins. Nothing before this is billable: the
+  /// platform never back-bills historic participation (S-Q2).
+  commercialEffectiveAt DateTime
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  /// Evaluation window. At expiry the location reverts to Network Core unless an
+  /// affirmative purchase succeeded; it never auto-converts (S-E3).
+  evaluationEndsAt      DateTime?
+  /// Delinquency tracking (S-L1).
+  paymentFailedAt       DateTime?
+  canceledAt            DateTime?
+  /// Enterprise contract terms; a self-serve Pro row leaves these null.
+  contractReference     String?
+  usageBillingEnabled   Boolean   @default(false)
+  includedUsageUnits    Int?
+  usageRateCardVersion  String?
+
+  providerSubscriptionId String?
+
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  locations   SubscriptionLocation[]
+  usageEvents UsageEvent[]
+
+  @@index([state])
+  @@index([offer, state])
+}
+
+/// Joins a paid subscription unit to the verified pharmacy location it covers,
+/// so quantity can always be reconciled against real locations (S-C1).
+model SubscriptionLocation {
+  id                       String       @id @default(cuid())
+  subscriptionId           String
+  subscription             Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  pharmacyId               String
+  pharmacy                 Pharmacy     @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+  activatedAt              DateTime     @default(now())
+  /// Set when released. Capacity frees immediately; billed quantity reduces at
+  /// renewal and no automatic refund is issued (S-C3).
+  releasedAt               DateTime?
+  prorationAmountMinor     Int?
+  providerInvoiceReference String?
+
+  @@unique([subscriptionId, pharmacyId])
+  @@index([pharmacyId])
+}
+
+/// A metered usage record. Written for every attempt, billable or not, so
+/// exclusions are auditable rather than silent (S-K2, S-J3).
+model UsageEvent {
+  id               String                @id @default(cuid())
+  billingProfileId String?
+  billingProfile   BillingProfile?       @relation(fields: [billingProfileId], references: [id], onDelete: SetNull)
+  subscriptionId   String?
+  subscription     Subscription?         @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  /// Contract-defined metric, e.g. API_REQUEST or AI_OUTPUT.
+  metricCode       String
+  endpointClass    String?
+  requestId        String?
+  responseStatus   Int?
+  /// Billable units. Zero whenever exclusionReason is set.
+  countableUnits   Int                   @default(0)
+  exclusionReason  UsageExclusionReason?
+  rateCardVersion  String?
+  /// Guarantees a retried or duplicated event counts at most once (S-J3).
+  idempotencyKey   String                @unique
+  occurredAt       DateTime              @default(now())
+
+  @@index([billingProfileId, occurredAt])
+  @@index([metricCode, occurredAt])
 }
