@@ -67,22 +67,10 @@ if [ ! -f dist/main.js ]; then
   exit 1
 fi
 
-restarted=""
-if command -v pm2 >/dev/null 2>&1 && pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
-  log "Restarting pm2 process $PM2_NAME"
-  pm2 restart "$PM2_NAME" --update-env
-  pm2 save || true
-  restarted="pm2:$PM2_NAME"
-elif systemctl list-units --full --all 2>/dev/null | grep -q "${SYSTEMD_UNIT}.service"; then
-  log "Restarting systemd unit $SYSTEMD_UNIT"
-  sudo systemctl restart "$SYSTEMD_UNIT"
-  restarted="systemd:$SYSTEMD_UNIT"
-else
-  echo "[deploy] FAILED: found neither pm2 process '$PM2_NAME' nor systemd unit" >&2
-  echo "[deploy] Set PM2_NAME or SYSTEMD_UNIT to the real name. Current pm2 list:" >&2
-  (pm2 list 2>/dev/null || echo "  pm2 not installed") >&2
-  exit 1
-fi
+log "Rebuilding and restarting Docker container"
+cd "$REPO_DIR/backend"
+docker compose up -d --build api
+restarted="docker:api"
 
 # Poll rather than sleep-and-hope: the process needs a moment to bind the port.
 log "Waiting for health on 127.0.0.1:$PORT/$API_PREFIX/health"
