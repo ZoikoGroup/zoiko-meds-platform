@@ -6,22 +6,56 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/deploy.yml'
+  # Lets you re-run a release without pushing an empty commit — useful while the
+  # SSH reachability below is being sorted out.
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # The VM runs Node under pm2/systemd, not docker compose. This calls the
+      # committed deploy script so the CI path and a manual run on the box do
+      # exactly the same thing (install -> generate -> migrate -> build ->
+      # restart -> health check) instead of drifting apart.
+      #
+      # NOTE: every run of this workflow has failed since 2026-07-29 — first
+      # "ssh: handshake failed: unable to authenticate", then
+      # "dial tcp ***:22: i/o timeout" — which is why the API served a build from
+      # before 2026-08-07 while main moved on. GitHub-hosted runners connect from
+      # rotating public IPs, so a firewall rule that allows a fixed office IP will
+      # still drop them. To fix, either allow GitHub's ranges on tcp:22
+      # (https://api.github.com/meta), or front this with a self-hosted runner or
+      # an IAP tunnel. Until then, run the script directly on the VM:
+      #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USER }}
           key: ${{ secrets.GCP_VM_SSH_KEY }}
+          command_timeout: 15m
           script: |
             set -e
-            cd /var/www/zoiko-meds-platform
-            git pull origin main
-            cd backend
-            docker compose up -d --build
-            docker compose exec -T api npx prisma migrate deploy
+            bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
 
+      # A green tick must mean the new code is actually serving. Without this the
+      # workflow could pass while the API still ran the previous build — which is
+      # how the drift went unnoticed for eleven days.
+      - name: Verify the release is live
+        run: |
+          set -e
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+              -H 'Content-Type: application/json' -d '{}' \
+              https://get.zoikomeds.com/api/pharmacies/me || echo 000)
+            # 401 = route present and guarded. 404 = still the old build.
+            if [ "$code" = "401" ]; then
+              echo "PATCH /api/pharmacies/me -> 401: new build is live."
+              exit 0
+            fi
+            echo "attempt $i: got $code, waiting..."
+            sleep 5
+          done
+          echo "Release did not become live: PATCH /api/pharmacies/me never returned 401." >&2
+          exit 1
