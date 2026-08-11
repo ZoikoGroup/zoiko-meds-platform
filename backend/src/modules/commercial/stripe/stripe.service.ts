@@ -7,6 +7,15 @@ import { isBillableClassification } from '../commercial.doctrine';
 import { StripeConfig } from './stripe.config';
 
 /**
+ * The Stripe API version this integration targets.
+ *
+ * Exported so the webhook endpoint configuration and any operational runbook can
+ * reference one value rather than three copies drifting apart. It must match the
+ * version the installed `stripe` package is generated against.
+ */
+export const STRIPE_API_VERSION = '2026-07-29.dahlia' as const;
+
+/**
  * Stripe adapter (ZM-COM-BILL-001 S-N1, S-P1, S-Q4).
  *
  * The only place the Stripe SDK is touched. Two rules are enforced here rather
@@ -41,7 +50,14 @@ export class StripeService {
       this.client = new Stripe(this.config.secretKey as string, {
         // Pinned deliberately: an implicit version bump could change webhook
         // payload shapes and silently break reconciliation.
-        apiVersion: '2025-10-29.clover' as Stripe.LatestApiVersion,
+        //
+        // This must stay equal to the version the installed SDK is generated
+        // against — its TypeScript types describe that version's shapes, so
+        // requesting a different one makes the types lie about the responses. No
+        // cast here on purpose: if an SDK upgrade moves the version, this becomes
+        // a compile error instead of a silent runtime mismatch. Keep the webhook
+        // endpoint in the Stripe dashboard on this same version.
+        apiVersion: STRIPE_API_VERSION,
         typescript: true,
         maxNetworkRetries: 2,
       });

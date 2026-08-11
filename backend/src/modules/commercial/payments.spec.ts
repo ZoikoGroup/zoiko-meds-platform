@@ -216,6 +216,52 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
     );
   });
 
+  it('posts a refund against the invoice found via payment_intent, not charge.invoice', async () => {
+    // charge.invoice was removed from the Charge object in the pinned API version,
+    // so resolving by it would leave every refund unrecorded.
+    prisma.invoice.findFirst.mockResolvedValue({
+      id: 'inv_local',
+      totalMinor: 10000,
+      currency: 'USD',
+    });
+
+    const result = await service.handle(
+      event('charge.refunded', {
+        id: 'ch_1',
+        payment_intent: 'pi_123',
+        amount_refunded: 10000,
+      }),
+    );
+
+    expect(result.status).toBe(ProviderEventStatus.PROCESSED);
+    expect(prisma.invoice.findFirst).toHaveBeenCalledWith({
+      where: { providerPaymentIntentId: 'pi_123' },
+    });
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountRefundedMinor: 10000, status: 'REFUNDED' }),
+      }),
+    );
+  });
+
+  it('marks a partial refund as PARTIALLY_REFUNDED', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({
+      id: 'inv_local',
+      totalMinor: 10000,
+      currency: 'USD',
+    });
+
+    await service.handle(
+      event('charge.refunded', { id: 'ch_1', payment_intent: 'pi_123', amount_refunded: 2500 }),
+    );
+
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'PARTIALLY_REFUNDED' }),
+      }),
+    );
+  });
+
   it('records a processing failure with its reason instead of dropping the event', async () => {
     prisma.subscription.findFirst.mockRejectedValue(new Error('db down'));
     const result = await service.handle(
