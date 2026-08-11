@@ -9,7 +9,9 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppLogger } from './common/logger/app-logger.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // rawBody keeps the exact bytes of each request available. Stripe signs the raw
+  // payload, so a re-serialized body would fail verification.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
   const logger = new AppLogger();
   logger.setContext('Bootstrap');
   app.useLogger(logger);

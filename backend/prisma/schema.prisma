@@ -988,6 +988,7 @@ model BillingProfile {
   updatedAt     DateTime       @updatedAt
   subscriptions Subscription[]
   usageEvents   UsageEvent[]
+  invoices      Invoice[]
 
   @@index([country])
 }
@@ -1030,6 +1031,7 @@ model Subscription {
   updatedAt   DateTime               @updatedAt
   locations   SubscriptionLocation[]
   usageEvents UsageEvent[]
+  invoices    Invoice[]
 
   @@index([state])
   @@index([offer, state])
@@ -1077,4 +1079,194 @@ model UsageEvent {
 
   @@index([billingProfileId, occurredAt])
   @@index([metricCode, occurredAt])
+}
+
+// ---------------------------------------------------------------------------
+// Commercial: payment provider, invoices, tax & service credits
+// ZM-COM-BILL-001 — S-N, S-M, S-C4, S-F5
+// ---------------------------------------------------------------------------
+
+/// Which payment provider a record came from. Modelled explicitly so a second
+/// provider, or a Finance-invoiced Enterprise contract, does not require
+/// rewriting the schema (S-N1).
+enum PaymentProvider {
+  STRIPE
+  FINANCE_MANUAL
+}
+
+/// Provider mode. Live and test records coexist, and only a commercial
+/// classification may ever reference a live price (S-Q4).
+enum ProviderMode {
+  TEST
+  LIVE
+}
+
+enum ProviderEventStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED // not a subscribed event type
+  FAILED
+  DUPLICATE
+}
+
+/// Every webhook the platform receives, stored before it is acted on.
+///
+/// The executive doctrine states plainly that nobody may be charged because of a
+/// duplicate webhook, and S-N5 makes a duplicate charge a P1 incident. The unique
+/// provider event id is what makes that structural rather than aspirational: a
+/// replayed delivery is recorded as DUPLICATE and never reprocessed.
+model ProviderEvent {
+  id               String              @id @default(cuid())
+  provider         PaymentProvider     @default(STRIPE)
+  mode             ProviderMode
+  /// The provider's own event id, e.g. Stripe evt_… — the deduplication key.
+  providerEventId  String              @unique
+  eventType        String
+  status           ProviderEventStatus @default(RECEIVED)
+  /// Raw payload, retained for reconciliation and dispute evidence. Contains no
+  /// patient or medicine data: billing objects never carry either (S-N2).
+  payload          Json?
+  failureReason    String?
+  relatedInvoiceId String?
+  processedAt      DateTime?
+  receivedAt       DateTime            @default(now())
+
+  @@index([eventType, receivedAt])
+  @@index([status])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  UNCOLLECTIBLE
+  VOID
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+/// A finalized commercial document.
+///
+/// Deliberately has no medicine, prescription, patient or search columns: S-N2
+/// forbids putting any of them on an invoice, and the safest way to honour that is
+/// to give them nowhere to live. What the customer bought is expressed as the
+/// offer, the covered locations and the service period.
+model Invoice {
+  id               String         @id @default(cuid())
+  billingProfileId String
+  billingProfile   BillingProfile @relation(fields: [billingProfileId], references: [id], onDelete: Cascade)
+  subscriptionId   String?
+  subscription     Subscription?  @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  /// Human-facing sequential reference, distinct from the surrogate id.
+  invoiceNumber       String        @unique
+  status              InvoiceStatus @default(DRAFT)
+  /// Verified supplier entity that appears on the document (S-N2, S-P2).
+  supplierLegalEntity String
+  customerLegalName   String
+  /// Service period the charge covers.
+  periodStart         DateTime
+  periodEnd           DateTime
+  /// How many verified paid locations this invoice covers (S-C1).
+  locationCount       Int           @default(0)
+
+  currency            String
+  subtotalMinor       Int
+  discountMinor       Int    @default(0)
+  taxMinor            Int    @default(0)
+  totalMinor          Int
+  amountPaidMinor     Int    @default(0)
+  amountRefundedMinor Int    @default(0)
+
+  /// Resolved tax treatment. Never a hard-coded rate (S-M3).
+  taxDeterminationId String?
+  taxDetermination   TaxDetermination? @relation(fields: [taxDeterminationId], references: [id])
+
+  provider                PaymentProvider @default(STRIPE)
+  mode                    ProviderMode
+  providerInvoiceId       String?
+  providerPaymentIntentId String?
+  /// Catalog version the amounts were derived from, so a historic invoice can
+  /// always be explained (S-21).
+  catalogVersion          String?
+
+  issuedAt  DateTime?
+  paidAt    DateTime?
+  voidedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  creditNotes CreditNote[]
+
+  @@index([billingProfileId, createdAt])
+  @@index([status])
+  @@index([providerInvoiceId])
+}
+
+enum CreditNoteReason {
+  SERVICE_CREDIT // SLA or platform-caused failure (S-F5, S-N4)
+  BILLING_ERROR
+  DUPLICATE_CHARGE // S-N5
+  APPROVED_EXCEPTION // e.g. discretionary refund on location release (S-C3)
+  CONTRACT_TERMINATION
+}
+
+/// A financial adjustment. Always references the invoice it corrects and the
+/// person who approved it: S-N4 requires credits to flow through an approved
+/// policy rather than ad hoc engineering action.
+model CreditNote {
+  id                   String           @id @default(cuid())
+  invoiceId            String
+  invoice              Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  reason               CreditNoteReason
+  amountMinor          Int
+  currency             String
+  /// Who approved the adjustment. Engineering supplies evidence; Finance decides.
+  approvedByUserId     String?
+  approvalReference    String?
+  note                 String?
+  /// Incident this credit answers, when it is an SLA or outage remedy.
+  incidentReference    String?
+  provider             PaymentProvider  @default(STRIPE)
+  providerCreditNoteId String?
+  createdAt            DateTime         @default(now())
+
+  @@index([invoiceId])
+  @@index([reason])
+}
+
+/// A resolved tax treatment for one customer, jurisdiction and moment.
+///
+/// Exists so that no percentage is ever hard-coded (S-M3): a charge references the
+/// determination that produced its tax, and the inputs are kept so the figure can
+/// be re-explained during an audit. ZoikoMeds never determines tax on the medicine
+/// a patient later buys — that stays with the dispensing pharmacy (S-M4).
+model TaxDetermination {
+  id                 String   @id @default(cuid())
+  billingProfileId   String
+  /// Evidence of customer location used for the determination.
+  customerCountry    String
+  customerRegion     String?
+  customerPostalCode String?
+  /// Customer tax identity, where supplied.
+  taxId              String?
+  taxExempt          Boolean  @default(false)
+  /// Product tax code for the SaaS/API/data service being sold.
+  productTaxCode     String?
+  /// Resolved outcome. Rate is stored in basis points to avoid float drift, and is
+  /// an output of the determination — never an input constant.
+  rateBasisPoints    Int
+  taxAmountMinor     Int
+  currency           String
+  /// Reverse charge / zero-rated / not-registered outcomes must be explainable.
+  treatment          String
+  /// Which engine or manual approval produced this, plus its version.
+  determinedBy       String
+  determinationRef   String?
+  jurisdictionNote   String?
+  determinedAt       DateTime @default(now())
+
+  invoices Invoice[]
+
+  @@index([billingProfileId, determinedAt])
 }
