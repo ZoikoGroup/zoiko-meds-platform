@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { AdminModule } from '../admin/admin.module';
 import { CapabilityService } from './capability.service';
 import { CommercialController } from './commercial.controller';
+import { BillingProfileService } from './billing-profile.service';
 import { InvoiceService } from './invoice.service';
 import { TaxService } from './tax.service';
 import { StripeConfig } from './stripe/stripe.config';
@@ -31,6 +32,7 @@ import { UsageMeteringService } from './usage-metering.service';
     PriceCatalogService,
     TaxService,
     InvoiceService,
+    BillingProfileService,
     StripeConfig,
     StripeService,
     StripeWebhookService,
@@ -43,6 +45,7 @@ import { UsageMeteringService } from './usage-metering.service';
     PriceCatalogService,
     TaxService,
     InvoiceService,
+    BillingProfileService,
     StripeConfig,
     StripeService,
     EntitlementService,

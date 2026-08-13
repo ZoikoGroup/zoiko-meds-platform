@@ -69,6 +69,19 @@ export class PharmacyController {
     return this.pharmacy.saveMyProfile(user, dto, ipAddress);
   }
 
+  @Get('me/billing')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Billing and plan view for the logged-in pharmacy',
+    description:
+      'Financial detail is scoped by role: amounts and invoices are omitted entirely for roles that may not see them, rather than returned and hidden client-side.',
+  })
+  async getMyBilling(@CurrentUser() user: AuthenticatedUser) {
+    return this.pharmacy.getMyBilling(user);
+  }
+
   @Get('notifications')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)

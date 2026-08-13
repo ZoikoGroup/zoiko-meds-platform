@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -16,6 +17,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { PriceCatalogService } from './price-catalog.service';
+import { StripeService } from './stripe/stripe.service';
 import {
   PRO_DELINQUENCY_DAYS,
   PRO_EVALUATION_DAYS,
@@ -36,10 +38,13 @@ const MS_PER_DAY = 86_400_000;
  */
 @Injectable()
 export class SubscriptionService {
+  private readonly logger = new Logger(SubscriptionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditWriter,
     private readonly priceCatalog: PriceCatalogService,
+    private readonly stripe: StripeService,
   ) {}
 
   /**
@@ -155,6 +160,26 @@ export class SubscriptionService {
       );
     }
 
+    // A self-serve paid plan must be chargeable before it activates. Without this
+    // the pharmacy would land on PRO_ACTIVE with no provider subscription behind
+    // it — entitled to paid intelligence that nobody is ever billed for.
+    //
+    // Sales contracts are exempt: an Order Form may be Finance-invoiced rather
+    // than collected through the provider (S-N1), so they legitimately have no
+    // provider subscription.
+    const financeInvoiced = channel === BillingChannel.SALES_CONTRACT;
+    if (!financeInvoiced) {
+      const chargingBlocked = this.stripe.chargingBlockedReason();
+      if (chargingBlocked) {
+        throw new ForbiddenException(
+          `Cannot activate a paid plan that cannot be charged: ${chargingBlocked} ` +
+            'Use a SALES_CONTRACT channel for a Finance-invoiced agreement.',
+        );
+      }
+      // Also fails closed when the catalog record has no provider price yet.
+      this.stripe.assertPriceUsableFor(price, pharmacy.commercialClassification);
+    }
+
     const subscription = await this.prisma.$transaction(async (tx) => {
       const created = await tx.subscription.create({
         data: {
@@ -193,6 +218,29 @@ export class SubscriptionService {
     // The price is now referenced by a live commercial term and must not change.
     await this.priceCatalog.lock(price.id, actorId);
 
+    // Create the provider subscription so the charge actually exists. If this
+    // fails the local record is rolled back to an unbilled state rather than left
+    // as PRO_ACTIVE with nothing behind it — a pharmacy must never hold paid
+    // entitlement the platform cannot bill.
+    let providerSubscriptionId: string | null = null;
+    if (!financeInvoiced) {
+      try {
+        providerSubscriptionId = await this.stripe.createSubscription({
+          subscriptionId: subscription.id,
+          billingProfileId: input.billingProfileId,
+          providerPriceId: price.providerPriceId as string,
+          quantity: 1,
+          classification: CommercialClassification.PRO_ACTIVE,
+        });
+      } catch (err) {
+        await this.rollbackFailedActivation(subscription.id, input.pharmacyId);
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new ForbiddenException(
+          `Payment provider rejected the subscription, so the plan was not activated: ${detail}`,
+        );
+      }
+    }
+
     await this.audit.write(actorId, 'commercial.subscription.pro_activate', 'Subscription', subscription.id, {
       pharmacyId: input.pharmacyId,
       priceCatalogEntryId: price.id,
@@ -201,9 +249,33 @@ export class SubscriptionService {
       market: price.market,
       catalogVersion: price.catalogVersion,
       commercialEffectiveAt: subscription.commercialEffectiveAt.toISOString(),
+      providerSubscriptionId,
+      financeInvoiced,
     });
 
-    return subscription;
+    return this.prisma.subscription.findUniqueOrThrow({ where: { id: subscription.id } });
+  }
+
+  /**
+   * Undo a local activation whose provider subscription could not be created.
+   * Reverts the pharmacy to free participation instead of leaving it entitled to
+   * paid features with no billing behind them.
+   */
+  private async rollbackFailedActivation(subscriptionId: string, pharmacyId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.subscription.update({
+        where: { id: subscriptionId },
+        data: { state: SubscriptionState.CANCELED, canceledAt: new Date() },
+      });
+      await tx.pharmacy.update({
+        where: { id: pharmacyId },
+        data: { commercialClassification: CommercialClassification.VERIFIED_NETWORK_CORE },
+      });
+    });
+    await this.audit.write(null, 'commercial.subscription.activation_rolled_back', 'Subscription', subscriptionId, {
+      pharmacyId,
+      reason: 'Provider subscription creation failed; paid entitlement withdrawn.',
+    });
   }
 
   /**
@@ -279,6 +351,16 @@ export class SubscriptionService {
       return sub;
     });
 
+    // Keep the provider quantity in step so the next invoice bills the right
+    // number of locations. Additions prorate to the renewal anchor (S-C2).
+    await this.stripe.updateQuantity(subscription.id, updated.quantity).catch((err) => {
+      this.logger.error(
+        `Provider quantity sync failed for subscription ${subscription.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+
     await this.audit.write(actorId, 'commercial.subscription.location_activate', 'Subscription', subscription.id, {
       pharmacyId: input.pharmacyId,
       quantity: updated.quantity,
@@ -323,6 +405,16 @@ export class SubscriptionService {
       return tx.subscriptionLocation.count({
         where: { subscriptionId: input.subscriptionId, releasedAt: null },
       });
+    });
+
+    // Reduce the billed quantity going forward. No refund is issued for the
+    // remainder of the paid term (S-C3).
+    await this.stripe.updateQuantity(input.subscriptionId, activeLocations).catch((err) => {
+      this.logger.error(
+        `Provider quantity sync failed for subscription ${input.subscriptionId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     });
 
     await this.audit.write(actorId, 'commercial.subscription.location_release', 'Subscription', input.subscriptionId, {

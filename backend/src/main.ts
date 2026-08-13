@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppLogger } from './common/logger/app-logger.service';
+import { StripeConfig } from './modules/commercial/stripe/stripe.config';
 
 async function bootstrap() {
   // rawBody keeps the exact bytes of each request available. Stripe signs the raw
@@ -64,6 +65,10 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, swaggerConfig);
     SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
   }
+
+  // Surface a dangerous billing configuration at boot rather than at first
+  // charge: a live payment key outside production, or a missing webhook secret.
+  app.get(StripeConfig).warnOnSuspiciousConfig(config.get<string>('NODE_ENV', 'development'));
 
   const port = config.get<number>('PORT', 8000);
   try {

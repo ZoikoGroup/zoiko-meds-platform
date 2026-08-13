@@ -235,13 +235,17 @@ export class StripeWebhookService {
 
   private async onChargeRefunded(event: Stripe.Event): Promise<void> {
     const charge = event.data.object as Stripe.Charge;
-    // `invoice` is an expandable reference and is not on the base Charge type in
-    // this SDK version, so read it defensively rather than widening the cast.
-    const rawInvoice = (charge as unknown as { invoice?: string | { id: string } | null }).invoice;
-    const invoiceId = typeof rawInvoice === 'string' ? rawInvoice : rawInvoice?.id;
-    if (!invoiceId) return;
 
-    const local = await this.findLocalInvoice(invoiceId);
+    // Resolve the invoice via payment_intent, not charge.invoice: the latter was
+    // removed from the Charge object in this API version, so reading it would
+    // always be undefined and every refund would silently fail to post.
+    const rawIntent = charge.payment_intent;
+    const paymentIntentId = typeof rawIntent === 'string' ? rawIntent : rawIntent?.id;
+    if (!paymentIntentId) return;
+
+    const local = await this.prisma.invoice.findFirst({
+      where: { providerPaymentIntentId: paymentIntentId },
+    });
     if (!local) return;
 
     const refunded = charge.amount_refunded ?? 0;

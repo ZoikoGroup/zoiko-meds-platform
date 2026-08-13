@@ -7,6 +7,15 @@ import { isBillableClassification } from '../commercial.doctrine';
 import { StripeConfig } from './stripe.config';
 
 /**
+ * The Stripe API version this integration targets.
+ *
+ * Exported so the webhook endpoint configuration and any operational runbook can
+ * reference one value rather than three copies drifting apart. It must match the
+ * version the installed `stripe` package is generated against.
+ */
+export const STRIPE_API_VERSION = '2026-07-29.dahlia' as const;
+
+/**
  * Stripe adapter (ZM-COM-BILL-001 S-N1, S-P1, S-Q4).
  *
  * The only place the Stripe SDK is touched. Two rules are enforced here rather
@@ -41,7 +50,14 @@ export class StripeService {
       this.client = new Stripe(this.config.secretKey as string, {
         // Pinned deliberately: an implicit version bump could change webhook
         // payload shapes and silently break reconciliation.
-        apiVersion: '2025-10-29.clover' as Stripe.LatestApiVersion,
+        //
+        // This must stay equal to the version the installed SDK is generated
+        // against — its TypeScript types describe that version's shapes, so
+        // requesting a different one makes the types lie about the responses. No
+        // cast here on purpose: if an SDK upgrade moves the version, this becomes
+        // a compile error instead of a silent runtime mismatch. Keep the webhook
+        // endpoint in the Stripe dashboard on this same version.
+        apiVersion: STRIPE_API_VERSION,
         typescript: true,
         maxNetworkRetries: 2,
       });
@@ -55,6 +71,32 @@ export class StripeService {
 
   get isConfigured(): boolean {
     return this.config.isConfigured;
+  }
+
+  /** Why charging is not possible, or null when it is. Delegates to the gate. */
+  chargingBlockedReason(): string | null {
+    return this.config.chargingBlockedReason();
+  }
+
+  get canCharge(): boolean {
+    return this.config.canCharge;
+  }
+
+  /** Operator-facing provider status, for the admin console. */
+  status(): {
+    configured: boolean;
+    mode: ProviderMode | null;
+    canCharge: boolean;
+    blockedReason: string | null;
+    liveModeAuthorized: boolean;
+  } {
+    return {
+      configured: this.config.isConfigured,
+      mode: this.config.isConfigured ? this.config.mode : null,
+      canCharge: this.config.canCharge,
+      blockedReason: this.config.chargingBlockedReason(),
+      liveModeAuthorized: this.config.liveModeAuthorized,
+    };
   }
 
   /**
@@ -135,10 +177,24 @@ export class StripeService {
     providerPriceId: string;
     quantity: number;
     classification: CommercialClassification;
+    /** Payment terms when the subscription is invoiced rather than auto-charged. */
+    daysUntilDue?: number;
   }): Promise<string> {
     this.assertPriceUsableFor({ providerPriceId: input.providerPriceId }, input.classification);
 
     const customerId = await this.ensureCustomer(input.billingProfileId);
+
+    // Collection method follows what the customer actually has on file.
+    //
+    // S-N1 specifies Stripe Billing/Invoicing, and a pharmacy organization is a
+    // business customer: with no stored card, `charge_automatically` fails outright
+    // ("no attached payment source"), so the subscription is invoiced with payment
+    // terms instead. Once a payment method exists it is charged automatically.
+    const customer = await this.stripe().customers.retrieve(customerId);
+    const hasPaymentMethod =
+      typeof customer !== 'string' &&
+      !customer.deleted &&
+      !!(customer.invoice_settings?.default_payment_method || customer.default_source);
 
     const sub = await this.stripe().subscriptions.create(
       {
@@ -146,6 +202,12 @@ export class StripeService {
         items: [{ price: input.providerPriceId, quantity: Math.max(1, input.quantity) }],
         // Proration is handled on quantity change; see updateQuantity.
         proration_behavior: 'create_prorations',
+        ...(hasPaymentMethod
+          ? { collection_method: 'charge_automatically' as const }
+          : {
+              collection_method: 'send_invoice' as const,
+              days_until_due: input.daysUntilDue ?? 30,
+            }),
         metadata: {
           subscriptionId: input.subscriptionId,
           billingProfileId: input.billingProfileId,
@@ -161,6 +223,7 @@ export class StripeService {
     await this.audit.write(null, 'commercial.stripe.subscription_created', 'Subscription', input.subscriptionId, {
       providerSubscriptionId: sub.id,
       quantity: input.quantity,
+      collectionMethod: sub.collection_method,
       mode: this.mode,
     });
 

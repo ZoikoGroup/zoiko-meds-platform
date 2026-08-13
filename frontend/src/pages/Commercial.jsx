@@ -37,6 +37,8 @@ import {
 import {
   AlertTriangle,
   BadgeCheck,
+  Building2,
+  FileText,
   Info,
   Loader2,
   Lock,
@@ -86,6 +88,14 @@ export default function Commercial() {
   const [probeResult, setProbeResult] = useState(null)
   const [probing, setProbing] = useState(false)
 
+  // Provider status and customer billing records.
+  const [provider, setProvider] = useState(null)
+  const [profiles, setProfiles] = useState(null)
+  const [selectedProfileId, setSelectedProfileId] = useState('')
+  const [invoices, setInvoices] = useState(null)
+  const [latestTax, setLatestTax] = useState(null)
+  const [billingError, setBillingError] = useState('')
+
   const load = useCallback(async () => {
     setLoadError('')
     try {
@@ -95,9 +105,54 @@ export default function Commercial() {
     }
   }, [])
 
+  const loadProvider = useCallback(async () => {
+    try {
+      setProvider(await commercial.getProviderStatus())
+    } catch {
+      // Non-fatal: the rest of the page is still usable without provider status.
+      setProvider(null)
+    }
+  }, [])
+
+  const loadProfiles = useCallback(async () => {
+    try {
+      const rows = await commercial.listBillingProfiles()
+      setProfiles(rows)
+      // Select the first customer so the tab is not empty on open.
+      setSelectedProfileId((cur) => cur || rows?.[0]?.id || '')
+    } catch (err) {
+      setProfiles([])
+      setBillingError(err.message || 'Could not load billing profiles.')
+    }
+  }, [])
+
   useEffect(() => {
     load()
-  }, [load])
+    loadProvider()
+    loadProfiles()
+  }, [load, loadProvider, loadProfiles])
+
+  // Invoices and tax follow the selected customer.
+  useEffect(() => {
+    if (!selectedProfileId) {
+      setInvoices(null)
+      setLatestTax(null)
+      return
+    }
+    let alive = true
+    setBillingError('')
+    Promise.all([
+      commercial.listInvoices(selectedProfileId).catch(() => []),
+      commercial.getLatestTax(selectedProfileId).catch(() => null),
+    ]).then(([inv, tax]) => {
+      if (!alive) return
+      setInvoices(inv || [])
+      setLatestTax(tax)
+    })
+    return () => {
+      alive = false
+    }
+  }, [selectedProfileId])
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }))
 
@@ -181,16 +236,37 @@ export default function Commercial() {
 
       {flashMsg && <Flash message={flashMsg} className="max-w-3xl" />}
 
-      <div className="flex flex-col gap-2 rounded-xl border border-warning/40 bg-warning/10 p-4 text-warning max-w-4xl">
-        <div className="flex items-center gap-2 text-sm font-bold">
-          <AlertTriangle className="size-5 shrink-0" />
-          Live charging is not enabled
+      {/* Real provider status, not a static notice. */}
+      <div
+        className={
+          'flex flex-col gap-2 rounded-xl border p-4 max-w-4xl ' +
+          (provider?.canCharge
+            ? 'border-success/40 bg-success/10 text-success'
+            : 'border-warning/40 bg-warning/10 text-warning')
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
+          {provider?.canCharge ? (
+            <BadgeCheck className="size-5 shrink-0" />
+          ) : (
+            <AlertTriangle className="size-5 shrink-0" />
+          )}
+          {provider === null
+            ? 'Payment provider status unavailable'
+            : provider.canCharge
+              ? `Charging enabled — ${provider.mode} mode`
+              : 'Live charging is not enabled'}
+          {provider?.mode && (
+            <Badge variant={provider.mode === 'LIVE' ? 'danger' : 'info'} size="sm">
+              {provider.mode}
+            </Badge>
+          )}
         </div>
         <p className="pl-7 text-xs leading-relaxed text-foreground/90">
-          No payment provider is connected. Before any customer can be charged, the launch blockers
-          must close: an approved price per market and currency, a verified merchant and bank
-          beneficiary, tax registrations, and reconciliation of the contracting legal entity.
-          Adding a catalog record here does not charge anyone.
+          {provider?.blockedReason ??
+            (provider?.mode === 'TEST'
+              ? 'Test mode: subscriptions and invoices are created against the provider test environment. No real money moves.'
+              : 'Live charging is authorised. Every charge draws its amount from an approved catalog record.')}
         </p>
       </div>
 
@@ -198,6 +274,7 @@ export default function Commercial() {
         <TabsList>
           <TabsTrigger value="catalog">Price catalog</TabsTrigger>
           <TabsTrigger value="offers">Offers</TabsTrigger>
+          <TabsTrigger value="customers">Customers &amp; invoices</TabsTrigger>
           <TabsTrigger value="access">Billing access</TabsTrigger>
           <TabsTrigger value="policy">Policy</TabsTrigger>
         </TabsList>
@@ -421,6 +498,162 @@ export default function Commercial() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* --- Customers & invoices ---------------------------------------- */}
+        <TabsContent value="customers">
+          <div className="flex flex-col gap-5">
+            {billingError && (
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger max-w-4xl">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                {billingError}
+              </div>
+            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Billing customers</CardTitle>
+                <CardDescription>
+                  Billing identity is the legal organization — never a patient account.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-5">
+                {!profiles ? (
+                  <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" /> Loading customers…
+                  </div>
+                ) : profiles.length === 0 ? (
+                  <EmptyState
+                    icon={Building2}
+                    title="No billing customers yet"
+                    description="A billing profile is created when an organization converts to a paid plan. Nothing is billed without one."
+                  />
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-1.5 max-w-md">
+                      <Label htmlFor="cust">Customer</Label>
+                      <select
+                        id="cust"
+                        value={selectedProfileId}
+                        onChange={(e) => setSelectedProfileId(e.target.value)}
+                        className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary"
+                      >
+                        {profiles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.legalName} ({p.country})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {latestTax ? (
+                      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-border p-3 text-xs">
+                        <span className="font-semibold text-foreground">Tax determination</span>
+                        <span className="text-muted-foreground">
+                          {latestTax.treatment} · {(latestTax.rateBasisPoints / 100).toFixed(2)}%
+                        </span>
+                        <span className="text-muted-foreground">
+                          {latestTax.customerCountry}
+                          {latestTax.customerRegion ? ` / ${latestTax.customerRegion}` : ''}
+                        </span>
+                        <span className="text-muted-foreground">by {latestTax.determinedBy}</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                        <span className="text-foreground/90">
+                          No tax determination recorded for this customer. Invoicing is blocked until
+                          one exists — the platform never assumes a rate.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="size-4 text-primary" /> Invoices
+                </CardTitle>
+                <CardDescription>
+                  An invoice never carries a medicine name, prescription, patient name or search
+                  query.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-5">
+                {!selectedProfileId ? (
+                  <EmptyState
+                    icon={FileText}
+                    title="Select a customer"
+                    description="Choose a billing customer to see their invoices."
+                  />
+                ) : !invoices ? (
+                  <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" /> Loading invoices…
+                  </div>
+                ) : invoices.length === 0 ? (
+                  <EmptyState
+                    icon={FileText}
+                    title="No invoices"
+                    description="Nothing has been invoiced to this customer."
+                  />
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Invoice</TableHead>
+                          <TableHead>Period</TableHead>
+                          <TableHead>Locations</TableHead>
+                          <TableHead className="text-right">Subtotal</TableHead>
+                          <TableHead className="text-right">Tax</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                          <TableHead className="text-right">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {invoices.map((inv) => (
+                          <TableRow key={inv.id}>
+                            <TableCell className="font-mono text-xs">{inv.invoiceNumber}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {new Date(inv.periodStart).toLocaleDateString()} –{' '}
+                              {new Date(inv.periodEnd).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell className="text-xs tabular">{inv.locationCount}</TableCell>
+                            <TableCell className="text-right text-xs tabular">
+                              {formatMinor(inv.subtotalMinor, inv.currency)}
+                            </TableCell>
+                            <TableCell className="text-right text-xs tabular">
+                              {formatMinor(inv.taxMinor, inv.currency)}
+                            </TableCell>
+                            <TableCell className="text-right text-xs font-semibold tabular">
+                              {formatMinor(inv.totalMinor, inv.currency)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Badge
+                                variant={
+                                  inv.status === 'PAID'
+                                    ? 'success'
+                                    : inv.status === 'OPEN'
+                                      ? 'warning'
+                                      : 'secondary'
+                                }
+                                size="sm"
+                              >
+                                {inv.status}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* --- Billing access ---------------------------------------------- */}

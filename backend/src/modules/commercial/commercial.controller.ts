@@ -25,7 +25,18 @@ import { EntitlementService } from './entitlement.service';
 import { PriceCatalogService } from './price-catalog.service';
 import { SubscriptionService } from './subscription.service';
 import { UsageMeteringService } from './usage-metering.service';
+import { BillingProfileService } from './billing-profile.service';
+import { InvoiceService } from './invoice.service';
+import { TaxService } from './tax.service';
+import { StripeService } from './stripe/stripe.service';
 import { CreatePriceEntryDto } from './dto/create-price-entry.dto';
+import {
+  CreateBillingProfileDto,
+  DraftInvoiceDto,
+  IssueCreditNoteDto,
+  RecordTaxDeterminationDto,
+  RefundDto,
+} from './dto/commercial-billing.dto';
 import { GrantCapabilityDto } from './dto/grant-capability.dto';
 import { ActivateProDto } from './dto/activate-pro.dto';
 
@@ -49,7 +60,171 @@ export class CommercialController {
     private readonly subscriptions: SubscriptionService,
     private readonly usage: UsageMeteringService,
     private readonly capabilities: CapabilityService,
+    private readonly billingProfiles: BillingProfileService,
+    private readonly tax: TaxService,
+    private readonly invoices: InvoiceService,
+    private readonly stripe: StripeService,
   ) {}
+
+  // --- Payment provider status --------------------------------------------
+
+  @Get('provider')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Payment provider status',
+    description:
+      'Whether a provider is configured, which mode it is in, and whether charging is authorised. A live key alone does not authorise charging.',
+  })
+  providerStatus() {
+    return this.stripe.status();
+  }
+
+  // --- Billing profiles ----------------------------------------------------
+
+  @Get('billing-profiles')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({ summary: 'List organizational billing identities' })
+  async listBillingProfiles(@CurrentUser() user: AuthenticatedUser) {
+    await this.capabilities.require(user.id, BillingCapability.VIEW_PLAN_AND_USAGE);
+    return this.billingProfiles.list();
+  }
+
+  @Get('billing-profiles/:id')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Get one billing profile with subscriptions and invoices' })
+  async getBillingProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.VIEW_PLAN_AND_USAGE, {
+      billingProfileId: id,
+    });
+    return this.billingProfiles.get(id);
+  }
+
+  @Post('billing-profiles')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Create a billing identity for an organization',
+    description: 'Billing identity is the legal organization, never a patient account.',
+  })
+  async createBillingProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateBillingProfileDto,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.CHANGE_PLAN);
+    return this.billingProfiles.create(user.id, dto);
+  }
+
+  // --- Tax -----------------------------------------------------------------
+
+  @Post('tax-determinations')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Record an approved tax determination',
+    description:
+      'The platform never assumes a rate. A determination must come from a tax engine or a manual Finance approval, and is stored with its inputs so the figure can be re-explained.',
+  })
+  async recordTax(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RecordTaxDeterminationDto,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.CHANGE_PLAN, {
+      billingProfileId: dto.billingProfileId,
+    });
+    return this.tax.record(dto);
+  }
+
+  @Get('tax-determinations/:billingProfileId')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Latest tax determination for a customer' })
+  async latestTax(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('billingProfileId') billingProfileId: string,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.VIEW_PLAN_AND_USAGE, {
+      billingProfileId,
+    });
+    return this.tax.latestFor(billingProfileId);
+  }
+
+  // --- Invoices ------------------------------------------------------------
+
+  @Get('invoices/:billingProfileId')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Invoices for a customer' })
+  async listInvoices(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('billingProfileId') billingProfileId: string,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.VIEW_INVOICES, {
+      billingProfileId,
+    });
+    return this.invoices.listForProfile(billingProfileId);
+  }
+
+  @Post('invoices')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Draft an invoice',
+    description: 'Refuses without a recorded tax determination rather than assuming zero tax.',
+  })
+  async draftInvoice(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: DraftInvoiceDto,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.VIEW_INVOICES, {
+      billingProfileId: dto.billingProfileId,
+    });
+    return this.invoices.draft(user.id, {
+      billingProfileId: dto.billingProfileId,
+      subscriptionId: dto.subscriptionId,
+      supplierLegalEntity: dto.supplierLegalEntity,
+      periodStart: new Date(dto.periodStart),
+      periodEnd: new Date(dto.periodEnd),
+      currency: dto.currency,
+      subtotalMinor: dto.subtotalMinor,
+      discountMinor: dto.discountMinor,
+      locationCount: dto.locationCount,
+      catalogVersion: dto.catalogVersion,
+      mode: this.stripe.mode,
+    });
+  }
+
+  @Post('invoices/:id/credit-notes')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Issue a credit note against an invoice',
+    description: 'Requires APPROVE_REFUND_OR_CREDIT and a traceable approval reference.',
+  })
+  async issueCreditNote(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') invoiceId: string,
+    @Body() dto: IssueCreditNoteDto,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.APPROVE_REFUND_OR_CREDIT);
+    return this.invoices.issueCreditNote(user.id, { invoiceId, ...dto });
+  }
+
+  // --- Refunds -------------------------------------------------------------
+
+  @Post('refunds')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Refund a payment through the provider',
+    description:
+      'Requires APPROVE_REFUND_OR_CREDIT and an approval reference, which also keys idempotency so a double submit cannot double-refund.',
+  })
+  async refund(@CurrentUser() user: AuthenticatedUser, @Body() dto: RefundDto) {
+    await this.capabilities.require(user.id, BillingCapability.APPROVE_REFUND_OR_CREDIT);
+    const providerRefundId = await this.stripe.refund({
+      providerPaymentIntentId: dto.providerPaymentIntentId,
+      amountMinor: dto.amountMinor,
+      approvedByUserId: user.id,
+      approvalReference: dto.approvalReference,
+    });
+    return { providerRefundId };
+  }
 
   // --- Price catalog -------------------------------------------------------
 
