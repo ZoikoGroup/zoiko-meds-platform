@@ -7,6 +7,7 @@ import {
 import {
   AvailabilityConfidence,
   CommercialClassification,
+  UserRole,
   VerificationRequestStatus,
   VerificationStatus,
 } from '@prisma/client';
@@ -420,6 +421,107 @@ export class PharmacyService {
         notes: note,
       },
     });
+  }
+
+  /**
+   * Billing view for the logged-in pharmacy (ZM-COM-BILL-001 S-22).
+   *
+   * Financial detail is scoped by role, per the published access matrix: a
+   * Pharmacy Manager sees plan and usage but no invoice amounts, and a Pharmacist
+   * sees only operational limits. Rather than returning everything and hoping the
+   * client hides it, the fields simply are not present for roles that may not see
+   * them — a UI bug cannot then leak them.
+   *
+   * There is no payment method or checkout here. Purchasing runs through an
+   * authorized payer, and the portal is not a billing surface.
+   */
+  async getMyBilling(user: AuthenticatedUser) {
+    const pharmacyId = await this.findMyPharmacyId(user);
+    if (!pharmacyId) {
+      return {
+        linked: false,
+        classification: CommercialClassification.DIRECTORY_UNCLAIMED,
+        participatesInNetworkCore: false,
+        canSeeFinancialDetail: false,
+        plan: null,
+        invoices: [],
+      };
+    }
+
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id: pharmacyId },
+      select: { commercialClassification: true, name: true },
+    });
+
+    const link = await this.prisma.subscriptionLocation.findFirst({
+      where: { pharmacyId, releasedAt: null },
+      orderBy: { activatedAt: 'desc' },
+      include: {
+        subscription: {
+          include: { priceCatalogEntry: true, billingProfile: true },
+        },
+      },
+    });
+
+    const subscription = link?.subscription ?? null;
+
+    // Only a Pharmacy Manager (PHARMACY_ADMIN) or above may see amounts. Staff
+    // get plan status alone.
+    const canSeeFinancialDetail =
+      user.role === UserRole.PHARMACY_ADMIN ||
+      user.role === UserRole.SUPER_ADMIN ||
+      user.role === UserRole.ADMIN;
+
+    const plan = subscription
+      ? {
+          offer: subscription.offer,
+          state: subscription.state,
+          quantity: subscription.quantity,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          evaluationEndsAt: subscription.evaluationEndsAt,
+          // Amounts only for roles permitted financial detail.
+          ...(canSeeFinancialDetail && subscription.priceCatalogEntry
+            ? {
+                amountMinor: subscription.priceCatalogEntry.amountMinor,
+                currency: subscription.priceCatalogEntry.currency,
+                interval: subscription.priceCatalogEntry.interval,
+              }
+            : {}),
+        }
+      : null;
+
+    let invoices: unknown[] = [];
+    if (canSeeFinancialDetail && subscription?.billingProfileId) {
+      const rows = await this.prisma.invoice.findMany({
+        where: { billingProfileId: subscription.billingProfileId },
+        orderBy: { createdAt: 'desc' },
+        take: 24,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          currency: true,
+          totalMinor: true,
+          amountPaidMinor: true,
+          periodStart: true,
+          periodEnd: true,
+          issuedAt: true,
+          paidAt: true,
+        },
+      });
+      invoices = rows;
+    }
+
+    return {
+      linked: true,
+      pharmacyName: pharmacy?.name ?? null,
+      classification:
+        pharmacy?.commercialClassification ?? CommercialClassification.DIRECTORY_UNCLAIMED,
+      participatesInNetworkCore: true,
+      canSeeFinancialDetail,
+      plan,
+      invoices,
+    };
   }
 
   async getUserNotifications(userId: string) {

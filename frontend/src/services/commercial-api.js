@@ -73,3 +73,38 @@ export const revokeCapability = (grantId, reason) =>
     method: 'POST',
     body: { reason },
   })
+
+// --- Payment provider ------------------------------------------------------
+
+export const getProviderStatus = () => apiFetch('/admin/commercial/provider')
+
+// --- Billing profiles ------------------------------------------------------
+
+export const listBillingProfiles = () => apiFetch('/admin/commercial/billing-profiles')
+
+export const getBillingProfile = (id) => apiFetch(`/admin/commercial/billing-profiles/${id}`)
+
+export const createBillingProfile = (body) =>
+  apiFetch('/admin/commercial/billing-profiles', { method: 'POST', body })
+
+// --- Tax (S-M3: never a hard-coded rate) -----------------------------------
+
+export const recordTaxDetermination = (body) =>
+  apiFetch('/admin/commercial/tax-determinations', { method: 'POST', body })
+
+export const getLatestTax = (billingProfileId) =>
+  apiFetch(`/admin/commercial/tax-determinations/${billingProfileId}`)
+
+// --- Invoices & credit notes -----------------------------------------------
+
+export const listInvoices = (billingProfileId) =>
+  apiFetch(`/admin/commercial/invoices/${billingProfileId}`)
+
+export const draftInvoice = (body) =>
+  apiFetch('/admin/commercial/invoices', { method: 'POST', body })
+
+export const issueCreditNote = (invoiceId, body) =>
+  apiFetch(`/admin/commercial/invoices/${invoiceId}/credit-notes`, { method: 'POST', body })
+
+export const refundPayment = (body) =>
+  apiFetch('/admin/commercial/refunds', { method: 'POST', body })

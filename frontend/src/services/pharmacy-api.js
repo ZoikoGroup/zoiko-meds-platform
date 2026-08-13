@@ -270,3 +270,8 @@ export const getReports = async () => {
     return settle(REPORTS)
   }
 }
+
+// Billing and plan view for the logged-in pharmacy. Financial detail is scoped
+// server-side by role, so a field that is absent was never sent — the client does
+// not decide what may be seen. No demo fallback: this is a financial surface.
+export const getBilling = () => apiFetch('/pharmacies/me/billing')

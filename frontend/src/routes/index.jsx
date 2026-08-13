@@ -63,6 +63,7 @@ const PharmacyReports = lazyImport(() => import('@/pages/pharmacy/PharmacyReport
 const PharmacyNotifications = lazyImport(() => import('@/pages/pharmacy/PharmacyNotifications'), 'PharmacyNotifications')
 const PharmacyProfile = lazyImport(() => import('@/pages/pharmacy/PharmacyProfile'), 'PharmacyProfile')
 const PharmacySettings = lazyImport(() => import('@/pages/pharmacy/PharmacySettings'), 'PharmacySettings')
+const PharmacyBilling = lazyImport(() => import('@/pages/pharmacy/PharmacyBilling'), 'PharmacyBilling')
 
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
@@ -158,6 +159,7 @@ export const router = createBrowserRouter([
           { path: 'reports', element: <PharmacyReports /> },
           { path: 'notifications', element: <PharmacyNotifications /> },
           { path: 'profile', element: <PharmacyProfile /> },
+          { path: 'billing', element: <PharmacyBilling /> },
           { path: 'settings', element: <PharmacySettings /> },
         ],
       },

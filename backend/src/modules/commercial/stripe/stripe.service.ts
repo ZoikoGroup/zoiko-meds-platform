@@ -73,6 +73,32 @@ export class StripeService {
     return this.config.isConfigured;
   }
 
+  /** Why charging is not possible, or null when it is. Delegates to the gate. */
+  chargingBlockedReason(): string | null {
+    return this.config.chargingBlockedReason();
+  }
+
+  get canCharge(): boolean {
+    return this.config.canCharge;
+  }
+
+  /** Operator-facing provider status, for the admin console. */
+  status(): {
+    configured: boolean;
+    mode: ProviderMode | null;
+    canCharge: boolean;
+    blockedReason: string | null;
+    liveModeAuthorized: boolean;
+  } {
+    return {
+      configured: this.config.isConfigured,
+      mode: this.config.isConfigured ? this.config.mode : null,
+      canCharge: this.config.canCharge,
+      blockedReason: this.config.chargingBlockedReason(),
+      liveModeAuthorized: this.config.liveModeAuthorized,
+    };
+  }
+
   /**
    * Guard for using a catalog price against a specific pharmacy. Called before any
    * subscription write so a non-production entity cannot reference a live price.
@@ -151,10 +177,24 @@ export class StripeService {
     providerPriceId: string;
     quantity: number;
     classification: CommercialClassification;
+    /** Payment terms when the subscription is invoiced rather than auto-charged. */
+    daysUntilDue?: number;
   }): Promise<string> {
     this.assertPriceUsableFor({ providerPriceId: input.providerPriceId }, input.classification);
 
     const customerId = await this.ensureCustomer(input.billingProfileId);
+
+    // Collection method follows what the customer actually has on file.
+    //
+    // S-N1 specifies Stripe Billing/Invoicing, and a pharmacy organization is a
+    // business customer: with no stored card, `charge_automatically` fails outright
+    // ("no attached payment source"), so the subscription is invoiced with payment
+    // terms instead. Once a payment method exists it is charged automatically.
+    const customer = await this.stripe().customers.retrieve(customerId);
+    const hasPaymentMethod =
+      typeof customer !== 'string' &&
+      !customer.deleted &&
+      !!(customer.invoice_settings?.default_payment_method || customer.default_source);
 
     const sub = await this.stripe().subscriptions.create(
       {
@@ -162,6 +202,12 @@ export class StripeService {
         items: [{ price: input.providerPriceId, quantity: Math.max(1, input.quantity) }],
         // Proration is handled on quantity change; see updateQuantity.
         proration_behavior: 'create_prorations',
+        ...(hasPaymentMethod
+          ? { collection_method: 'charge_automatically' as const }
+          : {
+              collection_method: 'send_invoice' as const,
+              days_until_due: input.daysUntilDue ?? 30,
+            }),
         metadata: {
           subscriptionId: input.subscriptionId,
           billingProfileId: input.billingProfileId,
@@ -177,6 +223,7 @@ export class StripeService {
     await this.audit.write(null, 'commercial.stripe.subscription_created', 'Subscription', input.subscriptionId, {
       providerSubscriptionId: sub.id,
       quantity: input.quantity,
+      collectionMethod: sub.collection_method,
       mode: this.mode,
     });
 
