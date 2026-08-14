@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { AVAILABILITY, CONFIRM_NOTE, SCOPE_NOTE, mapsHref, byConfidence } from '@/lib/availability'
 import { getMedicineById, getMedicineAvailability, matchMedicines } from '@/services/medicine-api'
 import { useSavedMedicines, useSaveMedicine, useUnsaveMedicine } from '@/hooks/use-saved-medicines'
+import { isMedicineSaved } from '@/lib/medicine-name'
 import { useLanguage } from '@/providers/language-provider'
 
 // Governance-approved FAQ (no clinical advice, dosing, or substitution guidance).
@@ -72,10 +73,12 @@ export default function MedicineDetail() {
   const saveMutation = useSaveMedicine()
   const unsaveMutation = useUnsaveMedicine()
 
-  const isSaved = useMemo(() => {
-    if (!id || !Array.isArray(savedMedicines)) return false
-    return savedMedicines.some((m) => m.id === id)
-  }, [id, savedMedicines])
+  // Shared with Search and the Saved page so all three agree: match on the
+  // MediBase id, falling back to the normalized name.
+  const isSaved = useMemo(
+    () => isMedicineSaved(savedMedicines, { id, name: medicine?.name }),
+    [id, medicine?.name, savedMedicines],
+  )
 
   const saving = saveMutation.isPending || unsaveMutation.isPending
 

@@ -6,7 +6,9 @@ import { Switch } from '@/components/ui/switch'
 import { EmptyState } from '@/components/shared/states'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Search, Trash2, Heart, ArrowRight } from 'lucide-react'
+import { Search, Trash2, Heart, ArrowRight, MapPin, Clock } from 'lucide-react'
+import { ConfidenceBadge } from '@/components/shared/status'
+import { AVAILABILITY, CONFIRM_NOTE } from '@/lib/availability'
 import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
 import { useLanguage } from '@/providers/language-provider'
 
@@ -74,7 +76,8 @@ export default function UserSaved() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {saved.map((med) => (
-            <Card key={med.id} className="transition-shadow hover:shadow-card">
+            // Off-catalog rows have no MediBase id; the name is their key.
+            <Card key={med.id ?? med.name} className="transition-shadow hover:shadow-card">
               <CardContent className="flex flex-col gap-4 py-5">
                 {/* Saved icon + name / generic · strength */}
                 <div className="flex items-start justify-between gap-2">
@@ -89,33 +92,73 @@ export default function UserSaved() {
                   </span>
                 </div>
 
+                {/* Availability confidence — the reason this page exists. The
+                    API already returns it per saved medicine; it was being
+                    discarded, leaving the page's own subtitle unfulfilled. */}
+                <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/40 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-muted-foreground">
+                      {t('availability', 'Availability')}
+                    </span>
+                    <ConfidenceBadge level={med.confidence ?? 'unknown'} size="sm" />
+                  </div>
+                  <span className="text-xs leading-relaxed text-foreground">
+                    {AVAILABILITY[med.confidence]?.plain ?? AVAILABILITY.unknown.plain}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                    <span className="flex min-w-0 items-center gap-1">
+                      <MapPin className="size-3 shrink-0" />
+                      <span className="truncate">{med.pharmacy}</span>
+                      {med.distance != null && ` · ${med.distance.toFixed(1)} km`}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="size-3 shrink-0" />
+                      {med.updated}
+                    </span>
+                  </div>
+                </div>
+
                 {/* Alerts toggle */}
                 <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3">
                   <span className="text-sm font-medium text-foreground">{t('alertsEnabled', 'Alerts enabled')}</span>
                   <Switch
                     checked={med.alertsEnabled ?? true}
-                    onCheckedChange={() => toggleAlerts(med.id, med.alertsEnabled ?? true)}
+                    onCheckedChange={() => toggleAlerts(med.id ?? med.name, med.alertsEnabled ?? true)}
                     aria-label={`Toggle alerts for ${med.name}`}
                   />
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 border-t border-border pt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => navigate(`/medicine/${med.id}`)}
-                  >
-                    {t('viewDetails', 'View details')}
-                    <ArrowRight className="size-3.5" />
-                  </Button>
+                  {med.id ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => navigate(`/medicine/${med.id}`)}
+                    >
+                      {t('viewDetails', 'View details')}
+                      <ArrowRight className="size-3.5" />
+                    </Button>
+                  ) : (
+                    // No governed identity yet, so no detail page to open —
+                    // searching is still useful once a pharmacy adds it.
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => navigate(`/search?q=${encodeURIComponent(med.name)}`)}
+                    >
+                      {t('searchAgain', 'Search again')}
+                      <ArrowRight className="size-3.5" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     className="text-danger hover:bg-danger/5"
                     aria-label={`Remove ${med.name} from saved`}
-                    onClick={() => remove(med.id, med.name)}
+                    onClick={() => remove(med.id ?? med.name, med.name)}
                     disabled={unsaveMutation.isPending}
                   >
                     <Trash2 className="size-4" />
@@ -125,6 +168,10 @@ export default function UserSaved() {
             </Card>
           ))}
         </div>
+      )}
+
+      {saved.length > 0 && (
+        <p className="text-xs leading-relaxed text-muted-foreground">{CONFIRM_NOTE}</p>
       )}
     </div>
   )

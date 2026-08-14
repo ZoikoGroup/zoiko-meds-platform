@@ -18,8 +18,9 @@ export class SearchQueryDto {
   @MaxLength(120)
   q?: string;
 
-  // Distance ceiling in km. Accepts any 1..100 value so the client can send a
-  // radius derived from a miles selector (e.g. 15 mi ≈ 24 km).
+  // Distance ceiling in km — the client's radius selector is in km and the
+  // value is sent through unconverted. The 1..100 range leaves headroom above
+  // the 50 km selector maximum (which is also the Google Places circle cap).
   @IsOptional()
   @Transform(toNum)
   @IsNumber()

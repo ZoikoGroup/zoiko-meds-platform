@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -12,6 +13,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { SignalIngestService } from '../signal/signal-ingest.service';
+import { normalizeMedicineName } from '../saved-link/saved-medicine-link.service';
+import { SaveMedicineDto } from './dto/save-medicine.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { UpdateAlertsDto } from './dto/update-alerts.dto';
 
@@ -148,24 +151,102 @@ export class MeService {
     });
     return rows
       .map((r) => {
+        // Not yet in MediBase — return a name-only entry so the patient can see
+        // and manage what they are following. `id` stays null so the client
+        // knows there is no detail page or availability to link to.
+        if (!r.medicine) {
+          return {
+            id: null,
+            savedId: r.id,
+            name: r.medicineName,
+            generic: '',
+            manufacturer: '',
+            strength: '',
+            form: '',
+            confidence: 'unknown',
+            pharmacy: 'Not stocked by a verified pharmacy yet',
+            distance: null,
+            updated: 'Waiting for a pharmacy to add it',
+            rx: false,
+            isGeneric: false,
+            description: `${r.medicineName} is not in the MediBase catalog yet. We will alert you when a verified pharmacy adds it.`,
+            related: [],
+            inCatalog: false,
+            alertsEnabled: r.alertsEnabled ?? true,
+            priority: r.priority?.toLowerCase() ?? 'medium',
+          };
+        }
         const dto = this.toMedicineDto(r.medicine, [r.medicine]);
         if (!dto) return null;
         return {
           ...dto,
+          savedId: r.id,
+          inCatalog: true,
           alertsEnabled: r.alertsEnabled ?? true,
           priority: r.priority?.toLowerCase() ?? 'medium',
         };
       })
-      .filter(Boolean);
+      // A type predicate rather than `.filter(Boolean)`, which TypeScript
+      // cannot narrow — callers were left with `| null` on every element.
+      .filter((row): row is NonNullable<typeof row> => row !== null);
   }
 
-  async save(userId: string, medicineId: string) {
-    const medicine = await this.prisma.medicineEntity.findUnique({
-      where: { id: medicineId },
-    });
-    if (!medicine) throw new NotFoundException('Medicine not found');
+  /**
+   * Save a medicine, with or without a governed identity.
+   *
+   * With `medicineId` the medicine must exist in MediBase. Without one, the
+   * medicine is stored by name — a patient may follow something the catalog
+   * has not seen yet, and SavedMedicineLinkService attaches the identity the
+   * first time a verified pharmacy stocks it.
+   */
+  async save(userId: string, dto: SaveMedicineDto) {
+    let medicineId: string | null = null;
+    let medicineName = (dto.name ?? '').trim();
+
+    if (dto.medicineId) {
+      const medicine = await this.prisma.medicineEntity.findUnique({
+        where: { id: dto.medicineId },
+      });
+      if (!medicine) throw new NotFoundException('Medicine not found');
+      medicineId = medicine.id;
+      // Prefer the governed name over whatever the client displayed.
+      medicineName = medicine.canonicalName;
+    }
+
+    if (!medicineName) {
+      throw new BadRequestException('Provide a medicineId or a medicine name');
+    }
+
+    const normalizedName = normalizeMedicineName(medicineName);
+    if (!normalizedName) {
+      throw new BadRequestException('Medicine name must contain letters or numbers');
+    }
+
+    // The medicine may already be in the catalog under this name even though
+    // the client had no id for it (an off-catalog save raced with a pharmacy
+    // adding it). Attach the identity now rather than creating a pending row
+    // that would never be linked.
+    if (!medicineId) {
+      const existing = await this.prisma.medicineEntity.findFirst({
+        where: { canonicalName: { equals: medicineName, mode: 'insensitive' }, isSuppressed: false },
+        select: { id: true, canonicalName: true },
+      });
+      if (existing) {
+        medicineId = existing.id;
+        medicineName = existing.canonicalName;
+      }
+    }
+
     try {
-      await this.prisma.savedMedicine.create({ data: { userId, medicineId } });
+      await this.prisma.savedMedicine.create({
+        data: {
+          userId,
+          medicineId,
+          medicineName,
+          normalizedName,
+          linkedAt: medicineId ? new Date() : null,
+        },
+      });
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -175,26 +256,50 @@ export class MeService {
       }
       throw err;
     }
-    return { saved: true, medicineId };
+    return { saved: true, medicineId, medicineName };
   }
 
-  async unsave(userId: string, medicineId: string) {
+  /**
+   * Remove a saved medicine. `key` is a MediBase id for catalog medicines, or
+   * the medicine name for one saved off-catalog; both are matched, scoped to
+   * the caller. Removing the row is what stops any future alert for it.
+   */
+  async unsave(userId: string, key: string) {
+    const normalizedName = normalizeMedicineName(key);
     await this.prisma.savedMedicine.deleteMany({
-      where: { userId, medicineId },
+      where: {
+        userId,
+        OR: [{ medicineId: key }, { normalizedName }],
+      },
     });
-    return { saved: false, medicineId };
+    return { saved: false, medicineId: key };
   }
 
+  /**
+   * Toggle availability alerts for one saved medicine. `key` is a MediBase id,
+   * or the medicine name for a save made before the catalog held it. Turning
+   * this off is what stops future alerts without losing the saved medicine.
+   */
   async updateSavedMedicineAlerts(
     userId: string,
-    medicineId: string,
+    key: string,
     alertsEnabled: boolean,
   ) {
-    await this.prisma.savedMedicine.updateMany({
-      where: { userId, medicineId },
+    // Scoped by userId, so one patient can never toggle another's alerts.
+    // `updateMany` matches zero rows when the medicine is not saved by this
+    // user, which previously still reported success — report the miss instead
+    // of telling the client a preference was stored when none was.
+    const { count } = await this.prisma.savedMedicine.updateMany({
+      where: {
+        userId,
+        OR: [{ medicineId: key }, { normalizedName: normalizeMedicineName(key) }],
+      },
       data: { alertsEnabled },
     });
-    return { success: true, medicineId, alertsEnabled };
+    if (count === 0) {
+      throw new NotFoundException('Medicine is not in your saved list');
+    }
+    return { success: true, medicineId: key, alertsEnabled };
   }
 
   // --- Alert preferences ---------------------------------------------------
