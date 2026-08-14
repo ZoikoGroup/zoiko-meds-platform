@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Card } from '@/components/ui/card'
@@ -16,17 +16,22 @@ import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
   Phone, Clock, Ambulance, Pill, CheckCircle2, AlertTriangle, Info,
-  LocateFixed, Globe, Star,
+  LocateFixed, Globe, Star, Heart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScanPrescription } from '@/features/scan/scan-prescription'
+import { DetectedMedicinesBar } from '@/features/scan/detected-medicines-bar'
+import { useSavedMedicines, useSaveMedicine, useUnsaveMedicine } from '@/hooks/use-saved-medicines'
+import { isMedicineSaved } from '@/lib/medicine-name'
 import { useLanguage } from '@/providers/language-provider'
 
 const LOC_KEY = 'zoiko-user-loc'
-const DISTANCES = [5, 10, 15, 25, 50]
-const KM_PER_MILE = 1.60934
-
-const milesToKm = (mi) => Math.max(1, Math.round(mi * KM_PER_MILE))
+// Search radii in kilometres. The API has always worked in km — `maxDistance`
+// is a km ceiling, the Haversine helper uses R = 6371 km, and Google Places
+// caps its circle at 50 km — so the selected value is now passed straight
+// through instead of being converted from miles.
+const DISTANCES_KM = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+const DEFAULT_DISTANCE_KM = 15
 const normalizeQuery = (q) => (q || '').toLowerCase().replace(/near me|in hyderabad/g, '').trim()
 
 export default function UserSearch() {
@@ -56,8 +61,22 @@ export default function UserSearch() {
   // Precise coordinates from the browser's geolocation, when the user opts in.
   const [coords, setCoords] = useState(null)
   const [geoStatus, setGeoStatus] = useState('idle') // idle | loading | ok | error
-  const [distanceMiles, setDistanceMiles] = useState(15)
+  const [distanceKm, setDistanceKm] = useState(DEFAULT_DISTANCE_KM)
   const [showSuggestions, setShowSuggestions] = useState(false)
+
+  // --- Medicines read from a scanned prescription --------------------------
+  // Held here rather than inside <ScanPrescription> so the list survives the
+  // move to the search view: a prescription lists several medicines but
+  // availability is searched one at a time, and re-scanning per medicine was
+  // the only way to reach the second one.
+  const [detected, setDetected] = useState([])
+  // Bumping this remounts the scan panel, resetting it to the empty dropzone.
+  const [scanKey, setScanKey] = useState(0)
+
+  // Stable identity — <ScanPrescription> publishes through an effect.
+  const handleDetected = useCallback((medicines) => {
+    setDetected(medicines ?? [])
+  }, [])
 
   // --- Committed search (the ONLY thing that triggers a fetch) --------------
   // Set exclusively by runSearch(). Deep links (/search?q=… from the home page)
@@ -66,8 +85,8 @@ export default function UserSearch() {
     queryParam.trim()
       ? {
           q: normalizeQuery(queryParam),
-          distanceMiles: 15,
-          maxDistanceKm: milesToKm(15),
+          distanceKm: DEFAULT_DISTANCE_KM,
+          maxDistanceKm: DEFAULT_DISTANCE_KM,
           lat: undefined,
           lng: undefined,
           city: localStorage.getItem(LOC_KEY) || undefined,
@@ -172,8 +191,11 @@ export default function UserSearch() {
 
   // The ONLY entry point that fetches results. Validates that a medicine and a
   // location are set, then commits the current draft as the active search.
-  const runSearch = async () => {
-    const q = searchQuery.trim()
+  // `overrideQuery` lets a caller search a name it has just set, without
+  // waiting a render for `searchQuery` state to catch up. Guarded so that
+  // passing this straight to onClick (which supplies an event) still works.
+  const runSearch = async (overrideQuery) => {
+    const q = (typeof overrideQuery === 'string' ? overrideQuery : searchQuery).trim()
     if (!q) {
       flash('Enter a medicine name to search.')
       return
@@ -192,8 +214,8 @@ export default function UserSearch() {
     setShowSuggestions(false)
     setActiveSearch({
       q: normalizeQuery(q),
-      distanceMiles,
-      maxDistanceKm: milesToKm(distanceMiles),
+      distanceKm,
+      maxDistanceKm: distanceKm,
       lat: coords?.lat,
       lng: coords?.lng,
       city: coords ? undefined : location.trim() || undefined,
@@ -208,17 +230,65 @@ export default function UserSearch() {
     if (activeSearch) clearResults()
   }
 
-  // A medicine extracted from a scanned prescription — populate + prompt to search.
-  const handleScanSearch = (name) => {
+  // A medicine chosen from the scan results, or from the detected-medicines
+  // selector. Moves to the search view and runs the search straight away; the
+  // detected list stays mounted above the form so the next medicine is one
+  // click away. Accepts a medicine object or a bare name.
+  const selectDetectedMedicine = (medicine) => {
+    const name = (typeof medicine === 'string' ? medicine : medicine?.name ?? '').trim()
+    if (!name) return
     setMode('name')
     setSearchQuery(name)
     setShowSuggestions(false)
     if (activeSearch) clearResults()
-    flash(`Added “${name}”. Tap Search Availability to see nearby pharmacies.`)
+    // runSearch validates location itself and flashes what is missing, so a
+    // user with no location set still lands on a filled-in form.
+    void runSearch(name)
+  }
+
+  const clearDetected = () => {
+    setDetected([])
+    setScanKey((key) => key + 1)
   }
 
   const items = result?.items ?? []
   const hasSearched = !!activeSearch
+
+  // --- Save / unsave the matched medicine ----------------------------------
+  // Reuses the existing saved-medicines hooks; no new API surface.
+  const { data: savedMedicines = [] } = useSavedMedicines()
+  const saveMutation = useSaveMedicine()
+  const unsaveMutation = useUnsaveMedicine()
+  const savePending = saveMutation.isPending || unsaveMutation.isPending
+  const identity = result?.identity
+
+  // Matched by MediBase id when there is one, otherwise by normalized name —
+  // the same rule the API uses, so a medicine saved off-catalog still reads as
+  // saved here, and keeps reading as saved once a pharmacy links it.
+  const isIdentitySaved = isMedicineSaved(savedMedicines, identity)
+
+  const toggleSaveIdentity = async (target) => {
+    if (!target?.name || savePending) return
+    try {
+      if (isIdentitySaved) {
+        // Off-catalog rows have no id; the name is the handle.
+        await unsaveMutation.mutateAsync(target.id || target.name)
+        flash(`Removed ${target.name} from your saved medicines.`)
+      } else {
+        await saveMutation.mutateAsync({ id: target.id, name: target.name })
+        flash(
+          target.id
+            ? `Saved ${target.name} to your medicines.`
+            : `Saved ${target.name}. We'll alert you when a verified pharmacy adds it.`,
+        )
+      }
+    } catch (err) {
+      const message = err?.message ?? ''
+      if (/already saved/i.test(message)) flash('Already in your saved medicines.')
+      else if (/unauthor/i.test(message)) flash('Please sign in to save medicines.')
+      else flash(message || 'Could not update your saved medicines.')
+    }
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 pb-8">
@@ -251,10 +321,31 @@ export default function UserSearch() {
 
       {flashMsg && <Flash message={flashMsg} />}
 
-      {mode === 'scan' ? (
-        <ScanPrescription onSearchMedicine={handleScanSearch} flash={flash} />
-      ) : (
+      {/* The scan panel stays mounted while the user searches so its results
+          (and the uploaded file) are not thrown away when the view changes —
+          hidden rather than unmounted. */}
+      <div className={mode === 'scan' ? undefined : 'hidden'}>
+        <ScanPrescription
+          key={scanKey}
+          onSearchMedicine={selectDetectedMedicine}
+          onDetected={handleDetected}
+          flash={flash}
+        />
+      </div>
+
+      {mode !== 'name' ? null : (
         <>
+          {/* Medicines carried over from the scanned prescription */}
+          <DetectedMedicinesBar
+            medicines={detected}
+            // Derived, so typing a different name un-highlights the chip.
+            activeName={searchQuery.trim()}
+            onSelect={selectDetectedMedicine}
+            onScanAnother={() => setMode('scan')}
+            onClear={clearDetected}
+            t={t}
+          />
+
           {/* Search form */}
           <Card className="flex flex-col gap-5 p-6">
             <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-start">
@@ -395,13 +486,13 @@ export default function UserSearch() {
               <label className="flex items-center gap-2 text-sm font-medium text-foreground">
                 {t('distanceFromMe', 'Distance from me:')}
                 <select
-                  value={distanceMiles}
-                  onChange={(e) => { setDistanceMiles(Number(e.target.value)); if (activeSearch) clearResults() }}
+                  value={distanceKm}
+                  onChange={(e) => { setDistanceKm(Number(e.target.value)); if (activeSearch) clearResults() }}
                   aria-label="Distance from me"
                   className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  {DISTANCES.map((d) => (
-                    <option key={d} value={d}>{d} {t('miles', 'miles')}</option>
+                  {DISTANCES_KM.map((d) => (
+                    <option key={d} value={d}>{d} {t('km', 'km')}</option>
                   ))}
                 </select>
               </label>
@@ -465,10 +556,40 @@ export default function UserSearch() {
                   <ShieldCheck className="size-3.5 shrink-0 text-primary" />
                   {t('governedIdentityNotice', 'Governed medicine identity — MediBase™. Availability below is a confidence signal, not exact stock.')}
                 </p>
-                {result.identity.id && (
-                  <Link to={`/medicine/${result.identity.id}`} className="shrink-0 text-xs font-semibold text-primary hover:underline">
-                    {t('viewDetails', 'View details')}
-                  </Link>
+                {/* Save is offered whenever the medicine name is identified —
+                    including medicines MediBase does not hold yet, which have
+                    no id and therefore no detail page. Those are saved by name
+                    and alerted on once a verified pharmacy stocks them. */}
+                {result.identity.name && (
+                  <div className="flex shrink-0 items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleSaveIdentity(result.identity)}
+                      disabled={savePending}
+                      aria-pressed={isIdentitySaved}
+                      aria-label={
+                        isIdentitySaved
+                          ? `Remove ${result.identity.name} from saved medicines`
+                          : `Save ${result.identity.name} to your medicines`
+                      }
+                      className={cn(
+                        'flex items-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-60',
+                        isIdentitySaved
+                          ? 'text-red-500 hover:text-red-600'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <Heart className={cn('size-3.5', isIdentitySaved && 'fill-red-500')} />
+                      {isIdentitySaved
+                        ? t('savedMedicine', 'Saved')
+                        : t('saveMedicine', 'Save medicine')}
+                    </button>
+                    {result.identity.id && (
+                      <Link to={`/medicine/${result.identity.id}`} className="text-xs font-semibold text-primary hover:underline">
+                        {t('viewDetails', 'View details')}
+                      </Link>
+                    )}
+                  </div>
                 )}
               </div>
             </Card>
@@ -525,7 +646,8 @@ export default function UserSearch() {
                       <>
                         <span className="font-semibold">{result.medicine || 'This medicine'}</span> is likely
                         available at <span className="font-semibold">{result.availableCount}</span> of{' '}
-                        {result.total} nearby pharmacies within {activeSearch?.distanceMiles ?? distanceMiles} miles.
+                        {result.total} nearby pharmacies within{' '}
+                        {activeSearch?.distanceKm ?? distanceKm} km.
                       </>
                     ) : (
                       <>
@@ -580,7 +702,7 @@ export default function UserSearch() {
                                     24/7
                                   </Badge>
                                 )}
-                                {p.distance == null ? '—' : `${(p.distance / KM_PER_MILE).toFixed(1)} mi`}
+                                {p.distance == null ? '—' : `${p.distance.toFixed(1)} km`}
                               </span>
                             </div>
                             <div className="flex items-center justify-between">
@@ -669,7 +791,7 @@ export default function UserSearch() {
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                               <span className="font-semibold text-foreground tabular">
-                                {p.distance == null ? '—' : `${(p.distance / KM_PER_MILE).toFixed(1)} mi`}
+                                {p.distance == null ? '—' : `${p.distance.toFixed(1)} km`}
                               </span>
                             </div>
                             {p.rating != null && (

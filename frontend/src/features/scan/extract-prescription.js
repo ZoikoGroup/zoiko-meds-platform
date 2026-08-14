@@ -1,532 +1,394 @@
-import * as pdfjsLib from 'pdfjs-dist'
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import Tesseract from 'tesseract.js'
+// Prescription → medicine list orchestrator.
+//
+//   image / PDF
+//     → preprocessing (HEIC guard, per-page routing)
+//     → Tesseract OCR (shared worker) or PDF text layer
+//     → complete text extraction (every page, nothing silently dropped)
+//     → generic candidate extraction (structural, not sample-specific)
+//     → OCR-error-tolerant fuzzy matching
+//     → MediBase catalog matching
+//     → confidence scoring
+//     → [AI/Vision fallback, user-initiated, when OCR yields nothing confident]
+//     → user confirmation for uncertain results
+//     → final medicine list
+//
+// Every candidate line is carried through the whole pipeline — the extractor
+// does not stop after the first medicine.
+
 import { matchMedicines } from '@/services/medicine-api'
+import { recognize, OcrUnavailableError } from './ocr-worker'
+import { prepareImageForOcr } from './image-preprocess'
+import { extractPdf } from './pdf-text'
+import { extractCandidateLines, parseCandidate, titleCase } from './candidate-extract'
+import { bestSimilarity, containsName, similarity } from './text-normalize'
+import { matchOfflineDictionary } from './known-drugs'
+import {
+  BAND,
+  MATCH_SOURCE,
+  bandFor,
+  computeConfidence,
+  explain,
+  needsConfirmation,
+} from './confidence'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker
+export { BAND, MATCH_SOURCE } from './confidence'
 
-// Known medicine dictionary for offline, direct fallback, and fuzzy handwriting matching
-const KNOWN_DRUGS = [
-  {
-    name: 'Calpol',
-    generic: 'Paracetamol',
-    defaultStrength: '250mg/5ml Syrup',
-    aliases: ['calpol', 'colpol', 'calpl', 'syp calpol', 'calpol 250', 'calpol 500', 'calpol 650', 'calpol syrup'],
-  },
-  {
-    name: 'Delcon',
-    generic: 'Phenylephrine / Chlorpheniramine',
-    defaultStrength: 'Syrup',
-    aliases: ['delcon', 'oblon', 'deicon', 'delco', 'syp delcon', 'delcon syrup', 'delcon tds'],
-  },
-  {
-    name: 'Levolin',
-    generic: 'Levosalbutamol',
-    defaultStrength: 'Syrup',
-    aliases: ['levolin', 'levoun', 'levoln', 'levo', 'syp levolin', 'levolin syrup', 'levolin tds'],
-  },
-  {
-    name: 'Meftal-P',
-    generic: 'Mefenamic Acid / Paracetamol',
-    defaultStrength: '100mg/5ml Suspension',
-    aliases: ['meftal-p', 'meftal p', 'meftal', 'meltal', 'syp meftal-p', 'meftal-p 100/5', 'meftal-p syp', 'meftal p syp'],
-  },
-  {
-    name: 'Dolo 650',
-    generic: 'Paracetamol',
-    defaultStrength: '650 mg',
-    aliases: ['dolo', 'dolo 650', 'dolo650'],
-  },
-  {
-    name: 'Crocin',
-    generic: 'Paracetamol',
-    defaultStrength: '500 mg',
-    aliases: ['crocin', 'crocin 500', 'crocin advance', 'crocin 650'],
-  },
-  {
-    name: 'Augmentin 625',
-    generic: 'Amoxicillin / Clavulanate',
-    defaultStrength: '625 mg',
-    aliases: ['augmentin', 'augmentin 625', 'augmentin duo'],
-  },
-  {
-    name: 'Clavam 625',
-    generic: 'Amoxicillin / Clavulanate',
-    defaultStrength: '625 mg',
-    aliases: ['clavam', 'clavam 625'],
-  },
-  {
-    name: 'Combiflam',
-    generic: 'Ibuprofen / Paracetamol',
-    defaultStrength: '400 mg / 325 mg',
-    aliases: ['combiflam', 'combiflam tab'],
-  },
-  {
-    name: 'Azithromycin',
-    generic: 'Azithromycin',
-    defaultStrength: '500 mg',
-    aliases: ['azithromycin', 'azithral', 'aziwok', 'azithral 500'],
-  },
-  {
-    name: 'Pantoprazole',
-    generic: 'Pantoprazole',
-    defaultStrength: '40 mg',
-    aliases: ['pantoprazole', 'panto', 'pantocid', 'pantodac', 'pan 40'],
-  },
-  {
-    name: 'Pan-D',
-    generic: 'Pantoprazole / Domperidone',
-    defaultStrength: '40 mg / 30 mg',
-    aliases: ['pan-d', 'pan d', 'pantocid-d'],
-  },
-  {
-    name: 'Cetirizine',
-    generic: 'Cetirizine',
-    defaultStrength: '10 mg',
-    aliases: ['cetirizine', 'cetzine', 'okacet', 'alerid'],
-  },
-  {
-    name: 'Montair-LC',
-    generic: 'Montelukast / Levocetirizine',
-    defaultStrength: '10 mg / 5 mg',
-    aliases: ['montair-lc', 'montair lc', 'montair', 'montek-lc'],
-  },
-  {
-    name: 'Asthalin',
-    generic: 'Salbutamol',
-    defaultStrength: 'Syrup / Inhaler',
-    aliases: ['asthalin', 'asthalin syp', 'asthalin inhaler'],
-  },
-  {
-    name: 'Ascoril',
-    generic: 'Terbutaline / Bromhexine / Guaiphenesin',
-    defaultStrength: 'Syrup',
-    aliases: ['ascoril', 'ascoril-d', 'ascoril ls'],
-  },
-  {
-    name: 'Alex Syrup',
-    generic: 'Dextromethorphan / Chlorpheniramine / Phenylephrine',
-    defaultStrength: 'Syrup',
-    aliases: ['alex', 'alex syrup', 'alex syp'],
-  },
-  {
-    name: 'Cheston Cold',
-    generic: 'Paracetamol / Phenylephrine / Cetirizine',
-    defaultStrength: 'Syrup / Tablet',
-    aliases: ['cheston cold', 'cheston', 'cheston cold syp'],
-  },
-  {
-    name: 'Zerodol-SP',
-    generic: 'Aceclofenac / Paracetamol / Serratiopeptidase',
-    defaultStrength: '100 mg / 325 mg / 15 mg',
-    aliases: ['zerodol-sp', 'zerodol sp', 'zerodol-p', 'zerodol'],
-  },
-  {
-    name: 'Taxim-O',
-    generic: 'Cefixime',
-    defaultStrength: '200 mg',
-    aliases: ['taxim-o', 'taxim o', 'cefixime'],
-  },
-  {
-    name: 'Sumo',
-    generic: 'Nimesulide / Paracetamol',
-    defaultStrength: '100 mg / 325 mg',
-    aliases: ['sumo', 'sumo tab', 'sumo syp'],
-  },
-  {
-    name: 'Flexon',
-    generic: 'Ibuprofen / Paracetamol',
-    defaultStrength: '400 mg / 325 mg',
-    aliases: ['flexon', 'flexon mr'],
-  },
-  {
-    name: 'Sinarest',
-    generic: 'Paracetamol / Chlorpheniramine / Phenylephrine',
-    defaultStrength: 'Tablet / Syrup',
-    aliases: ['sinarest', 'sinarest syp'],
-  },
-  {
-    name: 'Allegra',
-    generic: 'Fexofenadine',
-    defaultStrength: '120 mg',
-    aliases: ['allegra', 'allegra 120', 'allegra 180'],
-  },
-  {
-    name: 'Amoxicillin',
-    generic: 'Amoxicillin',
-    defaultStrength: '500 mg',
-    aliases: ['amoxicillin', 'mox', 'novamox', 'amoxil'],
-  },
-  {
-    name: 'Ibuprofen',
-    generic: 'Ibuprofen',
-    defaultStrength: '400 mg',
-    aliases: ['ibuprofen', 'brufen'],
-  },
-  {
-    name: 'Metformin',
-    generic: 'Metformin',
-    defaultStrength: '500 mg',
-    aliases: ['metformin', 'glycomet'],
-  },
-  {
-    name: 'Amlodipine',
-    generic: 'Amlodipine',
-    defaultStrength: '5 mg',
-    aliases: ['amlodipine', 'amlong', 'stamlo'],
-  },
-]
-
-/**
- * Calculate Levenshtein distance between two strings
- */
-function levenshteinDistance(a, b) {
-  if (!a || !b) return (a || b).length
-  const matrix = []
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i]
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j
-
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1]
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        )
-      }
-    }
-  }
-  return matrix[b.length][a.length]
-}
-
-/**
- * Calculate normalized similarity ratio (0.0 to 1.0)
- */
-function similarityRatio(s1, s2) {
-  const str1 = (s1 || '').toLowerCase().trim()
-  const str2 = (s2 || '').toLowerCase().trim()
-  if (str1 === str2) return 1.0
-  const dist = levenshteinDistance(str1, str2)
-  const maxLen = Math.max(str1.length, str2.length)
-  return maxLen === 0 ? 1.0 : (maxLen - dist) / maxLen
-}
-
-/**
- * Regex identifying non-medicine prescription content (doctor, qualification, hospital, dates, vitals, patient)
- */
-const NON_MEDICINE_RE = /(doctor|dr\.?\b|mbbs|paediatrics|pediatrics|jipmer|govt|medical|college|reg\.?\s*no|ph\.?\s*:?|phone|tel\b|contact|chc\b|phc\b|hospital|clinic|thrissur|nemmara|narayanan|date|name\s*:|ashvika|weight|kg\b|lbs\b|age|gender|yr\b|yrs\b|clinical|description|urti\b|rr\s*-|rs\s*-|b\/l|aee\b|min\b|bp\b|pulse|temp|advice|advise|morning|evening|night|timings|7\.00|8\.45|3\.30|7\.30|page|\d{10}|\d{6,})/i
-
-/**
- * Detect dosage form prefix (Syp, Tab, Cap, Inj, etc.)
- */
-const FORM_PREFIX_RE = /^(syp|syrup|tab|tablet|cap|capsule|inj|injection|oint|cream|drops|soln|susp|sachet|respules|lotion|gel|soap|inhaler)\b/i
-
-/**
- * Extract text from a PDF file preserving line breaks
- */
-async function extractTextFromPDF(file) {
-  try {
-    const arrayBuffer = await file.arrayBuffer()
-    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) })
-    const pdf = await loadingTask.promise
-    let fullText = ''
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i)
-      const textContent = await page.getTextContent()
-      let lastY = null
-      let pageLines = []
-      let currentLine = ''
-
-      for (const item of textContent.items) {
-        if (!item || item.str === undefined) continue
-        const str = item.str
-        const y = item.transform ? item.transform[5] : null
-
-        const isNewLine = item.hasEOL || (lastY !== null && y !== null && Math.abs(y - lastY) > 4)
-
-        if (isNewLine && currentLine.trim()) {
-          pageLines.push(currentLine.trim())
-          currentLine = ''
-        }
-
-        currentLine += (currentLine && !str.startsWith(' ') ? ' ' : '') + str
-        lastY = y
-      }
-
-      if (currentLine.trim()) {
-        pageLines.push(currentLine.trim())
-      }
-
-      fullText += pageLines.join('\n') + '\n'
-    }
-
-    if (fullText.trim().length >= 3) {
-      return fullText.trim()
-    }
-
-    // Fallback to rendering canvas and OCR if PDF contains scanned image
-    let ocrText = ''
-    for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
-      const page = await pdf.getPage(i)
-      const viewport = page.getViewport({ scale: 1.5 })
-      const canvas = document.createElement('canvas')
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-      const ctx = canvas.getContext('2d')
-      await page.render({ canvasContext: ctx, viewport }).promise
-
-      const res = await Tesseract.recognize(canvas, 'eng')
-      ocrText += (res.data?.text || '') + '\n'
-    }
-    return ocrText.trim()
-  } catch (err) {
-    console.error('PDF text extraction error:', err)
-    return ''
+/** Raised for a file we can accept in theory but cannot decode in the browser. */
+export class UnsupportedFormatError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'UnsupportedFormatError'
   }
 }
 
-/**
- * Extract text from Image file via Tesseract.js OCR
- */
-async function extractTextFromImage(file) {
-  try {
-    const res = await Tesseract.recognize(file, 'eng')
-    return res.data?.text || ''
-  } catch (err) {
-    console.error('Image OCR error:', err)
-    return ''
+/** Raised when text extraction produced nothing at all to work with. */
+export class NoTextExtractedError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'NoTextExtractedError'
   }
 }
 
+const HEIC_RE = /\.(heic|heif)$/i
+const PDF_RE = /\.pdf$/i
+
+/** How many MediBase lookups run concurrently. */
+const MATCH_CONCURRENCY = 4
+
 /**
- * Clean raw OCR text and extract ONLY candidate prescription medicine lines
+ * Minimum similarity for a MediBase result to be claimed as THE medicine.
+ *
+ * Set well above a coin-flip so garbled OCR is not forced onto the nearest
+ * catalog entry: genuine character confusions fold to ~0.95+ ("ParacetamoI",
+ * "Amoxcillin", "Metf0rmin"), whereas a badly-read word such as "Amescitin"
+ * scores ~0.55 against "Amoxicillin" and is correctly left unmatched rather
+ * than being renamed into a medicine the page never named.
  */
-function cleanAndExtractLines(rawText) {
-  const rawLines = (rawText || '').split(/[\r\n]+/)
-  const candidateTerms = []
-  let inAdviceSection = false
+const MEDIBASE_MATCH_FLOOR = 0.72
 
-  for (const line of rawLines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-
-    // Detect start of Advice / Rx section
-    if (/\b(advice|advise|rx|r\/|treatment|medicines)\b/i.test(trimmed)) {
-      inAdviceSection = true
-      continue
-    }
-
-    // Reject non-Latin Malayalam/Hindi lines
-    const latinChars = (trimmed.match(/[a-zA-Z]/g) || []).length
-    if (latinChars < 2) continue
-
-    // Check if line starts with dosage form prefix or is inside Advice section
-    const hasFormPrefix = FORM_PREFIX_RE.test(trimmed)
-    const isNonMedicine = NON_MEDICINE_RE.test(trimmed)
-
-    if (isNonMedicine && !hasFormPrefix) {
-      continue
-    }
-
-    // Line is candidate if inside Advice section OR has clear Form Prefix
-    if (inAdviceSection || hasFormPrefix) {
-      candidateTerms.push(trimmed)
-    } else {
-      // Check if line matches any drug alias directly
-      const lower = trimmed.toLowerCase()
-      const matchesDrug = KNOWN_DRUGS.some((d) =>
-        d.aliases.some((a) => lower.includes(a) || similarityRatio(lower, a) >= 0.6)
-      )
-      if (matchesDrug) {
-        candidateTerms.push(trimmed)
-      }
-    }
-  }
-
-  return [...new Set(candidateTerms)]
+function isHeic(file) {
+  return HEIC_RE.test(file.name ?? '') || /image\/hei[cf]/i.test(file.type ?? '')
 }
 
-/**
- * Clean a candidate line into a normalized medicine name & dosage detail
- */
-function parseMedicineLine(line) {
-  // remove non-ASCII characters without triggering no-control-regex
-  const removeNonAscii = (s) =>
-    Array.from(s || '')
-      .filter((ch) => ch.charCodeAt(0) <= 0x7f)
-      .join('')
-
-  let cleaned = removeNonAscii(line)
-    .replace(NON_MEDICINE_RE, '')
-    .trim()
-
-  // Extract strength pattern e.g. (250/5), (100/5), 500mg, 4ml
-  const ratioMatch = cleaned.match(/\((\d+[/.]\d+)\)|\b(\d+\s*(mg|g|mcg|ml|iu|u))\b/i)
-  const strengthStr = ratioMatch ? (ratioMatch[1] ? `${ratioMatch[1]} mg/ml` : ratioMatch[0]) : ''
-
-  // Detect dosage form prefix
-  const formMatch = line.match(FORM_PREFIX_RE)
-  const formStr = formMatch ? formMatch[0].toUpperCase() : ''
-
-  // Strip form prefix, strength, volume, frequency (TDS, Q6H, SOS, BD, OD), duration (x 3 d, x 5 d)
-  let cleanName = cleaned
-    .replace(FORM_PREFIX_RE, '')
-    .replace(/\((\d+[/.]\d+)\)/g, '')
-    .replace(/\b\d+\s*(mg|g|mcg|ml|iu|u)\b/gi, '')
-    .replace(/\b(tds|bd|od|qid|q6h|q8h|sos|stat|hs|bbf|abf)\b/gi, '')
-    .replace(/\bx\s*\d+\s*[ds]?\b/gi, '')
-    .replace(/\b\d+\s*[ds]\b/gi, '')
-    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (cleanName.length < 2) return null
-
-  return {
-    rawName: cleanName,
-    form: formStr,
-    strength: strengthStr,
-  }
+function isPdf(file) {
+  return file.type === 'application/pdf' || PDF_RE.test(file.name ?? '')
 }
 
-/**
- * Perform fuzzy matching against KNOWN_DRUGS and handwriting aliases
- */
-function fuzzyMatchKnownDrugs(candidateName) {
-  const lowerCand = candidateName.toLowerCase().trim()
-  if (!lowerCand || lowerCand.length < 2) return null
-
-  let bestMatch = null
-  let highestScore = 0
-
-  for (const drug of KNOWN_DRUGS) {
-    for (const alias of drug.aliases) {
-      if (lowerCand === alias || lowerCand.includes(alias) || alias.includes(lowerCand)) {
-        return drug
-      }
-      const score = similarityRatio(lowerCand, alias)
-      if (score > highestScore && score >= 0.55) {
-        highestScore = score
-        bestMatch = drug
-      }
+/** Run `task` over `items` with bounded concurrency, preserving order. */
+async function mapWithConcurrency(items, limit, task) {
+  const results = new Array(items.length)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++
+      results[index] = await task(items[index], index)
     }
-  }
-
-  return highestScore >= 0.55 ? bestMatch : null
-}
-
-/**
- * Main export: Extract medicines dynamically from uploaded prescription file
- */
-export async function extractPrescriptionMeds(file) {
-  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-
-  let rawText = ''
-  if (isPdf) {
-    rawText = await extractTextFromPDF(file)
-  } else {
-    rawText = await extractTextFromImage(file)
-  }
-
-  const candidateLines = cleanAndExtractLines(rawText)
-  const results = []
-  const seenNames = new Set()
-
-  for (const line of candidateLines) {
-    const parsed = parseMedicineLine(line)
-    if (!parsed || !parsed.rawName) continue
-
-    // 1. Check local KNOWN_DRUGS fuzzy handwriting matching first
-    const drugMatch = fuzzyMatchKnownDrugs(parsed.rawName)
-    if (drugMatch) {
-      const nameKey = drugMatch.name.toLowerCase()
-      if (!seenNames.has(nameKey)) {
-        seenNames.add(nameKey)
-        const detailParts = []
-        if (drugMatch.generic) detailParts.push(drugMatch.generic)
-        if (parsed.strength) detailParts.push(parsed.strength)
-        else if (drugMatch.defaultStrength) detailParts.push(drugMatch.defaultStrength)
-
-        results.push({
-          name: drugMatch.name,
-          detail: detailParts.join(' · ') || 'Prescription medicine',
-        })
-      }
-      continue
-    }
-
-    // 2. Query live MediBase catalog for accurate medicine match
-    let matched = null
-    try {
-      const apiMatches = await matchMedicines(parsed.rawName, 3)
-      if (apiMatches && apiMatches.length > 0) {
-        const topMatch = apiMatches[0]
-        const lineLower = parsed.rawName.toLowerCase()
-        const matchNameLower = topMatch.name.toLowerCase()
-        const genericLower = (topMatch.generic || '').toLowerCase()
-
-        if (
-          lineLower.includes(matchNameLower) ||
-          matchNameLower.includes(lineLower) ||
-          (genericLower && (lineLower.includes(genericLower) || genericLower.includes(lineLower))) ||
-          similarityRatio(lineLower, matchNameLower) >= 0.6
-        ) {
-          matched = topMatch
-        }
-      }
-    } catch {
-      // Ignored if API is unavailable
-    }
-
-    if (matched) {
-      const nameKey = matched.name.toLowerCase()
-      if (!seenNames.has(nameKey)) {
-        seenNames.add(nameKey)
-        const detailParts = []
-        if (matched.generic && matched.generic.toLowerCase() !== matched.name.toLowerCase()) {
-          detailParts.push(matched.generic)
-        }
-        if (parsed.strength) detailParts.push(parsed.strength)
-        else if (matched.strength) detailParts.push(matched.strength)
-
-        results.push({
-          name: matched.name,
-          detail: detailParts.join(' · ') || 'Prescription medicine',
-        })
-      }
-      continue
-    }
-
-    // 3. Fallback: Accept candidate ONLY IF it had an explicit dosage form prefix (Syp, Tab, Cap, Inj, etc.)
-    if (parsed.form && parsed.rawName.length >= 3 && !NON_MEDICINE_RE.test(parsed.rawName)) {
-      const capName = parsed.rawName.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase())
-      const nameKey = capName.toLowerCase()
-      if (!seenNames.has(nameKey)) {
-        seenNames.add(nameKey)
-        results.push({
-          name: capName,
-          detail: parsed.strength ? `${capName} · ${parsed.strength}` : `${capName} · Prescription ${parsed.form || 'medicine'}`,
-        })
-      }
-    }
-  }
-
-  // Final safety fallback: If raw text produced zero valid medicines, check if file name is a drug candidate
-  if (results.length === 0 && file.name) {
-    const fileBase = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim()
-    const drugMatch = fuzzyMatchKnownDrugs(fileBase)
-    if (drugMatch) {
-      results.push({
-        name: drugMatch.name,
-        detail: `${drugMatch.generic} · ${drugMatch.defaultStrength}`,
-      })
-    }
-  }
-
+  })
+  await Promise.all(runners)
   return results
 }
 
+/**
+ * Resolve one parsed candidate to a medicine.
+ * MediBase first, offline dictionary only if the catalog is unreachable, and a
+ * structural fallback that is always flagged for confirmation.
+ */
+async function resolveCandidate(parsed, { ocrConfidence, catalogReachable }) {
+  const { name, evidence } = parsed
+
+  if (catalogReachable.value) {
+    try {
+      const matches = await matchMedicines(name, 5)
+      const scored = (matches ?? [])
+        .map((match) => {
+          // `brands` is the mapped field name from toMedicineIdentity().
+          const references = [match.name, match.generic, ...(match.brands ?? [])].filter(Boolean)
+          const { score } = bestSimilarity(name, references)
+          const contained = references.some((reference) => containsName(name, reference))
+          return { match, score: contained ? Math.max(score, 0.95) : score }
+        })
+        .sort((a, b) => b.score - a.score)
+
+      const best = scored[0]
+      if (best && best.score >= MEDIBASE_MATCH_FLOOR) {
+        const exact = similarity(name, best.match.name) >= 0.995
+        const source = exact ? MATCH_SOURCE.MEDIBASE_EXACT : MATCH_SOURCE.MEDIBASE_FUZZY
+        return {
+          name: best.match.name,
+          genericName: best.match.generic ?? '',
+          catalogStrength: best.match.strength ?? '',
+          medicineId: best.match.id ?? null,
+          nameSimilarity: best.score,
+          source,
+          evidence,
+          ocrConfidence,
+        }
+      }
+      // Catalog answered but holds no such medicine — fall through to the
+      // structural path rather than inventing a match.
+    } catch {
+      // Network/API failure. Mark the catalog unreachable so the remaining
+      // candidates skip straight to the offline path instead of each waiting
+      // on their own timeout.
+      catalogReachable.value = false
+    }
+  }
+
+  if (!catalogReachable.value) {
+    const offline = matchOfflineDictionary(name)
+    if (offline) {
+      return {
+        name: offline.drug.name,
+        genericName: offline.drug.generic ?? '',
+        catalogStrength: offline.drug.defaultStrength ?? '',
+        medicineId: null,
+        nameSimilarity: offline.similarity,
+        source: MATCH_SOURCE.OFFLINE_DICTIONARY,
+        evidence,
+        ocrConfidence,
+      }
+    }
+  }
+
+  // Nothing matched the catalog. An unmatched reading is only ever surfaced
+  // when the line reads as a medicine NAME.
+  //
+  // Dosage structure alone is NOT sufficient: dispensing directions live
+  // inside the Rx block and carry the same markers a medicine does — "Sig:
+  // Take 1 capsule by mouth every 8 hours for 10 days" has a dosage form and a
+  // duration, and accepting it on that basis turned an instruction into a
+  // medicine called "SI Take BY Mouth Avery Hours For Oays".
+  if (!evidence.nameLike || name.length < 4) return null
+
+  return {
+    // Display what was written. With no catalog identity we have no authority
+    // to decide which trailing token is dosage and which is part of the brand.
+    name: titleCase(parsed.displayName || name),
+    genericName: '',
+    catalogStrength: '',
+    medicineId: null,
+    // Read verbatim off the page — the text is what it is, but we have no
+    // catalog corroboration, so the source weight keeps this out of the
+    // auto-accept band.
+    nameSimilarity: 1,
+    source: MATCH_SOURCE.UNMATCHED,
+    evidence,
+    ocrConfidence,
+  }
+}
+
+/** Build the user-facing record for a resolved medicine. */
+function toMedicine(resolved, parsed) {
+  const confidence = computeConfidence({
+    nameSimilarity: resolved.nameSimilarity,
+    source: resolved.source,
+    evidence: resolved.evidence,
+    ocrConfidence: resolved.ocrConfidence,
+  })
+
+  const detailParts = []
+  if (resolved.genericName && resolved.genericName.toLowerCase() !== resolved.name.toLowerCase()) {
+    detailParts.push(resolved.genericName)
+  }
+  if (parsed.strength) detailParts.push(parsed.strength)
+  else if (resolved.catalogStrength) detailParts.push(resolved.catalogStrength)
+  if (parsed.frequency) detailParts.push(parsed.frequency.toUpperCase())
+
+  return {
+    name: resolved.name,
+    // `detail` is kept for the existing result card layout.
+    detail: detailParts.join(' · ') || 'Prescription medicine',
+    genericName: resolved.genericName,
+    strength: parsed.strength || resolved.catalogStrength || '',
+    form: parsed.form || '',
+    frequency: parsed.frequency || '',
+    duration: parsed.duration || '',
+    medicineId: resolved.medicineId,
+    source: resolved.source,
+    confidence,
+    band: bandFor(confidence),
+    needsConfirmation: needsConfirmation(confidence, resolved.source),
+    reason: explain(resolved.source, confidence),
+    sourceText: parsed.raw,
+  }
+}
+
+/** Collapse duplicates, keeping the highest-confidence reading of each name. */
+function dedupe(medicines) {
+  const byName = new Map()
+  for (const medicine of medicines) {
+    const key = medicine.name.trim().toLowerCase()
+    const existing = byName.get(key)
+    if (!existing || medicine.confidence > existing.confidence) byName.set(key, medicine)
+  }
+  return [...byName.values()].sort((a, b) => b.confidence - a.confidence)
+}
+
+/** Read the raw text out of an image or a PDF. */
+async function extractText(file, { onProgress }) {
+  if (isPdf(file)) {
+    const result = await extractPdf(file, { onProgress })
+    return result
+  }
+
+  onProgress?.({ phase: 'preparing' })
+  // Upscale and normalize before OCR — a low-resolution photo is where
+  // "Amoxicillin" becomes "Amescitin", and no downstream matching recovers
+  // characters that were never read correctly.
+  const prepared = await prepareImageForOcr(file)
+
+  onProgress?.({ phase: 'ocr', page: 1, totalPages: 1, progress: 0 })
+  const { text, confidence } = await recognize(prepared, {
+    onProgress: (progress) => onProgress?.({ phase: 'ocr', page: 1, totalPages: 1, progress }),
+  })
+  return {
+    text,
+    pages: [{ page: 1, text, source: 'ocr', confidence }],
+    warnings: [],
+    pageImages: [],
+    ocrConfidence: confidence,
+  }
+}
+
+/**
+ * Extract medicines from an uploaded prescription.
+ *
+ * @returns {Promise<{
+ *   medicines: Array<object>,
+ *   confident: Array<object>,
+ *   unconfirmed: Array<object>,
+ *   warnings: string[],
+ *   stats: { pages: number, candidates: number, ocrConfidence: number|null },
+ *   needsVisionFallback: boolean,
+ *   pageImages: string[],
+ *   rawText: string,
+ * }>}
+ */
+export async function extractPrescriptionMeds(file, { onProgress } = {}) {
+  if (!file) throw new UnsupportedFormatError('No file was provided.')
+
+  if (isHeic(file)) {
+    // Browsers cannot decode HEIC to a canvas and Tesseract cannot read it, so
+    // accepting one would return "0 medicines found" with no explanation. Fail
+    // loudly with something the user can act on instead.
+    throw new UnsupportedFormatError(
+      'HEIC/HEIF photos cannot be read in the browser. On iPhone, use "Take a photo" here, ' +
+        'or re-save the image as JPEG or PNG and upload it again.',
+    )
+  }
+
+  onProgress?.({ phase: 'preparing' })
+
+  let extracted
+  try {
+    extracted = await extractText(file, { onProgress })
+  } catch (err) {
+    if (err instanceof OcrUnavailableError) throw err
+    throw new NoTextExtractedError(
+      `Could not read this file (${err?.message ?? 'unknown error'}). Try a clearer photo or a PDF.`,
+    )
+  }
+
+  const warnings = [...extracted.warnings]
+  const rawText = extracted.text ?? ''
+
+  if (!rawText.trim()) {
+    return {
+      medicines: [],
+      confident: [],
+      unconfirmed: [],
+      warnings,
+      stats: { pages: extracted.pages.length, candidates: 0, ocrConfidence: extracted.ocrConfidence },
+      needsVisionFallback: true,
+      pageImages: extracted.pageImages,
+      rawText,
+    }
+  }
+
+  onProgress?.({ phase: 'matching' })
+
+  const candidates = extractCandidateLines(rawText)
+  const parsedCandidates = candidates.map(parseCandidate).filter(Boolean)
+
+  const catalogReachable = { value: true }
+  const resolved = await mapWithConcurrency(parsedCandidates, MATCH_CONCURRENCY, (parsed) =>
+    resolveCandidate(parsed, { ocrConfidence: extracted.ocrConfidence, catalogReachable }),
+  )
+
+  const medicines = dedupe(
+    resolved
+      .map((entry, index) => (entry ? toMedicine(entry, parsedCandidates[index]) : null))
+      .filter(Boolean)
+      .filter((medicine) => medicine.band !== BAND.REJECTED),
+  )
+
+  if (!catalogReachable.value) {
+    warnings.push('The medicine catalog was unreachable, so names were matched offline. Please confirm each one.')
+  }
+
+  const confident = medicines.filter((medicine) => !medicine.needsConfirmation)
+  const unconfirmed = medicines.filter((medicine) => medicine.needsConfirmation)
+
+  return {
+    medicines,
+    confident,
+    unconfirmed,
+    warnings,
+    stats: {
+      pages: extracted.pages.length,
+      candidates: parsedCandidates.length,
+      ocrConfidence: extracted.ocrConfidence,
+    },
+    // Offer assisted reading when OCR found nothing, or found nothing it could
+    // stand behind without a human check.
+    needsVisionFallback: medicines.length === 0 || confident.length === 0,
+    pageImages: extracted.pageImages,
+    rawText,
+  }
+}
+
+/**
+ * Fold AI/Vision results into an existing extraction result.
+ * Vision candidates are always confirmable — they never auto-accept.
+ */
+export function mergeVisionResults(result, visionMedicines) {
+  const converted = (visionMedicines ?? [])
+    .filter((entry) => entry?.name && String(entry.name).trim().length >= 3)
+    .map((entry) => {
+      const confidence = computeConfidence({
+        nameSimilarity: typeof entry.confidence === 'number' ? Math.min(1, Math.max(0, entry.confidence)) : 0.7,
+        source: MATCH_SOURCE.VISION,
+        evidence: { strength: Boolean(entry.strength), form: Boolean(entry.form) },
+      })
+      const detailParts = [entry.genericName, entry.strength, entry.frequency].filter(Boolean)
+      return {
+        name: String(entry.name).trim(),
+        detail: detailParts.join(' · ') || 'Prescription medicine',
+        genericName: entry.genericName ?? '',
+        strength: entry.strength ?? '',
+        form: entry.form ?? '',
+        frequency: entry.frequency ?? '',
+        duration: entry.duration ?? '',
+        medicineId: null,
+        source: MATCH_SOURCE.VISION,
+        confidence,
+        band: bandFor(confidence),
+        // Always confirmed by the user: assisted reading is a fallback for text
+        // the on-device reader could not resolve, not a source of truth.
+        needsConfirmation: true,
+        reason: explain(MATCH_SOURCE.VISION, confidence),
+        sourceText: '',
+      }
+    })
+    .filter((medicine) => medicine.band !== BAND.REJECTED)
+
+  const medicines = dedupe([...result.medicines, ...converted])
+  return {
+    ...result,
+    medicines,
+    confident: medicines.filter((medicine) => !medicine.needsConfirmation),
+    unconfirmed: medicines.filter((medicine) => medicine.needsConfirmation),
+    needsVisionFallback: false,
+    visionUsed: true,
+  }
+}

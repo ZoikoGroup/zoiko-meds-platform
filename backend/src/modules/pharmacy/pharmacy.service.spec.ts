@@ -2,7 +2,12 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
+import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { PharmacyService } from './pharmacy.service';
+
+/** Linking saved medicines is exercised in saved-medicine-link.spec.ts. */
+const savedLinkStub = () =>
+  ({ linkPendingSaves: jest.fn().mockResolvedValue(0) }) as unknown as SavedMedicineLinkService;
 
 describe('PharmacyService.resolvePharmacyId', () => {
   let service: PharmacyService;
@@ -13,6 +18,7 @@ describe('PharmacyService.resolvePharmacyId', () => {
     service = new PharmacyService(
       prisma as unknown as PrismaService,
       {} as unknown as AuditWriter,
+      savedLinkStub(),
     );
   });
 
@@ -60,6 +66,7 @@ describe('PharmacyService self-service profile onboarding', () => {
     service = new PharmacyService(
       prisma as unknown as PrismaService,
       audit as unknown as AuditWriter,
+      savedLinkStub(),
     );
   });
 

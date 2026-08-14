@@ -69,21 +69,42 @@ enum MedicinePriority {
 }
 
 model SavedMedicine {
-  id             String           @id @default(cuid())
-  userId         String
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  medicineId     String
-  medicine       MedicineEntity   @relation(fields: [medicineId], references: [id], onDelete: Cascade)
-  priority       MedicinePriority @default(MEDIUM)
-  alertsEnabled  Boolean          @default(true)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Null while the medicine is not yet in MediBase. A patient may follow a
+  // medicine the catalog has never seen (e.g. a brand only stocked locally);
+  // the row is linked to a governed identity later, the first time a verified
+  // pharmacy adds it. onDelete: SetNull so retiring a medicine downgrades the
+  // save back to name-only rather than silently discarding it.
+  medicineId String?
+  medicine   MedicineEntity? @relation(fields: [medicineId], references: [id], onDelete: SetNull)
+
+  // What the patient saved, as written — always present, and the display name
+  // until a governed identity is attached.
+  medicineName String
+  // Case/spacing/punctuation-insensitive form of medicineName. The matching key
+  // for off-catalog rows, and the per-user uniqueness key for every row.
+  normalizedName String
+
+  priority      MedicinePriority @default(MEDIUM)
+  alertsEnabled Boolean          @default(true)
   // Last availability status a notification was generated for. Lets the signal
   // generator detect transitions (e.g. running-low → back-in-stock) instead of
   // re-emitting the same state. One of: available|limited|running-low|out-of-stock.
   notifiedStatus String?
-  createdAt      DateTime         @default(now())
+  // Set when a pharmacy first brings this medicine into the catalog, so the
+  // "now available" alert is emitted once and never re-fired.
+  linkedAt  DateTime?
+  createdAt DateTime  @default(now())
 
-  @@unique([userId, medicineId])
+  // Uniqueness is on the normalized name, not medicineId: a nullable FK would
+  // let Postgres treat every unlinked row as distinct, so the same patient
+  // could save "Volini Gel" repeatedly.
+  @@unique([userId, normalizedName])
   @@index([userId])
+  @@index([normalizedName, medicineId])
 }
 
 model AlertPreference {

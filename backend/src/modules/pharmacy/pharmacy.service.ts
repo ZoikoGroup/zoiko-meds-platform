@@ -17,6 +17,7 @@ import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
+import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 
 /**
  * Maps the pharmacy-facing status string to the AvailabilityConfidence enum
@@ -49,6 +50,7 @@ export class PharmacyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditWriter: AuditWriter,
+    private readonly savedLink: SavedMedicineLinkService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -864,6 +866,9 @@ export class PharmacyService {
     // 3. Frequently Requested Medicines
     const savedMap = new Map<string, number>();
     for (const item of savedMedsGroup) {
+      // Saves for medicines not yet in the catalog have no id to attribute
+      // demand to; they are counted once a pharmacy brings the medicine in.
+      if (!item.medicineId) continue;
       savedMap.set(item.medicineId, item._count.medicineId);
     }
 
@@ -959,6 +964,13 @@ export class PharmacyService {
         confidence,
       },
     });
+
+    // 3b. Attach any name-only saved medicines to this identity and alert the
+    // patients following it. Only meaningful when the medicine is actually
+    // stocked — an out-of-stock report is not an availability event.
+    if (reportedInStock) {
+      await this.savedLink.linkPendingSaves(medicine);
+    }
 
     // 4. Audit log entry
     const pharmacyName = await this.getPharmacyName(pharmacyId);

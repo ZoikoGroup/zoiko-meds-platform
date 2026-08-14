@@ -24,14 +24,30 @@ export const getUserOverview = () => apiFetch('/me/overview')
 // --- Saved medicines -----------------------------------------------------
 export const listSaved = () => apiFetch('/me/saved')
 
-export const saveMedicine = (medicineId) =>
-  apiFetch('/me/saved', { method: 'POST', body: { medicineId } })
+/**
+ * Save a medicine.
+ *
+ * Accepts a bare MediBase id, or `{ id, name }` for a medicine the catalog does
+ * not hold yet — those are stored by name and linked to a governed identity the
+ * first time a verified pharmacy stocks them.
+ */
+export const saveMedicine = (medicine) => {
+  const body =
+    typeof medicine === 'string'
+      ? { medicineId: medicine }
+      : { medicineId: medicine?.id ?? undefined, name: medicine?.name }
+  return apiFetch('/me/saved', { method: 'POST', body })
+}
 
 export const updateSavedMedicineAlerts = (medicineId, alertsEnabled) =>
-  apiFetch(`/me/saved/${medicineId}/alerts`, { method: 'PATCH', body: { alertsEnabled } })
+  apiFetch(`/me/saved/${encodeURIComponent(medicineId)}/alerts`, {
+    method: 'PATCH',
+    body: { alertsEnabled },
+  })
 
-export const unsaveMedicine = (medicineId) =>
-  apiFetch(`/me/saved/${medicineId}`, { method: 'DELETE' })
+/** `key` is a MediBase id, or the medicine name for an off-catalog save. */
+export const unsaveMedicine = (key) =>
+  apiFetch(`/me/saved/${encodeURIComponent(key)}`, { method: 'DELETE' })
 
 // --- Alert preferences ---------------------------------------------------
 export const getAlertPreferences = () => apiFetch('/me/alerts')

@@ -16,6 +16,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { SaveMedicineDto } from './dto/save-medicine.dto';
 import { UpdateAlertsDto } from './dto/update-alerts.dto';
+import { UpdateSavedAlertsDto } from './dto/update-saved-alerts.dto';
 
 /**
  * Patient portal API. Any authenticated user may call these; data is always
@@ -55,7 +56,7 @@ export class MeController {
   @Post('saved')
   @ApiOperation({ summary: 'Save a medicine' })
   save(@CurrentUser('id') userId: string, @Body() dto: SaveMedicineDto) {
-    return this.me.save(userId, dto.medicineId);
+    return this.me.save(userId, dto);
   }
 
   @Delete('saved/:medicineId')
@@ -72,9 +73,13 @@ export class MeController {
   updateSavedAlerts(
     @CurrentUser('id') userId: string,
     @Param('medicineId') medicineId: string,
-    @Body('alertsEnabled') alertsEnabled: boolean,
+    @Body() dto: UpdateSavedAlertsDto,
   ) {
-    return this.me.updateSavedMedicineAlerts(userId, medicineId, alertsEnabled);
+    return this.me.updateSavedMedicineAlerts(
+      userId,
+      medicineId,
+      dto.alertsEnabled,
+    );
   }
 
   @Get('alerts')

@@ -18,6 +18,7 @@ import { SearchModule } from './modules/search/search.module';
 import { PharmacyModule } from './modules/pharmacy/pharmacy.module';
 import { EnterpriseModule } from './modules/enterprise/enterprise.module';
 import { CommercialModule } from './modules/commercial/commercial.module';
+import { ScanModule } from './modules/scan/scan.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { CommercialModule } from './modules/commercial/commercial.module';
     PharmacyModule, // Pharmacy verification & participation
     EnterpriseModule, // Enterprise inquiries / lead capture
     CommercialModule, // ZM-COM-BILL-001 billing, subscriptions & participation
+    ScanModule, // Prescription scan — AI/Vision fallback (OCR runs in-browser)
   ],
   providers: [
     // Enforce the configured rate limit globally. Without this the

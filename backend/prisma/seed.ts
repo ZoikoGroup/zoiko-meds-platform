@@ -404,6 +404,9 @@ async function main() {
       data: {
         userId: patient.id,
         medicineId: med.id,
+        medicineName: name,
+        normalizedName: name.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        linkedAt: new Date(),
         priority,
         notifiedStatus: notifiedStatus ?? null,
       },

@@ -472,8 +472,10 @@ export class PatientSignalService {
   }
 
   private async loadSavedWithSignals(userId: string): Promise<SavedWithSignals[]> {
-    return this.prisma.savedMedicine.findMany({
-      where: { userId },
+    const rows = await this.prisma.savedMedicine.findMany({
+      // Only medicines with a governed identity: an off-catalog save has no
+      // availability signal, so there is no status to derive or notify on here.
+      where: { userId, medicineId: { not: null } },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       include: {
         medicine: {
@@ -481,6 +483,9 @@ export class PatientSignalService {
         },
       },
     });
+    // The `medicineId: not null` filter above cannot narrow the relation for
+    // TypeScript; this predicate makes the guarantee explicit.
+    return rows.filter((row): row is SavedWithSignals => row.medicine !== null);
   }
 
   /** Map generic name → the canonical names sharing it (for "alternatives"). */
@@ -553,11 +558,27 @@ export class PatientSignalService {
   }
 }
 
+/**
+ * A saved medicine that has been linked to a governed MediBase identity.
+ *
+ * Saves made against a medicine the catalog does not contain yet carry a null
+ * `medicine`; they have no availability signals to derive a status from, so
+ * this surface excludes them. Their "now available" alert is raised by
+ * SavedMedicineLinkService the moment a pharmacy brings the medicine in.
+ */
 type SavedWithSignals = Prisma.SavedMedicineGetPayload<{
   include: {
     medicine: { include: { availabilitySignals: { include: { pharmacy: true } } } };
   };
-}>;
+}> & {
+  medicine: NonNullable<
+    Prisma.SavedMedicineGetPayload<{
+      include: {
+        medicine: { include: { availabilitySignals: { include: { pharmacy: true } } } };
+      };
+    }>['medicine']
+  >;
+};
 
 interface RankedSignal {
   signal: SignalWithPharmacy;
