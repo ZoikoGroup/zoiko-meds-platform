@@ -1186,6 +1186,10 @@ model Invoice {
   mode                    ProviderMode
   providerInvoiceId       String?
   providerPaymentIntentId String?
+  /// Provider-hosted payment page for this invoice. Captured from the webhook so
+  /// an unpaid invoice is actionable in the portal instead of a dead end. Stripe
+  /// hosts it, so no card details ever reach this application.
+  hostedInvoiceUrl        String?
   /// Catalog version the amounts were derived from, so a historic invoice can
   /// always be explained (S-21).
   catalogVersion          String?

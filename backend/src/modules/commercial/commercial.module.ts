@@ -10,6 +10,7 @@ import { StripeConfig } from './stripe/stripe.config';
 import { StripeService } from './stripe/stripe.service';
 import { StripeWebhookService } from './stripe/stripe-webhook.service';
 import { StripeWebhookController } from './stripe/stripe-webhook.controller';
+import { PharmacyCheckoutController } from './pharmacy-checkout.controller';
 import { EntitlementService } from './entitlement.service';
 import { PriceCatalogService } from './price-catalog.service';
 import { SubscriptionService } from './subscription.service';
@@ -27,7 +28,7 @@ import { UsageMeteringService } from './usage-metering.service';
  */
 @Module({
   imports: [PrismaModule, AdminModule],
-  controllers: [CommercialController, StripeWebhookController],
+  controllers: [CommercialController, StripeWebhookController, PharmacyCheckoutController],
   providers: [
     PriceCatalogService,
     TaxService,
