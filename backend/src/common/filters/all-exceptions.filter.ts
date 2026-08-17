@@ -5,8 +5,30 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { AppLogger } from '../logger/app-logger.service';
+
+/**
+ * Prisma error codes that mean the database does not have the shape this build
+ * expects — a table or column the generated client selects is not there.
+ *
+ * P2021 missing table, P2022 missing column.
+ */
+const SCHEMA_DRIFT_CODES = new Set(['P2021', 'P2022']);
+
+/**
+ * Said to the caller when the schema is behind the code.
+ *
+ * Deliberately names the cause without naming the table or column: the operators
+ * who need this cannot always reach the server logs, and a generic "Internal
+ * server error" sends them looking for a bug in code that is correct. The
+ * identifier itself stays in the log, where schema detail belongs.
+ */
+const SCHEMA_DRIFT_MESSAGE =
+  'This feature is temporarily unavailable: the database schema is behind the deployed ' +
+  'application, so a pending migration has not been applied. This is a deployment state, ' +
+  'not a fault in the request.';
 
 /**
  * Catch-all exception filter producing a single, sanitized error envelope for
@@ -28,13 +50,28 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const req = ctx.getRequest<Request & { id?: string }>();
 
     const isHttp = exception instanceof HttpException;
-    const status = isHttp
-      ? exception.getStatus()
-      : HttpStatus.INTERNAL_SERVER_ERROR;
+    const isSchemaDrift =
+      exception instanceof Prisma.PrismaClientKnownRequestError &&
+      SCHEMA_DRIFT_CODES.has(exception.code);
+
+    let status: number;
+    if (isHttp) {
+      status = exception.getStatus();
+    } else if (isSchemaDrift) {
+      // Unavailable rather than a server fault: the request is well formed and
+      // will succeed once the migration is applied, so it is worth retrying.
+      status = HttpStatus.SERVICE_UNAVAILABLE;
+    } else {
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+    }
 
     // Extract a client-safe message for HttpExceptions; hide everything else.
     let message: string | string[] = 'Internal server error';
     let error = 'Internal Server Error';
+    if (isSchemaDrift) {
+      message = SCHEMA_DRIFT_MESSAGE;
+      error = 'Service Unavailable';
+    }
     if (isHttp) {
       const body = exception.getResponse();
       if (typeof body === 'string') {
@@ -56,8 +93,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
 
-    // Log 5xx with full detail; 4xx at warn without stack noise.
-    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    if (isSchemaDrift) {
+      // An operational condition, not a fault: the log names the identifier that
+      // is missing and what to run. A stack trace would only point at whichever
+      // query happened to touch the table first. Kept out of the response above.
+      const prismaError = exception as Prisma.PrismaClientKnownRequestError;
+      const missing =
+        prismaError.meta?.column ?? prismaError.meta?.table ?? 'unknown identifier';
+      this.logger.error(
+        `${req.method} ${req.originalUrl} -> ${status} SCHEMA DRIFT (${prismaError.code}): ` +
+          `${JSON.stringify(missing)} is missing from the database. ` +
+          'Run `npx prisma migrate deploy`, or `npx prisma migrate status` if it refuses.',
+        undefined,
+        'Exception',
+      );
+    } else if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      // Log 5xx with full detail; 4xx at warn without stack noise.
       const stack = exception instanceof Error ? exception.stack : undefined;
       this.logger.error(
         `${req.method} ${req.originalUrl} -> ${status}`,
