@@ -198,8 +198,35 @@ export class NearbyPharmacyService {
     return Math.min(Math.max(km, 1), MAX_RADIUS_KM);
   }
 
-  /** Prefer explicit coordinates; otherwise geocode the city string. */
-  private async resolveOrigin(
+  /**
+   * Geocode a free-text address to coordinates.
+   *
+   * Public so pharmacy registration can place a pharmacy on the map from the
+   * address an admin typed — a pharmacy without coordinates can never appear
+   * in a distance-bounded search. Returns null on any failure (no key, no
+   * match, network error); callers treat that as "not locatable yet".
+   */
+  async geocode(address: string): Promise<{ lat: number; lng: number } | null> {
+    const query = (address ?? '').trim();
+    if (!this.enabled || !query) return null;
+    try {
+      const url = `${GEOCODE_URL}?address=${encodeURIComponent(query)}&key=${this.apiKey}`;
+      const data = await this.fetchJson(url);
+      const loc = data?.results?.[0]?.geometry?.location;
+      if (data?.status !== 'OK' || !loc) return null;
+      return { lat: loc.lat, lng: loc.lng };
+    } catch (err) {
+      this.logger.warn(`Geocoding "${query}" failed: ${errMessage(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Prefer explicit coordinates; otherwise geocode the city string.
+   * Public so medicine search can measure distances from the caller's own
+   * location rather than a fixed origin.
+   */
+  async resolveOrigin(
     query: NearbyQuery,
   ): Promise<{ lat: number; lng: number; resolvedFrom: string } | null> {
     if (isCoord(query.lat) && isCoord(query.lng)) {

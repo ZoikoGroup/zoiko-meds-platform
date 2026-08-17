@@ -1,5 +1,7 @@
 import {
   IsInt,
+  IsLatitude,
+  IsLongitude,
   IsOptional,
   IsString,
   Max,
@@ -7,6 +9,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreatePharmacyDto {
   @IsString()
@@ -35,4 +38,18 @@ export class CreatePharmacyDto {
   @Min(0)
   @Max(100)
   availabilityScore?: number;
+
+  // Coordinates place the pharmacy on the patient-facing map and are what
+  // every distance-bounded search filters on — a pharmacy without them can
+  // never appear in "Availability near you". Optional here: when omitted, the
+  // service geocodes the address instead.
+  @IsOptional()
+  @Type(() => Number)
+  @IsLatitude()
+  latitude?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsLongitude()
+  longitude?: number;
 }

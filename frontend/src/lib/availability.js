@@ -34,6 +34,18 @@ export function mapsHref(query) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
 }
 
+/**
+ * Directions to a verified pharmacy — exact coordinates when the record has
+ * been located, otherwise a name/address lookup. Coordinates matter for chains
+ * where several branches share a name.
+ */
+export function pharmacyDirectionsHref(pharmacy) {
+  if (pharmacy?.latitude != null && pharmacy?.longitude != null) {
+    return mapsHref(`${pharmacy.latitude},${pharmacy.longitude}`)
+  }
+  return mapsHref([pharmacy?.name, pharmacy?.address].filter(Boolean).join(', '))
+}
+
 /** Click-to-call a verified pharmacy. */
 export function telHref(phone) {
   return `tel:${String(phone).replace(/[^+\d]/g, '')}`

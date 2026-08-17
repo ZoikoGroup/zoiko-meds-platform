@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Pharmacy, Prisma, VerificationRequestStatus, VerificationStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
+import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { CreatePharmacyDto } from './dto/create-pharmacy.dto';
 import { UpdatePharmacyDto } from './dto/update-pharmacy.dto';
 import { ListPharmaciesQuery } from './dto/list-pharmacies.query';
@@ -13,7 +14,30 @@ export class PharmacyAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditWriter,
+    private readonly nearby: NearbyPharmacyService,
   ) {}
+
+  /**
+   * Coordinates for a pharmacy, preferring what the admin supplied and falling
+   * back to geocoding the address.
+   *
+   * A pharmacy with no coordinates is invisible to every distance-bounded
+   * patient search, so registering one by address alone silently produced a
+   * record that could never be found. Geocoding failure is non-fatal — the
+   * record is still saved, just not yet locatable.
+   */
+  private async resolveCoordinates(
+    supplied: { latitude?: number; longitude?: number },
+    address: (string | null | undefined)[],
+  ): Promise<{ latitude: number; longitude: number } | null> {
+    if (supplied.latitude != null && supplied.longitude != null) {
+      return { latitude: supplied.latitude, longitude: supplied.longitude };
+    }
+    const query = address.filter(Boolean).join(', ').trim();
+    if (!query) return null;
+    const point = await this.nearby.geocode(query);
+    return point ? { latitude: point.lat, longitude: point.lng } : null;
+  }
 
   async list(query: ListPharmaciesQuery) {
     const page = query.page ?? 1;
@@ -53,6 +77,10 @@ export class PharmacyAdminService {
   }
 
   async create(actorId: string, dto: CreatePharmacyDto) {
+    // Resolved outside the transaction: geocoding is a network call and must
+    // not hold a database transaction open.
+    const coords = await this.resolveCoordinates(dto, [dto.city, dto.country]);
+
     const pharmacy = await this.prisma.$transaction(async (tx) => {
       const created = await tx.pharmacy.create({
         data: {
@@ -60,6 +88,8 @@ export class PharmacyAdminService {
           licenseNumber: dto.licenseNumber || null,
           city: dto.city || null,
           country: dto.country || null,
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
           reliabilityScore: (dto.availabilityScore ?? 100) / 100,
           verificationStatus: VerificationStatus.PENDING,
         },
@@ -81,11 +111,40 @@ export class PharmacyAdminService {
   }
 
   async update(actorId: string, id: string, dto: UpdatePharmacyDto) {
+    const current = await this.prisma.pharmacy.findUnique({ where: { id } });
+    if (!current) throw new NotFoundException('Pharmacy not found');
+
+    // Re-locate when coordinates were supplied, or when the address changed, or
+    // when the record simply never had coordinates — the last case is what
+    // brings already-registered pharmacies into patient search.
+    const addressChanged =
+      dto.addressLine1 !== undefined ||
+      dto.city !== undefined ||
+      dto.region !== undefined ||
+      dto.postalCode !== undefined ||
+      dto.country !== undefined;
+    const missingCoords = current.latitude == null || current.longitude == null;
+
+    const coords =
+      dto.latitude != null || dto.longitude != null || addressChanged || missingCoords
+        ? await this.resolveCoordinates(dto, [
+            dto.addressLine1 ?? current.addressLine1,
+            dto.city ?? current.city,
+            dto.region ?? current.region,
+            dto.postalCode ?? current.postalCode,
+            dto.country ?? current.country,
+          ])
+        : null;
+
     const pharmacy = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.pharmacy.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('Pharmacy not found');
 
       const data: Prisma.PharmacyUpdateInput = { updatedAt: new Date() };
+      if (coords) {
+        data.latitude = coords.latitude;
+        data.longitude = coords.longitude;
+      }
       if (dto.name !== undefined) data.name = dto.name;
       if (dto.licenseNumber !== undefined) data.licenseNumber = dto.licenseNumber || null;
       if (dto.addressLine1 !== undefined) data.addressLine1 = dto.addressLine1 || null;

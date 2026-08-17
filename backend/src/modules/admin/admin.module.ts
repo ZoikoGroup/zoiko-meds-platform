@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { NearbyPharmacyModule } from '../nearby/nearby-pharmacy.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { DashboardOverviewService } from './dashboard-overview.service';
 import { AuditWriter } from './audit.writer';
 import { PharmacyAdminController } from './pharmacy/pharmacy-admin.controller';
 import { PharmacyAdminService } from './pharmacy/pharmacy-admin.service';
@@ -13,7 +15,7 @@ import { ReportsController } from './reports/reports.controller';
 import { ReportsService } from './reports/reports.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, NearbyPharmacyModule],
   controllers: [
     AdminController,
     PharmacyAdminController,
@@ -24,6 +26,7 @@ import { ReportsService } from './reports/reports.service';
   providers: [
     AuditWriter,
     AdminService,
+    DashboardOverviewService,
     PharmacyAdminService,
     VerificationService,
     NotificationService,

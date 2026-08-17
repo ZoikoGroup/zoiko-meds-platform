@@ -46,10 +46,25 @@ export const addMedicine = (medicine) =>
     body: medicine,
   })
 
+/** One-tap status change from the inventory row menu. */
 export const updateAvailability = (id, status) =>
   apiFetch(`/pharmacies/inventory/${id}`, {
     method: 'PATCH',
     body: { status },
+  })
+
+/**
+ * Full edit from the Edit Medicine dialog.
+ *
+ * Sends every editable field, not just the status. The endpoint patches: any
+ * key omitted here keeps its stored value. Returns the saved row as the server
+ * resolved it, which is not always what was typed — name and strength resolve
+ * to a MediBase identity, so the response is what the table must show.
+ */
+export const updateMedicine = (id, patch) =>
+  apiFetch(`/pharmacies/inventory/${id}`, {
+    method: 'PATCH',
+    body: patch,
   })
 
 export const deleteMedicine = (id) =>

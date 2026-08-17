@@ -15,7 +15,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
 import {
-  getInventory, addMedicine, deleteMedicine, updateAvailability,
+  getInventory, addMedicine, deleteMedicine, updateAvailability, updateMedicine,
 } from '@/services/pharmacy-api'
 import { STATUS_META, AVAILABILITY_STATUSES } from '@/services/pharmacy-data'
 import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Download, UploadCloud } from 'lucide-react'
@@ -81,9 +81,18 @@ export default function PharmacyInventory() {
     setSubmitting(true)
     try {
       if (editingId) {
-        const updated = await updateAvailability(editingId, form.status)
-        setRows((rs) => rs.map((m) => (m.id === editingId ? { ...m, ...form, ...updated, updated: 'just now' } : m)))
-        flash(`Updated ${form.name}`)
+        const updated = await updateMedicine(editingId, {
+          name: form.name.trim(),
+          generic: form.generic.trim(),
+          strength: form.strength.trim(),
+          dosageForm: form.dosageForm.trim(),
+          status: form.status,
+        })
+        // Show what the server saved, not what was typed. Name and strength
+        // resolve to a MediBase identity, so the two can legitimately differ —
+        // spreading `form` over the response would hide that.
+        setRows((rs) => rs.map((m) => (m.id === editingId ? { ...m, ...updated } : m)))
+        flash(`Updated ${updated.name}`)
       } else {
         const created = await addMedicine({
           name: form.name.trim(),

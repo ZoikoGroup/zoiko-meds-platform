@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,6 +8,7 @@ import {
 import {
   AvailabilityConfidence,
   CommercialClassification,
+  QualityState,
   UserRole,
   VerificationRequestStatus,
   VerificationStatus,
@@ -1042,7 +1044,52 @@ export class PharmacyService {
   }
 
   /**
-   * Update the availability status of an existing inventory item.
+   * Find the MediBase identity an inventory row should point at.
+   *
+   * Name + strength are what identify a medicine, and the matcher is the same
+   * one addInventoryItem uses so both entry points land on the same row. A
+   * blank strength deliberately matches any strength, as it does on add.
+   */
+  private findMedicineIdentity(name: string, strength?: string | null) {
+    return this.prisma.medicineEntity.findFirst({
+      where: {
+        canonicalName: { equals: name, mode: 'insensitive' },
+        strength: strength || undefined,
+      },
+    });
+  }
+
+  /**
+   * May this pharmacy rewrite an identity's descriptive fields in place?
+   *
+   * MedicineEntity is the shared MediBase catalog, not per-pharmacy stock. An
+   * in-place edit therefore reaches every other pharmacy holding that medicine
+   * and every patient searching for it. Allowed only when the pharmacy is the
+   * sole stockist AND the identity is still ungoverned (NEEDS_REVIEW — what
+   * addInventoryItem creates); a curated entry belongs to MediBase admin.
+   */
+  private async mayEditIdentity(
+    medicine: { id: string; qualityState: QualityState },
+    pharmacyId: string,
+  ) {
+    if (medicine.qualityState !== QualityState.NEEDS_REVIEW) return false;
+    const otherStockist = await this.prisma.availabilitySignal.findFirst({
+      where: { medicineId: medicine.id, pharmacyId: { not: pharmacyId } },
+      select: { id: true },
+    });
+    return !otherStockist;
+  }
+
+  /**
+   * Edit an inventory item: its availability status, the medicine it points at,
+   * or both.
+   *
+   * Name and strength are resolved to a MediBase identity rather than written
+   * over the current one — changing "Asthalin 100 mcg" to 200 mcg re-points
+   * this pharmacy's row at the 200 mcg identity (creating it if the catalog
+   * has never seen it) and leaves the 100 mcg identity intact for whoever else
+   * stocks it. Generic name and dosage form describe the identity itself, so
+   * they are only written when this pharmacy is its sole, ungoverned owner.
    */
   async updateInventoryItem(
     pharmacyId: string,
@@ -1053,6 +1100,7 @@ export class PharmacyService {
   ) {
     const signal = await this.prisma.availabilitySignal.findUnique({
       where: { id: signalId },
+      include: { medicine: true },
     });
 
     if (!signal || signal.pharmacyId !== pharmacyId) {
@@ -1060,12 +1108,95 @@ export class PharmacyService {
     }
 
     const oldStatus = CONFIDENCE_TO_STATUS[signal.confidence] || 'out-of-stock';
-    const status = dto.status || 'available';
+    // Keep the current status when the caller only edits identity fields.
+    // Defaulting to 'available' here would silently restock an out-of-stock
+    // medicine because someone corrected a spelling.
+    const status = dto.status || oldStatus;
     const confidence = STATUS_TO_CONFIDENCE[status] || AvailabilityConfidence.HIGH;
+    const reportedInStock = status !== 'out-of-stock';
+
+    const current = signal.medicine;
+    const editsIdentity =
+      dto.name !== undefined ||
+      dto.generic !== undefined ||
+      dto.strength !== undefined ||
+      dto.dosageForm !== undefined ||
+      dto.dosageform !== undefined;
+
+    let medicineId = signal.medicineId;
+    let linkTarget: { id: string; canonicalName: string } | null = null;
+
+    if (editsIdentity) {
+      // Unsent fields keep their current value — this is a patch, not a replace.
+      const name = (dto.name ?? current.canonicalName).trim();
+      if (!name) throw new BadRequestException('Medicine name is required');
+      const strength = (dto.strength ?? current.strength ?? '').trim();
+      const generic = (dto.generic ?? current.genericName ?? '').trim();
+      const dosageForm = (
+        dto.dosageForm ??
+        dto.dosageform ??
+        current.dosageForm ??
+        'Tablet'
+      ).trim();
+
+      const target = await this.findMedicineIdentity(name, strength);
+
+      if (!target) {
+        // The catalog has no such medicine yet. Creating it here mirrors
+        // addInventoryItem, which is also how a pharmacy introduces one.
+        const created = await this.prisma.medicineEntity.create({
+          data: {
+            canonicalName: name,
+            genericName: generic || null,
+            strength: strength || null,
+            dosageForm,
+          },
+        });
+        medicineId = created.id;
+        linkTarget = created;
+      } else {
+        medicineId = target.id;
+        linkTarget = target;
+
+        const descriptionChanged =
+          (target.genericName ?? '') !== generic ||
+          (target.dosageForm ?? '') !== dosageForm;
+
+        if (descriptionChanged) {
+          if (await this.mayEditIdentity(target, pharmacyId)) {
+            const fixed = await this.prisma.medicineEntity.update({
+              where: { id: target.id },
+              data: { genericName: generic || null, dosageForm },
+            });
+            linkTarget = fixed;
+          } else {
+            // Refuse rather than save half the form: the pharmacist must know
+            // the generic/dosage form they typed was not applied.
+            throw new ConflictException(
+              `${target.canonicalName}${target.strength ? ` ${target.strength}` : ''} is a shared MediBase identity — other pharmacies stock it, so its generic name and dosage form are governed centrally and cannot be changed here. Adjust the medicine name or strength to point your inventory at a different medicine.`,
+            );
+          }
+        }
+      }
+
+      if (medicineId !== signal.medicineId) {
+        // One row per (medicine, pharmacy) — re-pointing onto a medicine this
+        // pharmacy already lists would collide on that unique constraint.
+        const clash = await this.prisma.availabilitySignal.findUnique({
+          where: { medicineId_pharmacyId: { medicineId, pharmacyId } },
+          select: { id: true },
+        });
+        if (clash) {
+          throw new ConflictException(
+            `${name}${strength ? ` ${strength}` : ''} is already in your inventory. Edit that entry instead.`,
+          );
+        }
+      }
+    }
 
     const updated = await this.prisma.availabilitySignal.update({
       where: { id: signalId },
-      data: { confidence, computedAt: new Date() },
+      data: { medicineId, confidence, computedAt: new Date() },
       include: {
         medicine: {
           select: {
@@ -1077,6 +1208,13 @@ export class PharmacyService {
         },
       },
     });
+
+    // An edit can introduce a medicine the catalog never held, which is exactly
+    // the moment patients following that name off-catalog should be linked and
+    // told — the same hook addInventoryItem uses.
+    if (linkTarget && medicineId !== signal.medicineId && reportedInStock) {
+      await this.savedLink.linkPendingSaves(linkTarget);
+    }
 
     // Audit log entry
     const pharmacyName = await this.getPharmacyName(pharmacyId);
@@ -1101,8 +1239,26 @@ export class PharmacyService {
         genericName: updated.medicine.genericName || '',
         strength: updated.medicine.strength || '',
         dosageForm: updated.medicine.dosageForm || 'Tablet',
-        previousValues: { status: oldStatus, confidence: signal.confidence.toLowerCase() },
-        newValues: { status, confidence: confidence.toLowerCase() },
+        previousValues: {
+          status: oldStatus,
+          confidence: signal.confidence.toLowerCase(),
+          // Identity is auditable too — re-pointing a row changes what the
+          // pharmacy is telling patients it stocks.
+          medicineId: signal.medicineId,
+          medicineName: current.canonicalName,
+          genericName: current.genericName || '',
+          strength: current.strength || '',
+          dosageForm: current.dosageForm || 'Tablet',
+        },
+        newValues: {
+          status,
+          confidence: confidence.toLowerCase(),
+          medicineId: updated.medicineId,
+          medicineName: updated.medicine.canonicalName,
+          genericName: updated.medicine.genericName || '',
+          strength: updated.medicine.strength || '',
+          dosageForm: updated.medicine.dosageForm || 'Tablet',
+        },
         status: 'Success',
       },
       ipAddress,
@@ -1115,6 +1271,9 @@ export class PharmacyService {
       generic: updated.medicine.genericName || '',
       strength: updated.medicine.strength || '',
       dosageForm: updated.medicine.dosageForm || 'Tablet',
+      // Alias kept in step with getInventory/addInventoryItem so the table and
+      // the edit dialog read the same shape whichever call produced the row.
+      dosageform: updated.medicine.dosageForm || 'Tablet',
       status,
       confidence: confidence.toLowerCase(),
       updated: 'just now',
