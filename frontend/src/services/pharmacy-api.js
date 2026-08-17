@@ -275,3 +275,12 @@ export const getReports = async () => {
 // server-side by role, so a field that is absent was never sent — the client does
 // not decide what may be seen. No demo fallback: this is a financial surface.
 export const getBilling = () => apiFetch('/pharmacies/me/billing')
+
+// Provider-hosted purchase and payment-method management. Both return a URL to
+// redirect to: card details never touch this application. Restricted server-side
+// to the authorized payer (Pharmacy Manager), so a Pharmacist gets a 403.
+export const startBillingCheckout = (body) =>
+  apiFetch('/pharmacies/me/billing/checkout', { method: 'POST', body: body || {} })
+
+export const openBillingPortal = () =>
+  apiFetch('/pharmacies/me/billing/portal', { method: 'POST', body: {} })

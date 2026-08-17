@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  BillingChannel,
+  CommercialClassification,
+  CommercialOffer,
   InvoiceStatus,
   Prisma,
   ProviderEventStatus,
@@ -13,6 +16,7 @@ import { StripeConfig } from './stripe.config';
 
 /** Event types acted on. Anything else is recorded and ignored, not guessed at. */
 const HANDLED = new Set([
+  'checkout.session.completed',
   'invoice.paid',
   'invoice.payment_failed',
   'invoice.finalized',
@@ -108,6 +112,8 @@ export class StripeWebhookService {
 
   private async dispatch(event: Stripe.Event): Promise<void> {
     switch (event.type) {
+      case 'checkout.session.completed':
+        return this.onCheckoutCompleted(event);
       case 'invoice.paid':
         return this.onInvoicePaid(event);
       case 'invoice.payment_failed':
@@ -125,6 +131,78 @@ export class StripeWebhookService {
     }
   }
 
+  /**
+   * A pharmacy completed provider-hosted checkout.
+   *
+   * This is where the internal subscription comes into existence: creating it when
+   * checkout *starts* would grant paid entitlement to anyone who opened the payment
+   * page and walked away. The provider confirming payment is the only trustworthy
+   * signal, and it arrives here.
+   *
+   * Idempotent on providerSubscriptionId, so a redelivery cannot produce a second
+   * subscription for the same purchase.
+   */
+  private async onCheckoutCompleted(event: Stripe.Event): Promise<void> {
+    const session = event.data.object as Stripe.Checkout.Session;
+
+    const rawSub = (session as unknown as { subscription?: string | { id: string } }).subscription;
+    const providerSubscriptionId = typeof rawSub === 'string' ? rawSub : rawSub?.id;
+    const billingProfileId = session.metadata?.billingProfileId;
+    const pharmacyId = session.metadata?.pharmacyId;
+    const priceCatalogEntryId = session.metadata?.priceCatalogEntryId ?? null;
+
+    if (!providerSubscriptionId || !billingProfileId || !pharmacyId) {
+      this.logger.warn(
+        `checkout.session.completed ${session.id} lacks subscription or metadata; nothing to reconcile.`,
+      );
+      return;
+    }
+
+    const existing = await this.prisma.subscription.findFirst({
+      where: { providerSubscriptionId },
+      select: { id: true },
+    });
+    if (existing) return; // already reconciled
+
+    const now = new Date();
+    const created = await this.prisma.$transaction(async (tx) => {
+      const sub = await tx.subscription.create({
+        data: {
+          billingProfileId,
+          offer: CommercialOffer.PHARMACY_INTELLIGENCE_PRO,
+          state: SubscriptionState.ACTIVE,
+          channel: BillingChannel.WEB_SELF_SERVE,
+          quantity: 1,
+          // Obligation starts at confirmed payment; nothing earlier is billable.
+          commercialEffectiveAt: now,
+          currentPeriodStart: now,
+          providerSubscriptionId,
+          // Binds the subscription to the approved price it was sold at, so the
+          // amount is explainable and an invoice can stamp its catalog version.
+          priceCatalogEntryId,
+        },
+      });
+
+      await tx.subscriptionLocation.create({
+        data: { subscriptionId: sub.id, pharmacyId },
+      });
+
+      await tx.pharmacy.update({
+        where: { id: pharmacyId },
+        data: { commercialClassification: CommercialClassification.PRO_ACTIVE },
+      });
+
+      return sub;
+    });
+
+    await this.audit.write(null, 'commercial.stripe.checkout_completed', 'Subscription', created.id, {
+      providerSubscriptionId,
+      pharmacyId,
+      billingProfileId,
+      sessionId: session.id,
+    });
+  }
+
   private async onInvoicePaid(event: Stripe.Event): Promise<void> {
     const inv = event.data.object as Stripe.Invoice;
     const local = await this.findLocalInvoice(inv.id);
@@ -136,6 +214,7 @@ export class StripeWebhookService {
           status: InvoiceStatus.PAID,
           amountPaidMinor: inv.amount_paid ?? local.totalMinor,
           paidAt: new Date(),
+          hostedInvoiceUrl: inv.hosted_invoice_url ?? undefined,
         },
       });
     }
@@ -181,7 +260,13 @@ export class StripeWebhookService {
 
     await this.prisma.invoice.update({
       where: { id: local.id },
-      data: { status: InvoiceStatus.OPEN, issuedAt: new Date() },
+      data: {
+        status: InvoiceStatus.OPEN,
+        issuedAt: new Date(),
+        // Captured here so an unpaid invoice is actionable in the portal instead
+        // of a dead end. Stripe hosts the page; no card data reaches this app.
+        hostedInvoiceUrl: inv.hosted_invoice_url ?? undefined,
+      },
     });
   }
 

@@ -323,6 +323,103 @@ export class StripeService {
     return refund.id;
   }
 
+  /**
+   * Start a provider-hosted checkout for a subscription.
+   *
+   * Hosted deliberately: card details never reach this application, which keeps it
+   * out of PCI scope entirely, and S-O2 requires purchasing to run through the
+   * web/contract channel rather than in-app. Returns the URL to redirect to.
+   *
+   * The internal subscription is NOT created here. It is created when the provider
+   * confirms payment, so an abandoned checkout leaves no paid entitlement behind.
+   */
+  async createCheckoutSession(input: {
+    billingProfileId: string;
+    providerPriceId: string;
+    quantity: number;
+    classification: CommercialClassification;
+    pharmacyId: string;
+    /**
+     * Catalog record the price came from. Carried through the session so the
+     * webhook can bind the resulting subscription back to the approved price —
+     * without it the pharmacy cannot be shown what it pays, and an invoice cannot
+     * stamp the catalog version it was derived from.
+     */
+    priceCatalogEntryId: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ url: string; sessionId: string }> {
+    this.assertPriceUsableFor({ providerPriceId: input.providerPriceId }, input.classification);
+
+    const customerId = await this.ensureCustomer(input.billingProfileId);
+
+    const session = await this.stripe().checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: input.providerPriceId, quantity: Math.max(1, input.quantity) }],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      // Carried through to the subscription so the webhook can reconcile the
+      // provider record back to the pharmacy that bought it.
+      subscription_data: {
+        metadata: {
+          billingProfileId: input.billingProfileId,
+          pharmacyId: input.pharmacyId,
+          priceCatalogEntryId: input.priceCatalogEntryId,
+        },
+      },
+      metadata: {
+        billingProfileId: input.billingProfileId,
+        pharmacyId: input.pharmacyId,
+        priceCatalogEntryId: input.priceCatalogEntryId,
+      },
+    });
+
+    if (!session.url) {
+      throw new ServiceUnavailableException('The payment provider did not return a checkout URL.');
+    }
+
+    await this.audit.write(null, 'commercial.stripe.checkout_started', 'BillingProfile', input.billingProfileId, {
+      sessionId: session.id,
+      pharmacyId: input.pharmacyId,
+      mode: this.mode,
+    });
+
+    return { url: session.url, sessionId: session.id };
+  }
+
+  /**
+   * Provider-hosted billing portal: manage payment method, view invoices, download
+   * receipts. Also hosted, for the same reason as checkout.
+   */
+  async createBillingPortalSession(input: {
+    billingProfileId: string;
+    returnUrl: string;
+  }): Promise<{ url: string }> {
+    const profile = await this.prisma.billingProfile.findUnique({
+      where: { id: input.billingProfileId },
+      select: { providerCustomerId: true },
+    });
+    if (!profile?.providerCustomerId) {
+      throw new ForbiddenException(
+        'This organization has no payment provider customer yet. It appears once a plan is purchased.',
+      );
+    }
+
+    const session = await this.stripe().billingPortal.sessions.create({
+      customer: profile.providerCustomerId,
+      return_url: input.returnUrl,
+    });
+
+    return { url: session.url };
+  }
+
+  /** Fetch the hosted payment page for a provider invoice, if it has one. */
+  async hostedInvoiceUrl(providerInvoiceId: string): Promise<string | null> {
+    const inv = await this.stripe().invoices.retrieve(providerInvoiceId);
+    return inv.hosted_invoice_url ?? null;
+  }
+
   /** Verify a webhook signature. Returns the parsed event or throws. */
   constructWebhookEvent(rawBody: Buffer | string, signature: string): Stripe.Event {
     const secret = this.config.webhookSecret;

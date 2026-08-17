@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Table,
   TableBody,
@@ -12,9 +13,9 @@ import {
 } from '@/components/ui/table'
 import { EmptyState, ErrorState } from '@/components/shared/states'
 import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
-import { getBilling } from '@/services/pharmacy-api'
+import { getBilling, openBillingPortal, startBillingCheckout } from '@/services/pharmacy-api'
 import { CLASSIFICATION_META, DELINQUENCY_TIMELINE, formatMinor } from '@/lib/commercial'
-import { CreditCard, FileText, Info, Loader2, ShieldCheck } from 'lucide-react'
+import { CreditCard, ExternalLink, FileText, Info, Loader2, ShieldCheck } from 'lucide-react'
 
 const STATE_META = {
   EVALUATION: { variant: 'info', label: 'Evaluation' },
@@ -48,8 +49,28 @@ const INVOICE_META = {
  * receiving them and relying on this component to hide them.
  */
 export default function PharmacyBilling() {
+  // Populated by the hosted checkout redirect.
+  const checkoutOutcome = new URLSearchParams(window.location.search).get('checkout')
+
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState('')
+  const [actionError, setActionError] = useState('')
+
+  // Both actions hand off to a provider-hosted page. Navigating away is the point:
+  // card entry happens on the provider's domain, never here.
+  const goToProvider = async (kind) => {
+    setBusy(kind)
+    setActionError('')
+    try {
+      const res = kind === 'checkout' ? await startBillingCheckout() : await openBillingPortal()
+      if (!res?.url) throw new Error('The payment provider did not return a URL.')
+      window.location.assign(res.url)
+    } catch (err) {
+      setActionError(err.message || 'Could not open the payment provider.')
+      setBusy('')
+    }
+  }
 
   const load = useCallback(async () => {
     setError('')
@@ -111,6 +132,32 @@ export default function PharmacyBilling() {
         title="Billing"
         subtitle="Your plan and participation in the ZoikoMeds network."
       />
+
+      {/* Returned from the hosted checkout. Success is not asserted here — the
+          plan only becomes active once the provider confirms payment by webhook,
+          so this reports what was submitted, not what was charged. */}
+      {checkoutOutcome === 'success' && (
+        <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs font-medium text-success max-w-4xl">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          <span className="text-foreground/90">
+            Payment submitted. Your plan activates as soon as the payment provider confirms it —
+            this page updates automatically.
+          </span>
+        </div>
+      )}
+      {checkoutOutcome === 'cancelled' && (
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground max-w-4xl">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          Checkout was cancelled. Nothing has been charged.
+        </div>
+      )}
+
+      {actionError && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger max-w-4xl">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          {actionError}
+        </div>
+      )}
 
       <div className="grid max-w-5xl grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Plan */}
@@ -176,6 +223,44 @@ export default function PharmacyBilling() {
                 Amounts and invoices are visible to your Pharmacy Manager or Billing Admin.
               </p>
             )}
+
+            {/* Purchase authority sits with the Pharmacy Manager, so a Pharmacist
+                sees no actions at all rather than a disabled button. */}
+            {data.canSeeFinancialDetail && (
+              <div className="flex flex-col gap-2">
+                {!data.plan && (
+                  <Button
+                    size="sm"
+                    disabled={busy === 'checkout'}
+                    onClick={() => goToProvider('checkout')}
+                  >
+                    {busy === 'checkout' ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <ExternalLink className="size-3.5" />
+                    )}
+                    Upgrade to Intelligence Pro
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy === 'portal'}
+                  onClick={() => goToProvider('portal')}
+                >
+                  {busy === 'portal' ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <CreditCard className="size-3.5" />
+                  )}
+                  Manage payment method
+                </Button>
+                <span className="text-[11px] leading-relaxed text-muted-foreground">
+                  Payment is handled on the provider&apos;s secure page. Card details never reach
+                  ZoikoMeds.
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -225,7 +310,20 @@ export default function PharmacyBilling() {
                             {formatMinor(inv.totalMinor, inv.currency)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Badge variant={meta.variant} size="sm">{meta.label}</Badge>
+                            <div className="flex items-center justify-end gap-2">
+                              <Badge variant={meta.variant} size="sm">{meta.label}</Badge>
+                              {/* An unpaid invoice needs somewhere to go, not just a status. */}
+                              {inv.hostedInvoiceUrl && inv.status !== 'PAID' && (
+                                <a
+                                  href={inv.hostedInvoiceUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] font-medium text-primary underline-offset-2 hover:underline"
+                                >
+                                  Pay
+                                </a>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       )
