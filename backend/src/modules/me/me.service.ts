@@ -101,8 +101,18 @@ export class MeService {
       byGeneric.get(key)!.push(m);
     }
 
+    // Measure from where the caller actually is. Falls back to ORIGIN only
+    // when no coordinates or city were supplied and geocoding could not
+    // resolve one — otherwise every user is ranked from a fixed point.
+    const resolvedOrigin = await this.nearby.resolveOrigin({
+      lat: query.lat,
+      lng: query.lng,
+      city: query.city,
+    });
+    const origin = resolvedOrigin ?? ORIGIN;
+
     const dtos = medicines
-      .map((m) => this.toMedicineDto(m, medicines))
+      .map((m) => this.toMedicineDto(m, medicines, origin))
       .filter((m) => m !== null)
       .filter((m) => (m!.distance ?? 999) <= maxDistance)
       .filter((m) => {
@@ -116,7 +126,13 @@ export class MeService {
           (a!.distance ?? 999) - (b!.distance ?? 999),
       );
 
-    const pharmacies = await this.nearbyPharmacies(maxDistance);
+    // Verified pharmacies that actually stock what was searched for. With no
+    // search term this stays a plain nearby list, as before.
+    const pharmacies = await this.nearbyPharmacies(
+      maxDistance,
+      origin,
+      q ? medicines.map((m) => m.id) : undefined,
+    );
 
     // Internet-sourced pharmacies near the caller (Google Places). Geographic
     // only — NOT tied to whether `q` is in stock — so it is returned separately
@@ -395,11 +411,37 @@ export class MeService {
 
   // --- mapping helpers -----------------------------------------------------
 
-  private async nearbyPharmacies(maxDistance: number) {
+  /**
+   * Verified ZoikoMeds pharmacies near the caller.
+   *
+   * @param medicineIds when given, only pharmacies holding an availability
+   *   signal for one of these medicines are returned, and the confidence shown
+   *   is that medicine's signal at that pharmacy — not the pharmacy's most
+   *   recent signal for anything, which previously made an unrelated restock
+   *   look like stock of the medicine being searched.
+   */
+  private async nearbyPharmacies(
+    maxDistance: number,
+    origin: { lat: number; lng: number } = ORIGIN,
+    medicineIds?: string[],
+  ) {
+    const forMedicine = Array.isArray(medicineIds) && medicineIds.length > 0;
     const rows = await this.prisma.pharmacy.findMany({
-      where: { verificationStatus: { in: ['VERIFIED', 'PENDING'] } },
+      where: {
+        // VERIFIED only. A pending or rejected pharmacy is not part of the
+        // verified network and must never appear as one.
+        verificationStatus: 'VERIFIED',
+        ...(forMedicine
+          ? { availabilitySignals: { some: { medicineId: { in: medicineIds } } } }
+          : {}),
+      },
       include: {
-        availabilitySignals: { orderBy: { computedAt: 'desc' }, take: 1 },
+        availabilitySignals: forMedicine
+          ? {
+              where: { medicineId: { in: medicineIds } },
+              orderBy: { computedAt: 'desc' },
+            }
+          : { orderBy: { computedAt: 'desc' }, take: 1 },
       },
     });
 
@@ -407,7 +449,7 @@ export class MeService {
     // THIS filtered set (not all rows) so nearby pins spread across the map
     // instead of collapsing onto a global-scale corner.
     const near = rows
-      .map((p) => ({ p, distance: this.distanceFor(p) }))
+      .map((p) => ({ p, distance: this.distanceFor(p, origin) }))
       .filter((x) => x.distance != null && x.distance <= maxDistance);
     const bounds = this.bounds(
       near.map(({ p }) => ({ lat: p.latitude!, lng: p.longitude! })),
@@ -415,16 +457,20 @@ export class MeService {
 
     return near
       .map(({ p, distance }) => this.toPharmacyDto(p, bounds, distance))
-      .sort(
-        (a, b) =>
-          CONFIDENCE_RANK[a.confidence] - CONFIDENCE_RANK[b.confidence] ||
-          (a.distance ?? 999) - (b.distance ?? 999),
-      );
+      .sort((a, b) => {
+        const byDistance = (a.distance ?? 999) - (b.distance ?? 999);
+        const byConfidence = CONFIDENCE_RANK[a.confidence] - CONFIDENCE_RANK[b.confidence];
+        // Searching a medicine: every result already stocks it, so proximity is
+        // what the patient is choosing on. Browsing without a medicine: lead
+        // with the strongest signal, as before.
+        return forMedicine ? byDistance || byConfidence : byConfidence || byDistance;
+      });
   }
 
   private toMedicineDto(
     medicine: MedicineEntity & { availabilitySignals?: SignalWithPharmacy[] },
     all: (MedicineEntity & { availabilitySignals?: SignalWithPharmacy[] })[],
+    origin: { lat: number; lng: number } = ORIGIN,
   ) {
     const signals = medicine.availabilitySignals ?? [];
     // Best signal = strongest confidence, then freshest, then nearest.
@@ -432,7 +478,7 @@ export class MeService {
       .map((s) => ({
         signal: s,
         ui: CONFIDENCE_UI[s.confidence],
-        distance: this.distanceFor(s.pharmacy),
+        distance: this.distanceFor(s.pharmacy, origin),
       }))
       .sort(
         (a, b) =>
@@ -460,7 +506,7 @@ export class MeService {
           strength: m.strength ?? '',
           confidence: s?.ui ?? 'unknown',
           pharmacy: s?.pharmacy?.name ?? '—',
-          distance: s ? this.distanceFor(s.pharmacy) : null,
+          distance: s ? this.distanceFor(s.pharmacy, origin) : null,
         };
       });
 
@@ -507,9 +553,16 @@ export class MeService {
       open: p.isParticipating || p.verificationStatus === 'VERIFIED',
       open24h: p.reliabilityScore >= 0.9,
       verified: p.verificationStatus === 'VERIFIED',
-      address: [p.addressLine1, p.city].filter(Boolean).join(', ') || '—',
+      address:
+        [p.addressLine1, p.addressLine2, p.city, p.region, p.postalCode]
+          .filter(Boolean)
+          .join(', ') || '—',
       phone: p.phone ?? '',
       updated: latest ? this.relativeTime(latest.computedAt) : '—',
+      // Coordinates let the client build an exact Directions pin instead of a
+      // name/address text lookup, which misses for similarly-named branches.
+      latitude: p.latitude,
+      longitude: p.longitude,
     };
   }
 
@@ -529,9 +582,23 @@ export class MeService {
 
   // --- geo / time utilities ------------------------------------------------
 
-  private distanceFor(p?: { latitude: number | null; longitude: number | null }) {
+  /**
+   * Distance from the caller to a pharmacy, in km.
+   *
+   * `origin` is the caller's resolved location. It defaults to ORIGIN only for
+   * surfaces that have no request location to work from (e.g. the saved-medicine
+   * list); medicine search always passes the caller's own position, otherwise
+   * every user is measured from a fixed point in Hyderabad.
+   *
+   * Returns null when the pharmacy has no coordinates — an unlocatable pharmacy
+   * cannot be distance-ranked and is excluded rather than guessed at.
+   */
+  private distanceFor(
+    p?: { latitude: number | null; longitude: number | null } | null,
+    origin: { lat: number; lng: number } = ORIGIN,
+  ) {
     if (!p || p.latitude == null || p.longitude == null) return null;
-    return this.haversine(ORIGIN.lat, ORIGIN.lng, p.latitude, p.longitude);
+    return this.haversine(origin.lat, origin.lng, p.latitude, p.longitude);
   }
 
   private haversine(lat1: number, lng1: number, lat2: number, lng2: number) {

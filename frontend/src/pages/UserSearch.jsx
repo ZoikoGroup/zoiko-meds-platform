@@ -9,13 +9,13 @@ import { StatusBadge, ConfidenceBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
-import { mapsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
+import { mapsHref, pharmacyDirectionsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
 import { reverseGeocode } from '@/lib/geocode'
 import { validateLocation } from '@/lib/location-data'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
-  Phone, Clock, Ambulance, Pill, CheckCircle2, AlertTriangle, Info,
+  Phone, Clock, Pill, CheckCircle2, AlertTriangle, Info,
   LocateFixed, Globe, Star, Heart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -695,13 +695,7 @@ export default function UserSearch() {
                           <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-3 text-xs">
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
-                              <span className="flex items-center gap-1.5 font-semibold text-foreground tabular">
-                                {p.is24x7 && (
-                                  <Badge variant="success" size="sm" className="gap-1">
-                                    <Ambulance className="size-3" />
-                                    24/7
-                                  </Badge>
-                                )}
+                              <span className="font-semibold text-foreground tabular">
                                 {p.distance == null ? '—' : `${p.distance.toFixed(1)} km`}
                               </span>
                             </div>
@@ -715,14 +709,19 @@ export default function UserSearch() {
                           </div>
 
                           <div className="mt-auto flex gap-2 border-t border-border pt-3">
-                            <Button variant="outline" size="sm" className="flex-1" asChild>
-                              <a href={telHref(p.phone)}>
-                                <Phone className="size-3.5" />
-                                {t('call', 'Call')}
-                              </a>
-                            </Button>
+                            {/* Only offered when the record actually carries a
+                                number — a bare `tel:` link is a dead affordance
+                                on the one action the governance note asks for. */}
+                            {p.phone ? (
+                              <Button variant="outline" size="sm" className="flex-1" asChild>
+                                <a href={telHref(p.phone)}>
+                                  <Phone className="size-3.5" />
+                                  {t('call', 'Call')}
+                                </a>
+                              </Button>
+                            ) : null}
                             <Button size="sm" className="flex-1" asChild>
-                              <a href={mapsHref(`${p.name}, ${p.address}`)} target="_blank" rel="noopener noreferrer">
+                              <a href={pharmacyDirectionsHref(p)} target="_blank" rel="noopener noreferrer">
                                 <Navigation className="size-3.5" />
                                 {t('directions', 'Directions')}
                               </a>

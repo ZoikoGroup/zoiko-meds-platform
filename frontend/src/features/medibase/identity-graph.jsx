@@ -1,6 +1,5 @@
 import { motion } from 'framer-motion'
 import { FlaskConical, Globe2, Ruler, ShieldCheck, Tag } from 'lucide-react'
-import { identityGraph } from '@/services/medibase-data'
 
 const ICONS = {
   brand: Tag,
@@ -13,10 +12,19 @@ const ICONS = {
 const RX = 34
 const RY = 38
 
-/** Schematic radial identity graph: a governed generic root fanning out to its
- *  brand / strength / form / market / governance layers. */
-export function MedicineIdentityGraph() {
-  const points = identityGraph.branches.map((b) => {
+/**
+ * Radial identity graph: a governed generic root fanning out to its brand /
+ * strength / form / market / governance layers.
+ *
+ * `graph` is built from a real catalog identity (see identityGraphFor). The
+ * component renders nothing without one rather than falling back to an example
+ * root — an illustrative medicine name on a governance screen reads as a fact
+ * about the catalog.
+ */
+export function MedicineIdentityGraph({ graph }) {
+  if (!graph) return null
+
+  const points = graph.branches.map((b) => {
     const rad = (b.angle * Math.PI) / 180
     return { ...b, x: 50 + RX * Math.cos(rad), y: 50 + RY * Math.sin(rad) }
   })
@@ -48,7 +56,7 @@ export function MedicineIdentityGraph() {
           <span className="text-[10px] uppercase tracking-wider opacity-80">
             Generic root
           </span>
-          <span className="text-sm font-semibold">{identityGraph.root.label}</span>
+          <span className="text-sm font-semibold">{graph.root.label}</span>
         </div>
       </div>
 

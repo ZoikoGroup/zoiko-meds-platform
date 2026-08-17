@@ -2,7 +2,6 @@ import { motion } from 'framer-motion'
 import { Progress } from '@/components/ui/progress'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { TrendDelta } from '@/components/shared/trend-delta'
-import { regionRisk } from '@/services/data'
 import { cn } from '@/lib/utils'
 
 /** Access-risk band → tone (color + dot). */
@@ -15,12 +14,20 @@ function riskTone(risk) {
 
 const trendLabel = { up: 'rising', down: 'easing', flat: 'stable' }
 
-/** Schematic region-tile "map" — coverage + access-risk per macro-region. */
-export function AvailabilityMap() {
+/**
+ * Region-tile "map" — coverage + access-risk per macro-region.
+ *
+ * `regions` must come from the backend. The component renders nothing without
+ * them rather than illustrating the world with example regions: a coverage
+ * percentage against a real region name reads as a measurement.
+ */
+export function AvailabilityMap({ regions = [] }) {
+  if (!Array.isArray(regions) || regions.length === 0) return null
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-        {regionRisk.map((r, i) => {
+        {regions.map((r, i) => {
           const tone = riskTone(r.risk)
           return (
             <motion.div

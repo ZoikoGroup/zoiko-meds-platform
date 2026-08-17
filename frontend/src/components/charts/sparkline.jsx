@@ -3,6 +3,11 @@ import { Area, AreaChart, ResponsiveContainer, YAxis } from 'recharts';
 /** Compact 12-point trend used inside KPI tiles — de-emphasized wash + line. */
 export function Sparkline({ data, color = 'var(--chart-1)', height = 40, className, }) {
     const id = useId().replace(/:/g, '');
+    // A metric with no series still has to hold its slot in the card, or the
+    // tiles in a row stop lining up. Reserve the height, draw nothing.
+    if (!Array.isArray(data) || data.length === 0) {
+        return <div className={className} style={{ height }} aria-hidden/>;
+    }
     const series = data.map((value, i) => ({ i, value }));
     const min = Math.min(...data);
     const max = Math.max(...data);
