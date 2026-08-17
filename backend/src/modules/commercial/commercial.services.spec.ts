@@ -131,6 +131,80 @@ describe('PriceCatalogService — fail closed, never guess a price', () => {
     prisma.priceCatalogEntry.findUnique.mockResolvedValue({ id: 'pc_1', lockedAt: null });
     await expect(service.assertMutable('pc_1')).resolves.toBeUndefined();
   });
+
+  describe('requirePriceForMarket — a buyer names a market, not a currency', () => {
+    const lookup = {
+      offer: CommercialOffer.PHARMACY_INTELLIGENCE_PRO,
+      market: 'IN',
+      interval: BillingInterval.MONTH,
+      channel: BillingChannel.WEB_SELF_SERVE,
+    };
+
+    const entry = (currency: string, over: Record<string, unknown> = {}) => ({
+      id: `pc_${currency}`,
+      currency,
+      amountMinor: 19900,
+      effectiveFrom: new Date('2026-08-01'),
+      ...over,
+    });
+
+    it('takes the only approved currency for the market', async () => {
+      // The bug this replaces: the caller assumed USD, so an INR-only market 404ed
+      // even though an approved price existed for it.
+      prisma.priceCatalogEntry.findMany.mockResolvedValue([entry('INR')]);
+
+      await expect(service.requirePriceForMarket(lookup)).resolves.toMatchObject({ currency: 'INR' });
+    });
+
+    it('prefers the market currency when several are approved', async () => {
+      prisma.priceCatalogEntry.findMany.mockResolvedValue([entry('USD'), entry('INR')]);
+
+      await expect(service.requirePriceForMarket(lookup)).resolves.toMatchObject({ currency: 'INR' });
+    });
+
+    it('falls back to USD for a market with no local price', async () => {
+      prisma.priceCatalogEntry.findMany.mockResolvedValue([entry('USD'), entry('EUR')]);
+
+      await expect(
+        service.requirePriceForMarket({ ...lookup, market: 'BW' }),
+      ).resolves.toMatchObject({ currency: 'USD' });
+    });
+
+    it('refuses to choose when the market currency is genuinely ambiguous', async () => {
+      prisma.priceCatalogEntry.findMany.mockResolvedValue([entry('EUR'), entry('AED')]);
+
+      await expect(service.requirePriceForMarket({ ...lookup, market: 'BW' })).rejects.toThrow(
+        /ambiguous/i,
+      );
+    });
+
+    it('honours an explicitly requested currency without inspecting the market', async () => {
+      prisma.priceCatalogEntry.findFirst.mockResolvedValue(entry('USD'));
+
+      await expect(
+        service.requirePriceForMarket({ ...lookup, currency: 'USD' }),
+      ).resolves.toMatchObject({ currency: 'USD' });
+      expect(prisma.priceCatalogEntry.findMany).not.toHaveBeenCalled();
+    });
+
+    it('still fails closed when the market has no approved price in any currency', async () => {
+      prisma.priceCatalogEntry.findMany.mockResolvedValue([]);
+
+      await expect(service.requirePriceForMarket(lookup)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.requirePriceForMarket(lookup)).rejects.toThrow(
+        /range is not an executable price/i,
+      );
+    });
+
+    it('uses the newest effective record for the chosen currency', async () => {
+      prisma.priceCatalogEntry.findMany.mockResolvedValue([
+        entry('INR', { id: 'pc_new', effectiveFrom: new Date('2026-08-01') }),
+        entry('INR', { id: 'pc_old', effectiveFrom: new Date('2026-01-01') }),
+      ]);
+
+      await expect(service.requirePriceForMarket(lookup)).resolves.toMatchObject({ id: 'pc_new' });
+    });
+  });
 });
 
 describe('EntitlementService — entitlement and eligibility are separate questions', () => {

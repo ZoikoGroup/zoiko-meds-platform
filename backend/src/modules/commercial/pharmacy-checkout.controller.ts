@@ -14,6 +14,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { IsOptional, IsString, Length } from 'class-validator';
+import { resolveCountryAlpha2 } from '../../common/countries';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -25,10 +26,13 @@ import { PriceCatalogService } from './price-catalog.service';
 import { StripeService } from './stripe/stripe.service';
 
 class StartCheckoutDto {
-  /** Market to price against. Defaults to the pharmacy's own country. */
+  /**
+   * Market to price against. Defaults to the pharmacy's own country. Accepts an
+   * alpha-2 code or a country name, as the pharmacy profile field does.
+   */
   @IsOptional()
   @IsString()
-  @Length(2, 2)
+  @Length(2, 56)
   market?: string;
 
   @IsOptional()
@@ -87,18 +91,36 @@ export class PharmacyCheckoutController {
 
     const pharmacy = await this.requireVerifiedPharmacy(user);
 
-    // Price the pharmacy's own market unless one is supplied. Fails closed when no
-    // approved record exists — a published range is not an executable price.
-    const market = (dto.market || pharmacy.country || '').toUpperCase();
-    if (market.length !== 2) {
+    // The pharmacy's own country drives both tax identity and, by default, which
+    // market it is priced in. It is accepted as a code or a name on the profile, so
+    // resolve it here rather than assume the operator typed a code.
+    const pharmacyCountry = resolveCountryAlpha2(pharmacy.country);
+    if (!pharmacyCountry) {
       throw new ForbiddenException(
-        'Your pharmacy has no country set, so we cannot determine the price for your market. Add it to your profile first.',
+        pharmacy.country?.trim()
+          ? `We could not recognise "${pharmacy.country.trim()}" as a country, so we cannot determine the ` +
+              'price for your market. Correct it in your pharmacy profile — a name such as India, or the ' +
+              'two-letter code IN, both work.'
+          : 'Your pharmacy has no country set, so we cannot determine the price for your market. Add it to your profile first.',
       );
     }
-    const price = await this.priceCatalog.requirePrice({
+
+    // Price the pharmacy's own market unless one is supplied.
+    const market = dto.market ? resolveCountryAlpha2(dto.market) : pharmacyCountry;
+    if (!market) {
+      throw new ForbiddenException(
+        `We could not recognise "${dto.market}" as a country. Use a country name or its two-letter code.`,
+      );
+    }
+
+    // Fails closed when no approved record exists — a published range is not an
+    // executable price. The currency is left to the catalog unless the caller names
+    // one: which currency a market is billed in is a commercial decision recorded
+    // there, not something this endpoint should assume.
+    const price = await this.priceCatalog.requirePriceForMarket({
       offer: CommercialOffer.PHARMACY_INTELLIGENCE_PRO,
       market,
-      currency: (dto.currency || 'USD').toUpperCase(),
+      currency: dto.currency?.toUpperCase(),
       interval: BillingInterval.MONTH,
       channel: BillingChannel.WEB_SELF_SERVE,
     });
@@ -111,7 +133,9 @@ export class PharmacyCheckoutController {
       (await this.billingProfiles.create(user.id, {
         legalName: pharmacy.name,
         billingEmail: user.email,
-        country: pharmacy.country as string,
+        // The resolved code, not what was typed: this becomes the customer address
+        // at the provider, which only accepts alpha-2.
+        country: pharmacyCountry,
         addressLine1: pharmacy.addressLine1,
         addressLine2: pharmacy.addressLine2,
         city: pharmacy.city,

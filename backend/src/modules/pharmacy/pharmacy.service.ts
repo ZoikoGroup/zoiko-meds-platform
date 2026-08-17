@@ -11,6 +11,7 @@ import {
   VerificationRequestStatus,
   VerificationStatus,
 } from '@prisma/client';
+import { resolveCountryAlpha2 } from '../../common/countries';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
@@ -37,6 +38,30 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
   UNKNOWN: 'out-of-stock',
   SUPPRESSED: 'out-of-stock',
 };
+
+/**
+ * Store the country as its alpha-2 code, whichever form the operator typed.
+ *
+ * The field is free text on the form and always will be — somebody will type
+ * "India" and somebody else "IN", and both are the same answer. Billing is not so
+ * forgiving: the price catalog is keyed on the code and the payment provider
+ * rejects anything else, so the code is what gets persisted. An unrecognisable
+ * value is refused at the edge instead of becoming a purchase that fails much
+ * later with a message about markets.
+ */
+function normalizeCountryInput(country?: string | null): string | null {
+  const typed = country?.trim();
+  if (!typed) return null;
+
+  const resolved = resolveCountryAlpha2(typed);
+  if (!resolved) {
+    throw new BadRequestException(
+      `"${typed}" is not a country we recognise. Enter the country name, such as India, or its ` +
+        'two-letter code, IN.',
+    );
+  }
+  return resolved;
+}
 
 /**
  * Pharmacy verification, participation & inventory management.
@@ -218,7 +243,7 @@ export class PharmacyService {
           addressLine2: dto.addressLine2?.trim() || null,
           city: dto.city?.trim() || null,
           region: dto.region?.trim() || null,
-          country: dto.country?.trim() || null,
+          country: normalizeCountryInput(dto.country),
           postalCode: dto.postalCode?.trim() || null,
           // Awaiting review — a self-declared pharmacy is never trusted on
           // submit, so it stays out of public results until an admin approves.
@@ -310,9 +335,10 @@ export class PharmacyService {
         licenseNumber: dto.licenseNumber !== undefined ? dto.licenseNumber : existing.licenseNumber,
         phone: dto.phone !== undefined ? dto.phone : existing.phone,
         addressLine1: dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
+        addressLine2: dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
         city: dto.city !== undefined ? dto.city : existing.city,
         region: dto.region !== undefined ? dto.region : existing.region,
-        country: dto.country !== undefined ? dto.country : existing.country,
+        country: dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country,
         postalCode: dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
         updatedAt: new Date(),
       },
