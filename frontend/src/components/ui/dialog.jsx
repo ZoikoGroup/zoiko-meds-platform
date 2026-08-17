@@ -11,7 +11,11 @@ export function DialogOverlay({ className, ...props }) {
 export function DialogContent({ className, children, showClose = true, ...props }) {
     return (<DialogPortal>
       <DialogOverlay />
-      <DialogPrimitive.Content data-slot="dialog-content" className={cn('fixed top-1/2 left-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-border bg-card p-6 shadow-elevated', 'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95', className)} {...props}>
+      {/* Centred on the viewport, so a dialog taller than the screen would otherwise
+          be clipped at the top and the bottom at once with no way to reach either:
+          the height is capped and the overflow scrolls. A dialog that wants a fixed
+          header or footer overrides this with its own inner scroll region. */}
+      <DialogPrimitive.Content data-slot="dialog-content" className={cn('fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-card p-6 shadow-elevated', 'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95', className)} {...props}>
         {children}
         {showClose && (<DialogPrimitive.Close className="absolute top-4 right-4 rounded-md p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring outline-none">
             <X className="size-4"/>

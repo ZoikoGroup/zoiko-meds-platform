@@ -38,6 +38,7 @@ import {
   AlertTriangle,
   BadgeCheck,
   Building2,
+  ChevronDown,
   FileText,
   Info,
   Loader2,
@@ -46,6 +47,9 @@ import {
   Search,
   Tag,
 } from 'lucide-react'
+
+/** Marks a field the form will refuse to submit without. */
+const Required = () => <span className="text-danger" aria-hidden="true"> *</span>
 
 const EMPTY_PRICE = {
   offer: 'PHARMACY_INTELLIGENCE_PRO',
@@ -161,6 +165,19 @@ export default function Commercial() {
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }))
 
+  /**
+   * Open the form on a clean slate, dated today. A price almost always takes effect
+   * from the day it is approved, and an empty required date field is one more thing
+   * to fill in before the form will submit at all.
+   */
+  const openAddPrice = () => {
+    const today = new Date()
+    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    setForm({ ...EMPTY_PRICE, effectiveFrom: iso })
+    setFormError('')
+    setAddOpen(true)
+  }
+
   const submitPrice = async (e) => {
     e.preventDefault()
     setFormError('')
@@ -240,7 +257,7 @@ export default function Commercial() {
         title="Commercial"
         subtitle="Price catalog governance, plan taxonomy, and billing access control."
         actions={
-          <Button size="sm" onClick={() => { setFormError(''); setAddOpen(true) }} className="gap-1">
+          <Button size="sm" onClick={openAddPrice} className="gap-1">
             <Plus className="size-3.5" />
             Add approved price
           </Button>
@@ -788,10 +805,13 @@ export default function Commercial() {
         </TabsContent>
       </Tabs>
 
-      {/* Add price dialog */}
+      {/* Add price dialog.
+          Laid out as a fixed header, a scrolling body and a pinned footer: the form
+          is longer than a short viewport, and Add price must never be the thing that
+          scrolls out of reach. */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <DialogHeader className="border-b border-border px-6 py-5">
             <DialogTitle>Add an approved price</DialogTitle>
             <DialogDescription>
               Requires a traceable approval reference. Pricing is a governed commercial decision —
@@ -799,124 +819,152 @@ export default function Commercial() {
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={submitPrice} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="f-offer">Offer</Label>
-              <select
-                id="f-offer"
-                value={form.offer}
-                onChange={(e) => set('offer')(e.target.value)}
-                className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary"
-              >
-                {COMMERCIAL_OFFERS.filter(
-                  (o) => o.code !== 'PATIENT_CAREGIVER_ACCESS' && o.code !== 'PHARMACY_NETWORK_CORE',
-                ).map((o) => (
-                  <option key={o.code} value={o.code}>{o.label}</option>
-                ))}
-              </select>
-              <span className="text-[11px] text-muted-foreground">
-                Free offers are not listed: charging one requires a new approved commercial program,
-                not a catalog entry.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+          <form onSubmit={submitPrice} className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-6 py-5">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="f-market">Market (ISO-2)</Label>
-                <Input id="f-market" maxLength={2} placeholder="IN" value={form.market}
-                  onChange={(e) => set('market')(e.target.value.toUpperCase())} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="f-currency">Currency (ISO-3)</Label>
-                <Input id="f-currency" maxLength={3} placeholder="USD" value={form.currency}
-                  onChange={(e) => set('currency')(e.target.value.toUpperCase())} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="f-amount">Approved amount</Label>
-                <Input id="f-amount" inputMode="decimal" placeholder="199.00" value={form.amountMajor}
-                  onChange={(e) => set('amountMajor')(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="f-interval">Interval</Label>
-                <select id="f-interval" value={form.interval}
-                  onChange={(e) => set('interval')(e.target.value)}
-                  className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary">
-                  {BILLING_INTERVALS.map((i) => (
-                    <option key={i.code} value={i.code}>{i.label}</option>
+                <Label htmlFor="f-offer">Offer</Label>
+                <select
+                  id="f-offer"
+                  value={form.offer}
+                  onChange={(e) => set('offer')(e.target.value)}
+                  className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary"
+                >
+                  {COMMERCIAL_OFFERS.filter(
+                    (o) => o.code !== 'PATIENT_CAREGIVER_ACCESS' && o.code !== 'PHARMACY_NETWORK_CORE',
+                  ).map((o) => (
+                    <option key={o.code} value={o.code}>{o.label}</option>
                   ))}
                 </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="f-channel">Channel</Label>
-                <select id="f-channel" value={form.channel}
-                  onChange={(e) => set('channel')(e.target.value)}
-                  className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary">
-                  {BILLING_CHANNELS.map((c) => (
-                    <option key={c.code} value={c.code}>{c.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="f-effective">Effective from</Label>
-                <Input id="f-effective" type="date" value={form.effectiveFrom}
-                  onChange={(e) => set('effectiveFrom')(e.target.value)} />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="f-version">Catalog version</Label>
-              <Input id="f-version" placeholder="2026-08-launch" value={form.catalogVersion}
-                onChange={(e) => set('catalogVersion')(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="f-approval">Approval reference</Label>
-              <Input id="f-approval" placeholder="ZM-PRICE-APPROVAL-2026-08-01"
-                value={form.approvalReference}
-                onChange={(e) => set('approvalReference')(e.target.value)} />
-            </div>
-
-            <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3">
-              <div className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-foreground">
-                <Info className="mt-0.5 size-3.5 shrink-0" />
-                <span>
-                  Leave these empty and the price is created at the payment provider from the
-                  approved amount above, so the catalog and the provider cannot disagree. Fill them
-                  in only if the price already exists there. A catalog record with no provider price
-                  id can never be charged.
+                <span className="text-[11px] text-muted-foreground">
+                  Free offers are not listed: charging one requires a new approved commercial
+                  program, not a catalog entry.
                 </span>
               </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="f-provider-price">Provider price ID</Label>
-                  <Input id="f-provider-price" placeholder="price_… (optional)"
-                    value={form.providerPriceId}
-                    onChange={(e) => set('providerPriceId')(e.target.value)} />
+                  <Label htmlFor="f-market">Market (ISO-2)<Required /></Label>
+                  <Input id="f-market" maxLength={2} placeholder="IN" value={form.market}
+                    onChange={(e) => set('market')(e.target.value.toUpperCase())} />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="f-provider-product">Provider product ID</Label>
-                  <Input id="f-provider-product" placeholder="prod_… (optional)"
-                    value={form.providerProductId}
-                    onChange={(e) => set('providerProductId')(e.target.value)} />
+                  <Label htmlFor="f-currency">Currency (ISO-3)<Required /></Label>
+                  <Input id="f-currency" maxLength={3} placeholder="USD" value={form.currency}
+                    onChange={(e) => set('currency')(e.target.value.toUpperCase())} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="f-amount">
+                    Approved amount{form.currency ? ` (${form.currency})` : ''}<Required />
+                  </Label>
+                  <Input id="f-amount" inputMode="decimal" placeholder="199.00" value={form.amountMajor}
+                    onChange={(e) => set('amountMajor')(e.target.value)} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="f-interval">Interval</Label>
+                  <select id="f-interval" value={form.interval}
+                    onChange={(e) => set('interval')(e.target.value)}
+                    className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary">
+                    {BILLING_INTERVALS.map((i) => (
+                      <option key={i.code} value={i.code}>{i.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="f-channel">Channel</Label>
+                  <select id="f-channel" value={form.channel}
+                    onChange={(e) => set('channel')(e.target.value)}
+                    className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary">
+                    {BILLING_CHANNELS.map((c) => (
+                      <option key={c.code} value={c.code}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="f-effective">Effective from<Required /></Label>
+                  <Input id="f-effective" type="date" value={form.effectiveFrom}
+                    onChange={(e) => set('effectiveFrom')(e.target.value)} />
                 </div>
               </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="f-version">Catalog version<Required /></Label>
+                <Input id="f-version" placeholder="2026-08-launch" value={form.catalogVersion}
+                  onChange={(e) => set('catalogVersion')(e.target.value)} />
+                <span className="text-[11px] text-muted-foreground">
+                  A changed price is a new version, never an edit of this one.
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="f-approval">Approval reference<Required /></Label>
+                <Input id="f-approval" placeholder="ZM-PRICE-APPROVAL-2026-08-01"
+                  value={form.approvalReference}
+                  onChange={(e) => set('approvalReference')(e.target.value)} />
+                <span className="text-[11px] text-muted-foreground">
+                  Where this amount was signed off — a ticket, approval document or contract
+                  reference. Recorded in the audit log so a charge can be traced back to the
+                  decision that authorised it.
+                </span>
+              </div>
+
+              {/* Closed by default: leaving both empty is the normal path, and an open
+                  pair of provider fields reads as something that must be filled in. */}
+              <details className="group rounded-lg border border-border bg-muted/30">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                  <span>Payment provider IDs</span>
+                  <span className="flex items-center gap-1.5 font-normal text-muted-foreground">
+                    Optional — created for you
+                    <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+                  </span>
+                </summary>
+                <div className="flex flex-col gap-3 border-t border-border p-3">
+                  <div className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-foreground">
+                    <Info className="mt-0.5 size-3.5 shrink-0" />
+                    <span>
+                      Left empty, the price is created at the payment provider from the approved
+                      amount above, so the catalog and the provider cannot disagree. Fill these in
+                      only if the price already exists there — a catalog record with no provider
+                      price id can never be charged.
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="f-provider-price">Provider price ID</Label>
+                      <Input id="f-provider-price" placeholder="price_…"
+                        value={form.providerPriceId}
+                        onChange={(e) => set('providerPriceId')(e.target.value)} />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="f-provider-product">Provider product ID</Label>
+                      <Input id="f-provider-product" placeholder="prod_…"
+                        value={form.providerProductId}
+                        onChange={(e) => set('providerProductId')(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              </details>
             </div>
 
-            {formError && (
-              <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                {formError}
-              </div>
-            )}
+            {/* Outside the scroll region: an error about the field you just fixed is
+                no use if it sits below the fold. */}
+            <div className="flex flex-col gap-3 border-t border-border px-6 py-4">
+              {formError && (
+                <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  {formError}
+                </div>
+              )}
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={saving}>
-                {saving && <Loader2 className="size-4 animate-spin" />}
-                Add price
-              </Button>
-            </DialogFooter>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={saving}>
+                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  Add price
+                </Button>
+              </DialogFooter>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
