@@ -82,7 +82,7 @@ function Notice({ tone, title, body, detail }) {
   )
 }
 
-function Field({ label, value, onChange, id, required, placeholder }) {
+function Field({ label, value, onChange, id, required, placeholder, hint }) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={id}>
@@ -95,8 +95,25 @@ function Field({ label, value, onChange, id, required, placeholder }) {
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
+      {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
     </div>
   )
+}
+
+/**
+ * The saved country comes back as its ISO code, so echo the country it resolved to.
+ * Without it the operator types "India", sees "IN" after saving, and has no way to
+ * tell whether that is the right country or a truncation.
+ */
+function countryHint(value) {
+  const code = (value ?? '').trim().toUpperCase()
+  if (!/^[A-Z]{2}$/.test(code)) return 'A country name such as India, or its two-letter code, IN.'
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(code)
+    return name && name !== code ? name : null
+  } catch {
+    return null
+  }
 }
 
 export default function PharmacyProfile() {
@@ -318,7 +335,8 @@ export default function PharmacyProfile() {
             <Field id="p-city" label="City" value={profile.city} onChange={set('city')} />
             <Field id="p-region" label="Region / State" value={profile.region} onChange={set('region')} />
             <Field id="p-postal" label="Postal code" value={profile.postalCode} onChange={set('postalCode')} />
-            <Field id="p-country" label="Country" value={profile.country} onChange={set('country')} placeholder="e.g. India" />
+            <Field id="p-country" label="Country" value={profile.country} onChange={set('country')}
+              placeholder="India or IN" hint={countryHint(profile.country)} />
           </CardContent>
         </Card>
       </div>

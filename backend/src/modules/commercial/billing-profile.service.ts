@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { BillingProfile } from '@prisma/client';
+import { resolveCountryAlpha2 } from '../../common/countries';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 
@@ -49,6 +50,14 @@ export class BillingProfileService {
         'country is required: tax is jurisdiction-specific and cannot be determined without it.',
       );
     }
+    // Stored as alpha-2 whatever form it arrived in. Tax rules and the provider's
+    // customer address are both keyed on the code, and "INDIA" satisfies neither.
+    const country = resolveCountryAlpha2(input.country);
+    if (!country) {
+      throw new BadRequestException(
+        `"${input.country.trim()}" is not a country we can identify. Use a country name or its two-letter ISO code.`,
+      );
+    }
 
     const profile = await this.prisma.billingProfile.create({
       data: {
@@ -60,7 +69,7 @@ export class BillingProfileService {
         city: input.city ?? null,
         region: input.region ?? null,
         postalCode: input.postalCode ?? null,
-        country: input.country.trim().toUpperCase(),
+        country,
         taxId: input.taxId ?? null,
         taxExempt: input.taxExempt ?? false,
       },

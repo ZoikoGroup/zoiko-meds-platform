@@ -1,6 +1,19 @@
-import { ForbiddenException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { CommercialClassification, PriceCatalogEntry, ProviderMode } from '@prisma/client';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import {
+  BillingInterval,
+  CommercialClassification,
+  CommercialOffer,
+  PriceCatalogEntry,
+  ProviderMode,
+} from '@prisma/client';
 import Stripe from 'stripe';
+import { resolveCountryAlpha2 } from '../../../common/countries';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../../admin/audit.writer';
 import { isBillableClassification } from '../commercial.doctrine';
@@ -14,6 +27,54 @@ import { StripeConfig } from './stripe.config';
  * version the installed `stripe` package is generated against.
  */
 export const STRIPE_API_VERSION = '2026-07-29.dahlia' as const;
+
+/** Catalog intervals that map to a provider recurrence. */
+const RECURRING_INTERVAL: Partial<Record<BillingInterval, 'month' | 'year'>> = {
+  [BillingInterval.MONTH]: 'month',
+  [BillingInterval.YEAR]: 'year',
+};
+
+/**
+ * Currencies with no hundredths. The platform's amountMinor convention assumes
+ * two decimal places, so these are refused at the provisioning boundary rather
+ * than charged a hundredfold.
+ */
+const ZERO_DECIMAL_CURRENCIES = new Set([
+  'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV',
+  'XAF', 'XOF', 'XPF',
+]);
+
+/** Stable provider product id for an offer, so products never accumulate. */
+function defaultProductId(offer: CommercialOffer): string {
+  return `zoikomeds_${offer.toLowerCase()}`;
+}
+
+/** Dashboard-legible product name, derived so it cannot drift from the enum. */
+function offerProductName(offer: CommercialOffer): string {
+  const words = offer
+    .toLowerCase()
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  return `ZoikoMeds ${words}`;
+}
+
+/** Catalog tax behaviour to the provider's spelling of it. */
+function taxBehaviorFor(taxBehavior?: string | null): 'inclusive' | 'exclusive' | 'unspecified' {
+  switch ((taxBehavior ?? '').toUpperCase()) {
+    case 'INCLUSIVE':
+      return 'inclusive';
+    case 'EXCLUSIVE':
+      return 'exclusive';
+    default:
+      return 'unspecified';
+  }
+}
+
+/** Whether a provider error means "this object does not exist" rather than a fault. */
+function isMissingResource(err: unknown): boolean {
+  return err instanceof Stripe.errors.StripeError && err.code === 'resource_missing';
+}
 
 /**
  * Stripe adapter (ZM-COM-BILL-001 S-N1, S-P1, S-Q4).
@@ -122,6 +183,119 @@ export class StripeService {
   }
 
   /**
+   * Create the provider product and recurring price for an approved catalog amount,
+   * and return the identifiers to store on the catalog record.
+   *
+   * The catalog is the source of the amount (S-21), so the provider price is derived
+   * from it rather than typed twice. Transcribing an amount into a second system by
+   * hand is how a customer ends up charged something Finance never approved, and the
+   * dashboard and the catalog then disagree with no way to tell which is right.
+   *
+   * An operator who prefers to create the price at the provider themselves still
+   * can: this is only called when no provider price id was supplied.
+   */
+  async ensureRecurringPrice(input: {
+    offer: CommercialOffer;
+    market: string;
+    currency: string;
+    interval: BillingInterval;
+    amountMinor: number;
+    catalogVersion: string;
+    taxBehavior?: string | null;
+    providerProductId?: string | null;
+  }): Promise<{ providerProductId: string; providerPriceId: string }> {
+    const currency = input.currency.toUpperCase();
+    const recurring = RECURRING_INTERVAL[input.interval];
+    if (!recurring) {
+      throw new BadRequestException(
+        `${input.interval} prices are agreed per contract and invoiced by sales, so no provider ` +
+          'price can be generated for one. Leave the provider price id empty and bill it through the contract channel.',
+      );
+    }
+    // The platform stores money as hundredths throughout, which is not the minor
+    // unit for every currency. Refusing is the only safe answer: sending 199900 as
+    // a JPY unit_amount would charge a hundred times the approved amount.
+    if (ZERO_DECIMAL_CURRENCIES.has(currency)) {
+      throw new BadRequestException(
+        `${currency} has no hundredths at the payment provider, so an amount in minor units cannot be ` +
+          'derived safely. Create the price at the provider and paste its id instead.',
+      );
+    }
+
+    const productId = input.providerProductId?.trim() || defaultProductId(input.offer);
+    await this.ensureProduct(productId, input.offer);
+
+    const price = await this.stripe().prices.create(
+      {
+        product: productId,
+        currency: currency.toLowerCase(),
+        unit_amount: input.amountMinor,
+        recurring: { interval: recurring },
+        tax_behavior: taxBehaviorFor(input.taxBehavior),
+        nickname: `${input.market.toUpperCase()} ${currency} ${input.interval} (${input.catalogVersion})`,
+        metadata: {
+          platform: 'zoikomeds',
+          offer: input.offer,
+          market: input.market.toUpperCase(),
+          catalogVersion: input.catalogVersion,
+        },
+      },
+      {
+        // A double-submitted form must not leave two prices behind for the same
+        // approved amount. Keyed on the commercial identity of the price, so a
+        // genuinely different amount or catalog version is a different key.
+        idempotencyKey: [
+          'price',
+          input.offer,
+          input.market.toUpperCase(),
+          currency,
+          input.interval,
+          input.amountMinor,
+          input.catalogVersion,
+        ].join(':'),
+      },
+    );
+
+    await this.audit.write(null, 'commercial.stripe.price_provisioned', 'PriceCatalogEntry', price.id, {
+      offer: input.offer,
+      market: input.market.toUpperCase(),
+      currency,
+      interval: input.interval,
+      amountMinor: input.amountMinor,
+      catalogVersion: input.catalogVersion,
+      providerProductId: productId,
+      mode: this.mode,
+    });
+
+    return { providerProductId: productId, providerPriceId: price.id };
+  }
+
+  /**
+   * Reuse the product for an offer, or create it under a deterministic id.
+   *
+   * The id is derived from the offer so every market and catalog version of the same
+   * offer hangs off one product at the provider, and a redeploy or a second price
+   * does not accumulate near-duplicate products nobody can tell apart.
+   */
+  private async ensureProduct(productId: string, offer: CommercialOffer): Promise<void> {
+    try {
+      await this.stripe().products.retrieve(productId);
+      return;
+    } catch (err) {
+      if (!isMissingResource(err)) throw err;
+    }
+
+    await this.stripe().products.create(
+      {
+        id: productId,
+        name: offerProductName(offer),
+        metadata: { platform: 'zoikomeds', offer },
+      },
+      { idempotencyKey: `product:${productId}` },
+    );
+  }
+
+  /**
    * Create or reuse the provider customer for a billing profile.
    *
    * Idempotent by billing profile id: a retry returns the stored customer instead
@@ -134,18 +308,24 @@ export class StripeService {
     if (!profile) throw new ForbiddenException('Billing profile not found');
     if (profile.providerCustomerId) return profile.providerCustomerId;
 
+    // The provider takes an alpha-2 code and rejects anything else, so a profile
+    // created before country was normalized on write ("INDIA") is resolved here
+    // rather than failing the purchase. An unresolvable value sends no address at
+    // all, which the provider accepts — a wrong country would not.
+    const addressCountry = resolveCountryAlpha2(profile.country);
+
     const customer = await this.stripe().customers.create(
       {
         name: profile.legalName,
         email: profile.billingEmail,
-        address: profile.country
+        address: addressCountry
           ? {
               line1: profile.addressLine1 ?? undefined,
               line2: profile.addressLine2 ?? undefined,
               city: profile.city ?? undefined,
               state: profile.region ?? undefined,
               postal_code: profile.postalCode ?? undefined,
-              country: profile.country,
+              country: addressCountry,
             }
           : undefined,
         // Metadata carries only organizational identifiers. No patient, medicine

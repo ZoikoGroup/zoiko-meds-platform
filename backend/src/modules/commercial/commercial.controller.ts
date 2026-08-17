@@ -5,6 +5,7 @@ import {
   Param,
   Post,
   Query,
+  ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -245,14 +246,16 @@ export class CommercialController {
     summary: 'Add an approved price to the catalog',
     description:
       'Requires an approval reference. A published marketing range is never an executable price, ' +
-      'so every chargeable amount must exist here first.',
+      'so every chargeable amount must exist here first. When no provider price id is supplied, ' +
+      'one is created at the payment provider from the approved amount, so the two cannot disagree.',
   })
   async createPrice(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreatePriceEntryDto,
   ) {
     await this.capabilities.require(user.id, BillingCapability.MANAGE_PRICE_CATALOG);
-    return this.priceCatalog.createEntry(user.id, {
+
+    const input = {
       offer: dto.offer,
       market: dto.market,
       currency: dto.currency,
@@ -263,11 +266,47 @@ export class CommercialController {
       approvalReference: dto.approvalReference,
       effectiveFrom: new Date(dto.effectiveFrom),
       effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
-      providerProductId: dto.providerProductId,
-      providerPriceId: dto.providerPriceId,
+      providerProductId: dto.providerProductId ?? null,
+      providerPriceId: dto.providerPriceId ?? null,
       taxBehavior: dto.taxBehavior,
       legalTermsVersion: dto.legalTermsVersion,
-    });
+    };
+
+    // Validate before touching the provider. An entry the catalog would reject must
+    // not leave a live price behind at Stripe with nothing pointing at it.
+    this.priceCatalog.assertEntryValid(input);
+
+    // A catalog record with no provider price id cannot be charged — checkout stops
+    // at assertPriceUsableFor. Rather than accept an entry that is dead on arrival,
+    // derive the provider price from the amount that was just approved. An operator
+    // who created it at the provider themselves supplies the id and this is skipped.
+    //
+    // Zero-cost offers are exempt: a free plan is never presented for payment, so it
+    // needs no provider price at all.
+    if (!input.providerPriceId?.trim() && input.amountMinor > 0) {
+      const blocked = this.stripe.chargingBlockedReason();
+      if (blocked) {
+        throw new ServiceUnavailableException(
+          `No provider price id was supplied and one cannot be created: ${blocked} ` +
+            'Add the price at the provider and supply its id, or configure billing first.',
+        );
+      }
+
+      const provisioned = await this.stripe.ensureRecurringPrice({
+        offer: input.offer,
+        market: input.market,
+        currency: input.currency,
+        interval: input.interval,
+        amountMinor: input.amountMinor,
+        catalogVersion: input.catalogVersion,
+        taxBehavior: input.taxBehavior,
+        providerProductId: input.providerProductId,
+      });
+      input.providerProductId = provisioned.providerProductId;
+      input.providerPriceId = provisioned.providerPriceId;
+    }
+
+    return this.priceCatalog.createEntry(user.id, input);
   }
 
   @Get('prices/resolve')

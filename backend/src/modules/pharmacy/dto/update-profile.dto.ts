@@ -37,7 +37,12 @@ export class UpdatePharmacyProfileDto {
   @IsString()
   region?: string;
 
-  @ApiPropertyOptional({ example: 'India' })
+  /**
+   * A country name or its ISO-3166 alpha-2 code — "India" and "IN" are both
+   * accepted. Stored as the code, because billing and the payment provider are
+   * keyed on it.
+   */
+  @ApiPropertyOptional({ example: 'India', description: 'Country name or ISO alpha-2 code.' })
   @IsOptional()
   @IsString()
   country?: string;

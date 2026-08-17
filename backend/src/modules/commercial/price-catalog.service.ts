@@ -11,6 +11,7 @@ import {
   PriceCatalogEntry,
   Prisma,
 } from '@prisma/client';
+import { marketDefaultCurrency } from '../../common/countries';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { isZeroCostOffer } from './commercial.doctrine';
@@ -22,6 +23,38 @@ export interface PriceLookup {
   interval: BillingInterval;
   channel: BillingChannel;
   at?: Date;
+}
+
+/**
+ * The same lookup with the currency left open, for a buyer who states a market but
+ * not a currency — which is every self-serve purchase, since a pharmacy knows what
+ * country it is in and not what the platform has chosen to bill that country in.
+ */
+export interface MarketPriceLookup {
+  offer: CommercialOffer;
+  market: string;
+  interval: BillingInterval;
+  channel: BillingChannel;
+  currency?: string;
+  at?: Date;
+}
+
+/** Input for a new catalog record, shared by the create path and its validation. */
+export interface PriceEntryInput {
+  offer: CommercialOffer;
+  market: string;
+  currency: string;
+  interval: BillingInterval;
+  amountMinor: number;
+  channel: BillingChannel;
+  catalogVersion: string;
+  approvalReference: string;
+  effectiveFrom: Date;
+  effectiveTo?: Date | null;
+  providerProductId?: string | null;
+  providerPriceId?: string | null;
+  taxBehavior?: string;
+  legalTermsVersion?: string | null;
 }
 
 /**
@@ -83,29 +116,81 @@ export class PriceCatalogService {
   }
 
   /**
-   * Add an approved price. Requires an approval reference — pricing is a governed
-   * commercial decision, not content management (S-P4), so a record with no
-   * traceable approver is rejected outright.
+   * Resolve the approved price for a market when the buyer has not named a
+   * currency, or throw.
+   *
+   * A self-serve purchase states a country, not a currency: the pharmacy knows it
+   * is in India, and which currency the platform bills India in is a commercial
+   * decision recorded in this catalog. Assuming one — the previous behaviour, which
+   * hard-coded USD — turns an approved INR price into a 404 for the only market it
+   * was approved for.
+   *
+   * Choosing between approved records is not the same as guessing a price. Every
+   * branch here returns a record Finance approved, and when the choice is genuinely
+   * ambiguous it refuses rather than picking the cheaper or dearer one:
+   *
+   *  - one approved currency for the market: that one, no preference needed
+   *  - several: the market's own currency, else USD as the platform's cross-border
+   *    default, else an error naming the candidates so the caller states one
    */
-  async createEntry(
-    actorId: string,
-    input: {
-      offer: CommercialOffer;
-      market: string;
-      currency: string;
-      interval: BillingInterval;
-      amountMinor: number;
-      channel: BillingChannel;
-      catalogVersion: string;
-      approvalReference: string;
-      effectiveFrom: Date;
-      effectiveTo?: Date | null;
-      providerProductId?: string | null;
-      providerPriceId?: string | null;
-      taxBehavior?: string;
-      legalTermsVersion?: string | null;
-    },
-  ): Promise<PriceCatalogEntry> {
+  async requirePriceForMarket(lookup: MarketPriceLookup): Promise<PriceCatalogEntry> {
+    const market = lookup.market.toUpperCase();
+
+    if (lookup.currency) {
+      return this.requirePrice({ ...lookup, market, currency: lookup.currency });
+    }
+
+    const at = lookup.at ?? new Date();
+    const candidates = await this.prisma.priceCatalogEntry.findMany({
+      where: {
+        offer: lookup.offer,
+        market,
+        interval: lookup.interval,
+        channel: lookup.channel,
+        effectiveFrom: { lte: at },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: at } }],
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+
+    if (candidates.length === 0) {
+      throw new NotFoundException(
+        `No approved price catalog record for offer=${lookup.offer} market=${market} ` +
+          `interval=${lookup.interval} channel=${lookup.channel} in any currency. ` +
+          'Checkout cannot proceed — contact ZoikoMeds sales. A published price range is not an executable price.',
+      );
+    }
+
+    // Insertion order is effectiveFrom desc, so the first record seen for a
+    // currency is the one in force for it.
+    const byCurrency = new Map<string, PriceCatalogEntry>();
+    for (const entry of candidates) {
+      if (!byCurrency.has(entry.currency)) byCurrency.set(entry.currency, entry);
+    }
+
+    if (byCurrency.size === 1) {
+      return candidates[0];
+    }
+
+    const local = marketDefaultCurrency(market);
+    const preferred = (local && byCurrency.get(local)) || byCurrency.get('USD');
+    if (preferred) return preferred;
+
+    throw new ConflictException(
+      `Market ${market} has approved prices in ${[...byCurrency.keys()].sort().join(', ')} and no ` +
+        'default for this market, so the currency to charge is ambiguous. Specify the currency.',
+    );
+  }
+
+  /**
+   * Reject an invalid catalog record before anything is written anywhere.
+   *
+   * Separate from createEntry so the caller that provisions a provider price can
+   * check first: a rejected entry must not leave a live product behind at the
+   * payment provider, which is exactly what happens if the provider is called and
+   * the insert then fails.
+   */
+  assertEntryValid(input: PriceEntryInput): void {
     if (!input.approvalReference?.trim()) {
       throw new BadRequestException(
         'approvalReference is required: a price may not enter the catalog without a traceable approval.',
@@ -132,6 +217,15 @@ export class PriceCatalogService {
     if (input.effectiveTo && input.effectiveTo <= input.effectiveFrom) {
       throw new BadRequestException('effectiveTo must be after effectiveFrom.');
     }
+  }
+
+  /**
+   * Add an approved price. Requires an approval reference — pricing is a governed
+   * commercial decision, not content management (S-P4), so a record with no
+   * traceable approver is rejected outright.
+   */
+  async createEntry(actorId: string, input: PriceEntryInput): Promise<PriceCatalogEntry> {
+    this.assertEntryValid(input);
 
     const market = input.market.toUpperCase();
     const currency = input.currency.toUpperCase();

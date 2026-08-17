@@ -57,6 +57,11 @@ const EMPTY_PRICE = {
   catalogVersion: '',
   approvalReference: '',
   effectiveFrom: '',
+  // Left blank on purpose in the default: the provider price is generated from the
+  // approved amount so the two cannot disagree. Filled in only when the price
+  // already exists at the provider.
+  providerProductId: '',
+  providerPriceId: '',
 }
 
 /**
@@ -195,10 +200,18 @@ export default function Commercial() {
         catalogVersion: form.catalogVersion.trim(),
         approvalReference: form.approvalReference.trim(),
         effectiveFrom: new Date(form.effectiveFrom).toISOString(),
+        // Omitted rather than sent empty: a blank id is what tells the server to
+        // create the price at the provider from the approved amount.
+        providerProductId: form.providerProductId.trim() || undefined,
+        providerPriceId: form.providerPriceId.trim() || undefined,
       })
       setAddOpen(false)
       setForm(EMPTY_PRICE)
-      flash('Price added to the catalog')
+      flash(
+        form.providerPriceId.trim()
+          ? 'Price added to the catalog'
+          : 'Price added to the catalog, and created at the payment provider',
+      )
       await load()
     } catch (err) {
       setFormError(err.message || 'Could not add the price.')
@@ -860,6 +873,32 @@ export default function Commercial() {
               <Input id="f-approval" placeholder="ZM-PRICE-APPROVAL-2026-08-01"
                 value={form.approvalReference}
                 onChange={(e) => set('approvalReference')(e.target.value)} />
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3">
+              <div className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-foreground">
+                <Info className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  Leave these empty and the price is created at the payment provider from the
+                  approved amount above, so the catalog and the provider cannot disagree. Fill them
+                  in only if the price already exists there. A catalog record with no provider price
+                  id can never be charged.
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="f-provider-price">Provider price ID</Label>
+                  <Input id="f-provider-price" placeholder="price_… (optional)"
+                    value={form.providerPriceId}
+                    onChange={(e) => set('providerPriceId')(e.target.value)} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="f-provider-product">Provider product ID</Label>
+                  <Input id="f-provider-product" placeholder="prod_… (optional)"
+                    value={form.providerProductId}
+                    onChange={(e) => set('providerProductId')(e.target.value)} />
+                </div>
+              </div>
             </div>
 
             {formError && (
