@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, Bell, TrendingDown, PackageCheck, Radar, Search, CheckCheck, Inbox,
+  AlertCircle,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
@@ -43,6 +44,8 @@ export default function UserSignal() {
   const [alerts, setAlerts] = useState([])
   const [notifications, setNotifications] = useState([])
   const [settings, setSettings] = useState({})
+  const [loadFailures, setLoadFailures] = useState([])
+  const [settingsUnavailable, setSettingsUnavailable] = useState(false)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [savedQuery, setSavedQuery] = useState('')
@@ -57,16 +60,37 @@ export default function UserSignal() {
 
   useEffect(() => {
     let alive = true
-    Promise.all([listSavedStatus(), listActiveAlerts(), listNotifications()])
-      .then(([s, a, n]) => {
+
+    // Settled, not all: with Promise.all a single failing endpoint discarded the
+    // results of the two that worked, so one broken call emptied the whole page
+    // and every section on it looked equally dead (MN-26).
+    Promise.allSettled([listSavedStatus(), listActiveAlerts(), listNotifications()])
+      .then(([savedResult, alertsResult, notificationsResult]) => {
         if (!alive) return
-        setSaved(s)
-        setAlerts(a)
-        setNotifications(n)
+        if (savedResult.status === 'fulfilled') setSaved(savedResult.value ?? [])
+        if (alertsResult.status === 'fulfilled') setAlerts(alertsResult.value ?? [])
+        if (notificationsResult.status === 'fulfilled') {
+          setNotifications(notificationsResult.value ?? [])
+        }
+
+        // Named rather than counted: "your saved medicines could not be loaded"
+        // is actionable, and an empty page with no explanation is not.
+        const broken = [
+          savedResult.status === 'rejected' && 'saved medicines',
+          alertsResult.status === 'rejected' && 'active alerts',
+          notificationsResult.status === 'rejected' && 'notifications',
+        ].filter(Boolean)
+        setLoadFailures(broken)
+        if (broken.length > 0) {
+          flash(`Could not load your ${broken.join(', ')}. Your settings below still work.`)
+        }
       })
-      .catch(() => alive && flash('Could not load your ZoikoSignal data'))
       .finally(() => alive && setLoading(false))
-    getNotificationSettings().then((x) => alive && setSettings(x)).catch(() => {})
+
+    getNotificationSettings()
+      .then((x) => alive && setSettings(x))
+      .catch(() => alive && setSettingsUnavailable(true))
+
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -361,7 +385,30 @@ export default function UserSignal() {
       )}
 
       {/* Notification settings */}
-      <div className="max-w-2xl">
+      <div className="flex max-w-2xl flex-col gap-3">
+        {loadFailures.length > 0 && (
+          <div role="alert" className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold">
+                {loadFailures.join(', ')} could not be loaded
+              </span>
+              <span className="text-xs leading-relaxed text-foreground/90">
+                This is a problem on our side rather than an empty list. The
+                preferences below are unaffected and still save.
+              </span>
+            </div>
+          </div>
+        )}
+        {settingsUnavailable && (
+          <div role="alert" className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <span className="text-xs leading-relaxed">
+              Your notification preferences could not be loaded, so the switches below
+              may not reflect what is stored. Reload before changing them.
+            </span>
+          </div>
+        )}
         <NotificationSettings settings={settings} onToggle={handleToggleSetting} />
       </div>
     </div>

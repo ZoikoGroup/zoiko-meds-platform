@@ -32,10 +32,19 @@ function saveAllReadBroadcastIds(ids) {
   }
 }
 
+/**
+ * Both feeds, and what failed to load.
+ *
+ * Each source is fetched independently and a failure is reported rather than
+ * swallowed. Silently returning an empty list is why a 500 from the signal
+ * endpoint appeared as an empty Stock Alerts section instead of an error: the
+ * screen said there was nothing to show, when it did not know (MN-25).
+ */
 export const getPatientNotifications = async () => {
   const readBroadcasts = getReadBroadcastIds()
   let broadcasts = []
   let signals = []
+  const failed = []
 
   // 1. Fetch Super Admin Dispatched Broadcasts from the exact same endpoint as Pharmacy Portal
   try {
@@ -74,7 +83,8 @@ export const getPatientNotifications = async () => {
         }
       })
   } catch {
-    // Fail gracefully
+    // Not fatal on its own: personal alerts below may still have loaded.
+    failed.push('announcements')
   }
 
   // Set of titles from admin broadcasts to prevent duplicates
@@ -118,12 +128,17 @@ export const getPatientNotifications = async () => {
         }
       })
   } catch {
-    // Fail gracefully
+    // Stock and safety alerts both come from this one call, so both sections are
+    // unknown rather than empty when it fails.
+    failed.push('stock and safety alerts')
   }
 
   // Merge and sort newest first by rawDate
   const combined = [...broadcasts, ...signals]
-  return combined.sort((a, b) => b.rawDate - a.rawDate)
+  combined.sort((a, b) => b.rawDate - a.rawDate)
+  // Carried on the array so existing callers keep working unchanged.
+  combined.failed = failed
+  return combined
 }
 
 export const markPatientNotificationRead = async (item) => {

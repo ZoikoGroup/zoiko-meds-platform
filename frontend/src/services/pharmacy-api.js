@@ -100,6 +100,16 @@ export const getDashboard = async () => {
 
 import { listNotifications } from './admin-api'
 
+// Read state lives on the notification row, and these endpoints are scoped to the
+// caller rather than to a role, so the portal marks its own notifications read
+// through the same routes the patient surface uses. Without this the page only
+// ever changed local state, which the ten-second refresh then reverted (MP-24).
+export const markNotificationRead = (id) =>
+  apiFetch(`/me/signal/notifications/${id}/read`, { method: 'POST' })
+
+export const markAllNotificationsRead = () =>
+  apiFetch('/me/signal/notifications/read-all', { method: 'POST' })
+
 export const getNotifications = async () => {
   let userNotifications = []
   try {

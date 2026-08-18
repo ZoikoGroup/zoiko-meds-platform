@@ -54,6 +54,7 @@ describe('PharmacyService self-service profile onboarding', () => {
     prisma = {
       pharmacy: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
       user: { findUnique: jest.fn(), update: jest.fn() },
+      signalNotification: { findMany: jest.fn().mockResolvedValue([]) },
       verificationRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
@@ -270,6 +271,73 @@ describe('PharmacyService self-service profile onboarding', () => {
         service.saveMyProfile(USER, { city: 'Hyderabad' }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.pharmacy.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('notification categories come from the row, not a constant (MP-24)', () => {
+    const row = (over: Record<string, unknown> = {}) => ({
+      id: 'sn_1',
+      dedupeKey: 'med:med_1:running-low',
+      type: 'RUNNING_LOW',
+      title: 'Running low',
+      description: 'Paracetamol is running low nearby',
+      read: false,
+      createdAt: new Date(),
+      ...over,
+    });
+
+    const categoriesFor = async (rows: Record<string, unknown>[]) => {
+      prisma.signalNotification.findMany.mockResolvedValue(rows);
+      const list = await service.getUserNotifications('user_1');
+      return list.map((n: { type: string }) => n.type);
+    };
+
+    it.each([
+      ['RUNNING_LOW', 'inventory'],
+      ['BACK_IN_STOCK', 'inventory'],
+      ['LIMITED', 'inventory'],
+      ['NEARBY_RESTOCK', 'inventory'],
+    ])('files a %s availability signal under inventory', async (type, expected) => {
+      // Every row used to be labelled 'verification', so the Inventory filter on
+      // the notifications page could never match anything.
+      await expect(categoriesFor([row({ type })])).resolves.toEqual([expected]);
+    });
+
+    it('keeps a verification decision under verification', async () => {
+      // The workflow reuses the SAFETY type for its own decisions, so the dedupe
+      // key is the only honest way to tell the two apart.
+      await expect(
+        categoriesFor([row({ dedupeKey: 'verification:vr_1:approved:1', type: 'SAFETY' })]),
+      ).resolves.toEqual(['verification']);
+    });
+
+    it('files a genuine safety alert under system, not verification', async () => {
+      await expect(
+        categoriesFor([row({ dedupeKey: 'broadcast:b_1', type: 'SAFETY' })]),
+      ).resolves.toEqual(['system']);
+      await expect(
+        categoriesFor([row({ dedupeKey: 'broadcast:b_2', type: 'RECALL' })]),
+      ).resolves.toEqual(['system']);
+    });
+
+    it('reports unread state from the stored row', async () => {
+      prisma.signalNotification.findMany.mockResolvedValue([row({ read: true })]);
+
+      const [first] = await service.getUserNotifications('user_1');
+
+      expect(first.unread).toBe(false);
+    });
+
+    it('leaves out what the user dismissed or archived', async () => {
+      prisma.signalNotification.findMany.mockResolvedValue([]);
+
+      await service.getUserNotifications('user_1');
+
+      expect(prisma.signalNotification.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'user_1', dismissed: false, archived: false },
+        }),
+      );
     });
   });
 

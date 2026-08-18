@@ -3,8 +3,12 @@ import { PageHeader } from '@/components/shared/page-header'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/states'
-import { getNotifications } from '@/services/pharmacy-api'
-import { Boxes, BadgeCheck, UploadCloud, Server, Bell, Loader2, Check } from 'lucide-react'
+import {
+  getNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from '@/services/pharmacy-api'
+import { Boxes, BadgeCheck, UploadCloud, Server, Bell, Loader2, Check, AlertCircle } from 'lucide-react'
 
 const TYPE_META = {
   inventory: { icon: Boxes, label: 'Inventory' },
@@ -17,13 +21,18 @@ const FILTERS = [{ value: 'all', label: 'All' }, ...Object.entries(TYPE_META).ma
 export default function PharmacyNotifications() {
   const [items, setItems] = useState(null)
   const [filter, setFilter] = useState('all')
+  const [loadError, setLoadError] = useState('')
 
   const fetchItems = useCallback(async () => {
     try {
       const data = await getNotifications()
       setItems(data)
-    } catch {
-      setItems([])
+      setLoadError('')
+    } catch (err) {
+      // An empty list used to be shown for a failed request too, so an outage
+      // read as "you're all caught up" — the most reassuring possible lie.
+      setItems((current) => current ?? [])
+      setLoadError(err.message || 'Could not load your notifications.')
     }
   }, [])
 
@@ -43,8 +52,26 @@ export default function PharmacyNotifications() {
     }
   }, [fetchItems])
 
-  const markRead = (id) => setItems((rows) => (rows || []).map((n) => (n.id === id ? { ...n, unread: false } : n)))
-  const markAllRead = () => setItems((rows) => (rows || []).map((n) => ({ ...n, unread: false })))
+  // Persisted, not just local: the refresh below re-reads the server every ten
+  // seconds, so a local-only change came straight back as unread.
+  const markRead = async (id) => {
+    setItems((rows) => (rows || []).map((n) => (n.id === id ? { ...n, unread: false } : n)))
+    try {
+      await markNotificationRead(id)
+    } catch {
+      setItems((rows) => (rows || []).map((n) => (n.id === id ? { ...n, unread: true } : n)))
+    }
+  }
+
+  const markAllRead = async () => {
+    const previous = items
+    setItems((rows) => (rows || []).map((n) => ({ ...n, unread: false })))
+    try {
+      await markAllNotificationsRead()
+    } catch {
+      setItems(previous)
+    }
+  }
 
   if (!items) {
     return (
@@ -90,8 +117,26 @@ export default function PharmacyNotifications() {
         ))}
       </div>
 
+      {loadError && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <div className="flex flex-col gap-1">
+            <span className="font-semibold">Notifications could not be loaded</span>
+            <span className="text-xs leading-relaxed text-foreground/90">{loadError}</span>
+          </div>
+        </div>
+      )}
+
       {visible.length === 0 ? (
-        <EmptyState icon={Bell} title="No notifications" description="You're all caught up." />
+        <EmptyState
+          icon={Bell}
+          title={filter === 'all' ? 'No notifications' : `No ${FILTERS.find((f) => f.value === filter)?.label.toLowerCase()} notifications`}
+          description={
+            loadError
+              ? 'The list above could not be loaded, so this may not be everything.'
+              : "You're all caught up."
+          }
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {visible.map((n) => {

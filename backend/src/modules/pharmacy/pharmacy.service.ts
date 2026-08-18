@@ -7,6 +7,7 @@ import {
 import {
   AvailabilityConfidence,
   CommercialClassification,
+  SignalNotificationType,
   UserRole,
   VerificationRequestStatus,
   VerificationStatus,
@@ -40,6 +41,41 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
   UNKNOWN: 'out-of-stock',
   SUPPRESSED: 'out-of-stock',
 };
+
+/**
+ * Which section of the portal's notification list a row belongs in.
+ *
+ * The category was previously hard-coded to 'verification' for every row, which is
+ * why the Inventory, Uploads and System filters could never match anything and
+ * read as broken (MP-24).
+ *
+ * There is no stored category to read: SignalNotificationType describes patient
+ * availability signals, and the verification workflow reuses SAFETY for its own
+ * decisions. The dedupe key is the honest discriminator - it is set by whichever
+ * workflow raised the row, and it is what distinguishes a verification decision
+ * from a genuine safety alert that happens to share a type.
+ */
+function notificationCategory(row: {
+  dedupeKey: string;
+  type: SignalNotificationType;
+}): 'inventory' | 'verification' | 'upload' | 'system' {
+  if (row.dedupeKey.startsWith('verification:')) return 'verification';
+
+  switch (row.type) {
+    // Availability signals about a medicine: stock, in this portal's language.
+    case SignalNotificationType.RUNNING_LOW:
+    case SignalNotificationType.BACK_IN_STOCK:
+    case SignalNotificationType.LIMITED:
+    case SignalNotificationType.NEARBY_RESTOCK:
+      return 'inventory';
+    // Recalls and advisories are platform-wide messages, not this pharmacy's
+    // stock, so they belong with the other platform messages.
+    case SignalNotificationType.RECALL:
+    case SignalNotificationType.SAFETY:
+    default:
+      return 'system';
+  }
+}
 
 /**
  * Store the country as its alpha-2 code, whichever form the operator typed.
@@ -355,6 +391,7 @@ export class PharmacyService {
 
     return this.getProfile(created.id, user);
   }
+  
 
   async updateProfile(
     pharmacyId: string,
@@ -602,13 +639,13 @@ export class PharmacyService {
 
   async getUserNotifications(userId: string) {
     const list = await this.prisma.signalNotification.findMany({
-      where: { userId },
+      where: { userId, dismissed: false, archived: false },
       orderBy: { createdAt: 'desc' },
       take: 20,
     });
     return list.map((n) => ({
       id: n.id,
-      type: 'verification',
+      type: notificationCategory(n),
       title: n.title,
       message: n.description,
       when: this.timeAgo(n.createdAt),
