@@ -19,14 +19,17 @@ jobs:
       # exactly the same thing (install -> generate -> migrate -> build ->
       # restart -> health check) instead of drifting apart.
       #
-      # NOTE: every run of this workflow has failed since 2026-07-29 — first
-      # "ssh: handshake failed: unable to authenticate", then
-      # "dial tcp ***:22: i/o timeout" — which is why the API served a build from
-      # before 2026-08-07 while main moved on. GitHub-hosted runners connect from
-      # rotating public IPs, so a firewall rule that allows a fixed office IP will
-      # still drop them. To fix, either allow GitHub's ranges on tcp:22
-      # (https://api.github.com/meta), or front this with a self-hosted runner or
-      # an IAP tunnel. Until then, run the script directly on the VM:
+      # SSH reachability: runs failed from 2026-07-29 with "ssh: handshake failed"
+      # and then "dial tcp ***:22: i/o timeout", because GitHub-hosted runners
+      # connect from rotating public IPs and a firewall rule pinned to a fixed
+      # office IP drops them. If that returns, the durable fix is an IAP tunnel
+      # rather than widening the firewall: authenticate with
+      # google-github-actions/auth (Workload Identity Federation, no long-lived
+      # key), then reach the VM with
+      #     gcloud compute ssh "$INSTANCE" --zone "$ZONE" --tunnel-through-iap       #       --command 'bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh'
+      # which needs only ingress from Google's IAP range 35.235.240.0/20 on
+      # tcp:22 -- narrower than an office CIDR, and never 0.0.0.0/0.
+      # A manual release from the VM is always available as a fallback:
       #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
