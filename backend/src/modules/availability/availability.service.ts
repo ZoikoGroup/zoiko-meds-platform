@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AvailabilityConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withLogoUrl } from '../pharmacy/logo/pharmacy-logo.service';
 
 /**
  * ZoikoAvail™ — availability confidence engine.
@@ -31,14 +32,24 @@ export class AvailabilityService {
         requiresConfirmation: true,
         computedAt: true,
         pharmacy: {
-          select: { id: true, name: true, city: true, region: true, latitude: true, longitude: true },
+          select: {
+            id: true,
+            name: true,
+            city: true,
+            region: true,
+            latitude: true,
+            longitude: true,
+            // Timestamp only: it becomes a logo URL below, and the image itself
+            // lives in another table so this stays a cheap patient-facing read.
+            logoUpdatedAt: true,
+          },
         },
       },
       orderBy: { confidence: 'asc' },
     });
 
     return signals.map((s) => ({
-      pharmacy: s.pharmacy,
+      pharmacy: withLogoUrl(s.pharmacy),
       confidence: s.confidence,
       freshnessMinutes: s.freshnessMinutes,
       requiresConfirmation: s.requiresConfirmation,

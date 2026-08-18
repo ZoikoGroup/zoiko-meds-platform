@@ -83,21 +83,21 @@ model SavedMedicine {
 
   // What the patient saved, as written — always present, and the display name
   // until a governed identity is attached.
-  medicineName String
+  medicineName   String
   // Case/spacing/punctuation-insensitive form of medicineName. The matching key
   // for off-catalog rows, and the per-user uniqueness key for every row.
   normalizedName String
 
-  priority      MedicinePriority @default(MEDIUM)
-  alertsEnabled Boolean          @default(true)
+  priority       MedicinePriority @default(MEDIUM)
+  alertsEnabled  Boolean          @default(true)
   // Last availability status a notification was generated for. Lets the signal
   // generator detect transitions (e.g. running-low → back-in-stock) instead of
   // re-emitting the same state. One of: available|limited|running-low|out-of-stock.
   notifiedStatus String?
   // Set when a pharmacy first brings this medicine into the catalog, so the
   // "now available" alert is emitted once and never re-fired.
-  linkedAt  DateTime?
-  createdAt DateTime  @default(now())
+  linkedAt       DateTime?
+  createdAt      DateTime         @default(now())
 
   // Uniqueness is on the normalized name, not medicineId: a nullable FK would
   // let Postgres treat every unlinked row as distinct, so the same patient
@@ -304,6 +304,16 @@ model Pharmacy {
   availabilitySignals  AvailabilitySignal[]
   verificationRequests VerificationRequest[]
 
+  /// The logo image itself lives in its own table so it is never loaded by the
+  /// queries that matter: patient search reads this row, and Prisma selects every
+  /// scalar it holds by default.
+  logo PharmacyLogo?
+
+  /// Set whenever the logo changes. Denormalized on purpose - a list response can
+  /// then say whether a pharmacy has a logo, and cache-bust its URL, without
+  /// joining a table of image bytes.
+  logoUpdatedAt DateTime?
+
   /// Commercial classification, deliberately separate from verificationStatus:
   /// eligibility and billability are different questions (ZM-COM-BILL-001 S-B1).
   /// Defaults to the non-billable directory state so a preloaded record can
@@ -316,6 +326,27 @@ model Pharmacy {
 
   @@index([verificationStatus])
   @@index([latitude, longitude])
+}
+
+/// A pharmacy's logo, kept out of the Pharmacy row deliberately.
+///
+/// Bytes in the database rather than an object store: it needs no bucket, no
+/// credentials and no volume, so a logo works on any deployment of this repo. The
+/// size cap in PharmacyLogoService is what keeps that honest. This model and that
+/// service are the whole storage seam - moving to a bucket means writing the URL
+/// here instead of the bytes, and nothing above them changes.
+model PharmacyLogo {
+  pharmacyId String   @id
+  pharmacy   Pharmacy @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+
+  data     Bytes
+  /// Sniffed from the file's own leading bytes, never taken from the upload's
+  /// declared content type, and it is what the download route replays.
+  mimeType String
+  byteSize Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Raw inventory signal uploaded by a pharmacy. NEVER exposed publicly as exact stock.

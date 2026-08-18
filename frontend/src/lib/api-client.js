@@ -70,8 +70,12 @@ export async function apiFetch(
   path,
   { method = 'GET', body, auth = true, headers = {} } = {}
 ) {
+  // FormData carries its own multipart boundary, which only the browser can
+  // generate: setting Content-Type by hand here produces a header with no
+  // boundary and the server rejects the body as malformed.
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
   const finalHeaders = { ...headers }
-  if (body !== undefined) finalHeaders['Content-Type'] = 'application/json'
+  if (body !== undefined && !isFormData) finalHeaders['Content-Type'] = 'application/json'
 
   const token = auth ? getToken() : null
   if (token) finalHeaders['Authorization'] = `Bearer ${token}`
@@ -81,7 +85,7 @@ export async function apiFetch(
     res = await fetch(`${BASE_URL}${path}`, {
       method,
       headers: finalHeaders,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
     })
   } catch {
     throw new Error(

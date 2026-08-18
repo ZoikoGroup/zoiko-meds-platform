@@ -12,6 +12,7 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { resolveCountryAlpha2 } from '../../common/countries';
+import { logoUrlFor } from './logo/pharmacy-logo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
@@ -83,7 +84,7 @@ export class PharmacyService {
   // ---------------------------------------------------------------------------
 
   async listVerified() {
-    return this.prisma.pharmacy.findMany({
+    const pharmacies = await this.prisma.pharmacy.findMany({
       where: { verificationStatus: 'VERIFIED', isParticipating: true },
       select: {
         id: true,
@@ -91,8 +92,15 @@ export class PharmacyService {
         city: true,
         region: true,
         reliabilityScore: true,
+        // The timestamp, never the image: this list is a patient-facing query and
+        // the bytes live in their own table precisely so it stays cheap.
+        logoUpdatedAt: true,
       },
     });
+    return pharmacies.map(({ logoUpdatedAt, ...pharmacy }) => ({
+      ...pharmacy,
+      logoUrl: logoUrlFor(pharmacy.id, logoUpdatedAt),
+    }));
   }
 
   async findById(id: string) {
@@ -100,7 +108,7 @@ export class PharmacyService {
     // Returning null here would serialize as a 200 with an empty body, which
     // clients cannot distinguish from a successful fetch — surface a 404.
     if (!pharmacy) throw new NotFoundException('Pharmacy not found');
-    return pharmacy;
+    return { ...pharmacy, logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt) };
   }
 
   async getProfile(pharmacyId: string, user?: AuthenticatedUser) {
@@ -133,6 +141,7 @@ export class PharmacyService {
       country: pharmacy.country || '',
       postalCode: pharmacy.postalCode || '',
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt),
       // Commercial standing, so the portal can show the plan without a second
       // round trip. Deliberately not the price: what a pharmacy pays comes from
       // the catalog, and the profile is not a billing surface (ZM-COM-BILL-001).
@@ -186,6 +195,8 @@ export class PharmacyService {
       country: '',
       postalCode: '',
       reliabilityScore: 0,
+      // Same shape as a saved profile: a draft simply has no logo yet.
+      logoUrl: null,
       // No pharmacy record exists yet, so there is nothing claimed either.
       commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
       reviewStatus: pending?.status ?? null,

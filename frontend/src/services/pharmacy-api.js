@@ -276,6 +276,20 @@ export const getReports = async () => {
 // not decide what may be seen. No demo fallback: this is a financial surface.
 export const getBilling = () => apiFetch('/pharmacies/me/billing')
 
+// --- Logo (MP-22) -----------------------------------------------------------
+//
+// Multipart rather than a base64 JSON body: no inflation of the bytes, and the
+// size limit belongs to this one route instead of loosening the JSON limit for
+// every endpoint.
+export const uploadPharmacyLogo = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return apiFetch('/pharmacies/me/logo', { method: 'POST', body: form })
+}
+
+export const removePharmacyLogo = () =>
+  apiFetch('/pharmacies/me/logo', { method: 'DELETE' })
+
 // Provider-hosted purchase and payment-method management. Both return a URL to
 // redirect to: card details never touch this application. Restricted server-side
 // to the authorized payer (Pharmacy Manager), so a Pharmacist gets a 403.

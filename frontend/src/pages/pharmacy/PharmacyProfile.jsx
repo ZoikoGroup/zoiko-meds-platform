@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -7,9 +7,39 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { ErrorState } from '@/components/shared/states'
-import { getProfile, updateProfile } from '@/services/pharmacy-api'
+import {
+  getProfile,
+  updateProfile,
+  uploadPharmacyLogo,
+  removePharmacyLogo,
+} from '@/services/pharmacy-api'
+import { apiBaseUrl } from '@/lib/api-client'
 import { CLASSIFICATION_META } from '@/lib/commercial'
-import { Building2, ShieldCheck, Loader2, AlertCircle, Info, CreditCard } from 'lucide-react'
+import {
+  Building2,
+  ShieldCheck,
+  Loader2,
+  AlertCircle,
+  Info,
+  CreditCard,
+  Upload,
+  Trash2,
+} from 'lucide-react'
+
+// Mirrors what the upload route accepts. Checked here as well so an oversized or
+// unsupported file is refused instantly, without spending the upload first.
+const LOGO_MAX_BYTES = 256 * 1024
+const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+/**
+ * The API returns a path relative to its own base, because the same API is
+ * reached through more than one origin. Resolve it the way every other call in
+ * this client does.
+ */
+function resolveLogoUrl(logoUrl) {
+  if (!logoUrl) return null
+  return /^https?:\/\//.test(logoUrl) ? logoUrl : `${apiBaseUrl()}${logoUrl}`
+}
 
 const VERIFY_META = {
   VERIFIED: { variant: 'success', label: 'Verified' },
@@ -123,6 +153,12 @@ export default function PharmacyProfile() {
   const [saving, setSaving] = useState(false)
   const [flashMsg, flash] = useFlash()
 
+  // Logo upload. Kept apart from saveError so a rejected image does not read as
+  // a failure to save the profile fields, which are a separate request.
+  const fileInputRef = useRef(null)
+  const [logoBusy, setLogoBusy] = useState('')
+  const [logoError, setLogoError] = useState('')
+
   const loadProfile = useCallback(async () => {
     try {
       const p = await getProfile()
@@ -152,6 +188,57 @@ export default function PharmacyProfile() {
   }, [loadProfile])
 
   const set = (key) => (value) => setProfile((p) => ({ ...p, [key]: value }))
+
+  /**
+   * Upload the chosen file, then adopt the URL the server returns.
+   *
+   * The returned URL carries the new logo's timestamp, so the replacement appears
+   * immediately instead of the browser reusing the cached previous image.
+   */
+  const onLogoPicked = async (event) => {
+    const file = event.target.files?.[0]
+    // Reset first: picking the same file twice must fire change again, which it
+    // will not while the input still holds that file.
+    event.target.value = ''
+    if (!file) return
+
+    setLogoError('')
+    if (!LOGO_TYPES.includes(file.type)) {
+      setLogoError('Choose a PNG, JPEG or WebP image. SVG files are not accepted.')
+      return
+    }
+    if (file.size > LOGO_MAX_BYTES) {
+      setLogoError(
+        `That image is ${Math.ceil(file.size / 1024)} KB. The maximum logo size is ${LOGO_MAX_BYTES / 1024} KB.`,
+      )
+      return
+    }
+
+    setLogoBusy('upload')
+    try {
+      const result = await uploadPharmacyLogo(file)
+      setProfile((current) => ({ ...current, logoUrl: result?.logoUrl ?? current?.logoUrl }))
+      flash('Logo updated')
+    } catch (err) {
+      setLogoError(err.message || 'Could not upload that logo.')
+    } finally {
+      setLogoBusy('')
+    }
+  }
+
+  const onLogoRemove = async () => {
+    setLogoError('')
+    setLogoBusy('remove')
+    try {
+      await removePharmacyLogo()
+      setProfile((current) => ({ ...current, logoUrl: null }))
+      flash('Logo removed')
+    } catch (err) {
+      setLogoError(err.message || 'Could not remove the logo.')
+    } finally {
+      setLogoBusy('')
+    }
+  }
 
   const save = async (e) => {
     e.preventDefault()
@@ -205,6 +292,7 @@ export default function PharmacyProfile() {
     : REVIEW_NOTICE[profile.verificationStatus]
   const isVerified = profile.verificationStatus === 'VERIFIED'
   const initials = profile.name?.trim()?.slice(0, 2).toUpperCase()
+  const logoUrl = resolveLogoUrl(profile.logoUrl)
   const plan = CLASSIFICATION_META[profile.commercialClassification] ?? null
 
   return (
@@ -259,9 +347,17 @@ export default function PharmacyProfile() {
             <CardDescription>Name and logo shown to patients across the network.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5 pt-5">
-            <div className="flex items-center gap-4">
-              <span className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary">
-                {initials || <Building2 className="size-6" />}
+            <div className="flex items-start gap-4">
+              <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/10 text-lg font-bold text-primary">
+                {logoUrl ? (
+                  <img
+                    src={logoUrl}
+                    alt={profile.name ? `${profile.name} logo` : 'Pharmacy logo'}
+                    className="size-full object-contain"
+                  />
+                ) : (
+                  initials || <Building2 className="size-6" />
+                )}
               </span>
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
@@ -271,8 +367,62 @@ export default function PharmacyProfile() {
                     {verify.label}
                   </Badge>
                 </div>
-                {/* TODO(backend): logo upload → POST /pharmacy/me/logo */}
-                <Button type="button" variant="outline" size="sm">Upload logo</Button>
+                {/* Hidden, and opened by the buttons: a bare file input cannot be
+                    styled, and its "No file chosen" label reads as a broken
+                    control next to everything else on this page. */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={LOGO_TYPES.join(',')}
+                  onChange={onLogoPicked}
+                  className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={Boolean(logoBusy) || profile.isDraft}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {logoBusy === 'upload' ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="size-3.5" />
+                    )}
+                    {logoUrl ? 'Replace logo' : 'Upload logo'}
+                  </Button>
+                  {logoUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1.5 text-muted-foreground"
+                      disabled={Boolean(logoBusy)}
+                      onClick={onLogoRemove}
+                    >
+                      {logoBusy === 'remove' ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {profile.isDraft
+                    ? 'Save your pharmacy details first, then you can add a logo.'
+                    : `PNG, JPEG or WebP, up to ${LOGO_MAX_BYTES / 1024} KB. Shown to patients beside your pharmacy.`}
+                </span>
+                {logoError && (
+                  <span role="alert" className="text-[11px] font-medium text-danger">
+                    {logoError}
+                  </span>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
