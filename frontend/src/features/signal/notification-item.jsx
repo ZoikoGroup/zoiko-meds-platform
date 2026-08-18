@@ -3,9 +3,11 @@ import { Clock, Check, Archive, Trash2, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { NOTIF_META } from '@/features/signal/signal-meta'
+import { useLanguage } from '@/providers/language-provider'
 
 // A single row in the smart-notifications feed.
 export function NotificationItem({ notification: n, index = 0, onAction, onRead, onArchive, onDelete }) {
+  const { t } = useLanguage()
   const meta = NOTIF_META[n.type] ?? NOTIF_META['running-low']
   const Icon = meta.icon
 
@@ -60,7 +62,7 @@ export function NotificationItem({ notification: n, index = 0, onAction, onRead,
             size="sm"
             variant="ghost"
             className="h-7 px-2 text-muted-foreground hover:text-danger"
-            aria-label={`Delete notification: ${n.title}`}
+            aria-label={t('deleteNotificationNamed', 'Delete notification: {title}', { title: n.title })}
             onClick={() => onDelete?.(n.id)}
           >
             <Trash2 className="size-3" />

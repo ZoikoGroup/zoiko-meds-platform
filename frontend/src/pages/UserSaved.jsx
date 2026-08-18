@@ -24,15 +24,15 @@ export default function UserSaved() {
     toggleAlertsMutation.mutate(
       { medicineId: id, alertsEnabled: !currentAlerts },
       {
-        onError: () => flash('Could not update alert preferences.'),
+        onError: () => flash(t('alertPrefsUpdateFailed', 'Could not update alert preferences.')),
       }
     )
   }
 
   const remove = (id, name) => {
     unsaveMutation.mutate(id, {
-      onSuccess: () => flash(`Removed ${name} from saved`),
-      onError: () => flash(`Could not remove ${name}`),
+      onSuccess: () => flash(t('savedRemovedNamed', 'Removed {name} from your saved medicines.', { name })),
+      onError: () => flash(t('savedRemoveFailedNamed', 'Could not remove {name}.', { name })),
     })
   }
 
@@ -157,7 +157,7 @@ export default function UserSaved() {
                     variant="ghost"
                     size="icon-sm"
                     className="text-danger hover:bg-danger/5"
-                    aria-label={`Remove ${med.name} from saved`}
+                    aria-label={t('removeNamedFromSaved', 'Remove {name} from saved', { name: med.name })}
                     onClick={() => remove(med.id ?? med.name, med.name)}
                     disabled={unsaveMutation.isPending}
                   >

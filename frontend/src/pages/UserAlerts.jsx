@@ -6,17 +6,19 @@ import { Button } from '@/components/ui/button'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { getAlertPreferences, updateAlertPreferences } from '@/services/user-api'
 import { Bell, Radar, Webhook, MapPin, Loader2 } from 'lucide-react'
+import { useLanguage } from '@/providers/language-provider'
 
 const ALERT_OPTIONS = [
-  { key: 'backToHigh', icon: Webhook, title: 'Confidence returns to High', desc: 'Notify me when a saved medicine’s availability confidence rises to High at a verified pharmacy near me.' },
-  { key: 'nearby', icon: MapPin, title: 'Nearby availability updates', desc: 'Notify me when a verified pharmacy within my range refreshes its availability signals.' },
-  { key: 'confidenceChange', icon: Bell, title: 'Confidence changes', desc: 'Notify me when availability moves between High, Moderate, and Low.' },
-  { key: 'shortage', icon: Radar, title: 'Shortage signals (ZoikoSignal™)', desc: 'Aggregated, anonymized alerts when regional shortage pressure may affect a saved medicine.' },
+  { key: 'backToHigh', icon: Webhook, titleKey: 'alertBackToHighTitle', descKey: 'alertBackToHighDesc', title: 'Confidence returns to High', desc: 'Notify me when a saved medicine’s availability confidence rises to High at a verified pharmacy near me.' },
+  { key: 'nearby', icon: MapPin, titleKey: 'alertNearbyTitle', descKey: 'alertNearbyDesc', title: 'Nearby availability updates', desc: 'Notify me when a verified pharmacy within my range refreshes its availability signals.' },
+  { key: 'confidenceChange', icon: Bell, titleKey: 'alertConfidenceChangeTitle', descKey: 'alertConfidenceChangeDesc', title: 'Confidence changes', desc: 'Notify me when availability moves between High, Moderate, and Low.' },
+  { key: 'shortage', icon: Radar, titleKey: 'alertShortageTitle', descKey: 'alertShortageDesc', title: 'Shortage signals (ZoikoSignal™)', desc: 'Aggregated, anonymized alerts when regional shortage pressure may affect a saved medicine.' },
 ]
 
 const DEFAULTS = { backToHigh: true, nearby: true, confidenceChange: false, shortage: true }
 
 export default function UserAlerts() {
+  const { t } = useLanguage()
   const [flashMsg, flash] = useFlash()
   const [alerts, setAlerts] = useState(DEFAULTS)
   const [loading, setLoading] = useState(true)
@@ -26,7 +28,7 @@ export default function UserAlerts() {
     let alive = true
     getAlertPreferences()
       .then((prefs) => alive && setAlerts(prefs))
-      .catch((err) => alive && flash(err.message || 'Could not load alert preferences'))
+      .catch((err) => alive && flash(err.message || t('alertPrefsLoadFailed', 'Could not load alert preferences')))
       .finally(() => alive && setLoading(false))
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -40,7 +42,7 @@ export default function UserAlerts() {
       await updateAlertPreferences({ [key]: next })
     } catch (err) {
       setAlerts((prev) => ({ ...prev, [key]: !next }))
-      flash(err.message || 'Could not update preference')
+      flash(err.message || t('prefUpdateFailed', 'Could not update preference'))
     }
   }
 
@@ -48,9 +50,9 @@ export default function UserAlerts() {
     setSaving(true)
     try {
       await updateAlertPreferences(alerts)
-      flash('Alert preferences saved')
+      flash(t('alertPrefsSaved', 'Alert preferences saved'))
     } catch (err) {
-      flash(err.message || 'Could not save preferences')
+      flash(err.message || t('alertPrefsSaveFailed', 'Could not save preferences'))
     } finally {
       setSaving(false)
     }
@@ -59,8 +61,8 @@ export default function UserAlerts() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Medicine availability alerts"
-        subtitle="Choose when ZoikoMeds should notify you about changes in availability confidence."
+        title={t('medicineAvailabilityAlerts', 'Medicine availability alerts')}
+        subtitle={t('alertsPageSubtitle', 'Choose when ZoikoMeds should notify you about changes in availability confidence.')}
       />
 
       {flashMsg && <Flash message={flashMsg} className="max-w-2xl" />}
@@ -93,14 +95,14 @@ export default function UserAlerts() {
                         <Icon className="size-4" />
                       </span>
                       <div className="flex flex-col gap-0.5">
-                        <span className="text-sm font-semibold text-foreground">{opt.title}</span>
-                        <span className="max-w-sm text-xs leading-relaxed text-muted-foreground">{opt.desc}</span>
+                        <span className="text-sm font-semibold text-foreground">{t(opt.titleKey, opt.title)}</span>
+                        <span className="max-w-sm text-xs leading-relaxed text-muted-foreground">{t(opt.descKey, opt.desc)}</span>
                       </div>
                     </div>
                     <Switch
                       checked={!!alerts[opt.key]}
                       onCheckedChange={() => toggle(opt.key)}
-                      aria-label={opt.title}
+                      aria-label={t(opt.titleKey, opt.title)}
                     />
                   </div>
                 )

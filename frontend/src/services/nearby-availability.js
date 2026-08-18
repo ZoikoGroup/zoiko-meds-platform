@@ -14,6 +14,7 @@
 // Availability is always a confidence signal, never exact stock, per the
 // ZoikoMeds governance model.
 import { searchMedicines } from './user-api'
+import { toSearchQuery } from '@/lib/inn'
 
 // status ∈ available | limited | unconfirmed | unavailable
 const STATUS_RANK = { available: 0, limited: 1, unconfirmed: 2, unavailable: 3 }
@@ -98,7 +99,17 @@ function mapInternet(internet) {
 export async function searchNearbyAvailability({ q, maxDistanceKm, lat, lng, city }) {
   let data
   try {
-    data = await searchMedicines({ q, maxDistance: maxDistanceKm, lat, lng, city })
+    // A query typed in Arabic or Chinese is resolved to its INN first; the
+    // catalog is stored in Latin script, so otherwise it could never match.
+    // Latin input passes through untouched — MediBase's own variant expansion
+    // and brand-name matching already cover it and see more of the catalog.
+    data = await searchMedicines({
+      q: toSearchQuery(q),
+      maxDistance: maxDistanceKm,
+      lat,
+      lng,
+      city,
+    })
   } catch {
     // No session, or the API is unreachable. Report nothing rather than
     // showing pharmacies that were never confirmed to hold this medicine.
