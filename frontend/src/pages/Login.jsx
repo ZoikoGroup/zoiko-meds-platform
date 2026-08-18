@@ -14,6 +14,7 @@ import {
   Terminal,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
+import { consumeSessionExpired } from '@/lib/api-client'
 import { portalHome } from '@/lib/roles'
 import { AuthLayout } from '@/layouts/auth-layout'
 import { Button } from '@/components/ui/button'
@@ -37,11 +38,19 @@ export default function Login() {
 
   // Feedback states
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(
-    searchParams.get('error') === 'oauth'
-      ? 'Social sign-in could not be completed. Please try again or use your email and password.'
-      : ''
-  )
+  // Read once on mount, and only in the initializer: consuming the flag clears
+  // it, so re-running this on every render would swallow the reason.
+  const [error, setError] = useState(() => {
+    if (searchParams.get('error') === 'oauth') {
+      return 'Social sign-in could not be completed. Please try again or use your email and password.'
+    }
+    // Arrived here mid-action because the token expired, rather than by
+    // signing out — say so, or the redirect looks like the app losing work.
+    if (consumeSessionExpired()) {
+      return 'Your session expired, so you were signed out. Please sign in again to continue.'
+    }
+    return ''
+  })
 
   // Handle Form Submission
   const handleSubmit = async (e) => {

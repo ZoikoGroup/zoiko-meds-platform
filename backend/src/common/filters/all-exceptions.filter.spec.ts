@@ -1,4 +1,10 @@
-import { ArgumentsHost, BadRequestException, HttpStatus } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  BadRequestException,
+  HttpStatus,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AppLogger } from '../logger/app-logger.service';
 import { AllExceptionsFilter } from './all-exceptions.filter';
@@ -95,6 +101,47 @@ describe('AllExceptionsFilter', () => {
 
       expect(status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
       expect(body().message).toBe('Internal server error');
+    });
+  });
+
+  describe('the envelope names the status it actually carries (MP-18)', () => {
+    it('reports a rejected token as Unauthorized, not Internal Server Error', () => {
+      // Passport throws UnauthorizedException with no `error` of its own, so the
+      // envelope used to label a dead session "Internal Server Error" — which is
+      // what made an expired token look like a server crash.
+      const { host, status, body } = hostFor('POST', '/api/auth/change-password');
+
+      filter.catch(new UnauthorizedException(), host);
+
+      expect(status).toHaveBeenCalledWith(HttpStatus.UNAUTHORIZED);
+      expect(body().error).toBe('Unauthorized');
+      expect(body().statusCode).toBe(401);
+    });
+
+    it('derives the name for other statuses the same way', () => {
+      const { host, body } = hostFor('GET', '/api/medicines/nope');
+
+      filter.catch(new NotFoundException(), host);
+
+      expect(body().error).toBe('Not Found');
+    });
+
+    it('still prefers an error the exception named itself', () => {
+      // Nest's validation pipe supplies error: 'Bad Request' explicitly.
+      const { host, body } = hostFor();
+
+      filter.catch(new BadRequestException({ message: ['too short'], error: 'Bad Request' }), host);
+
+      expect(body().error).toBe('Bad Request');
+      expect(body().message).toEqual(['too short']);
+    });
+
+    it('keeps Internal Server Error for a genuine fault', () => {
+      const { host, body } = hostFor();
+
+      filter.catch(new Error('boom'), host);
+
+      expect(body().error).toBe('Internal Server Error');
     });
   });
 

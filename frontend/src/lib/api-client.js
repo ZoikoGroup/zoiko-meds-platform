@@ -42,9 +42,33 @@ export function setUnauthorizedHandler(fn) {
   unauthorizedHandler = fn
 }
 
+// Survives the logout and the redirect that follows it, so the login screen can
+// say why the user is looking at it. Without this the session simply ends
+// mid-action and the sign-in form appears with no explanation.
+const SESSION_EXPIRED_KEY = 'zoiko-session-expired'
+
+function markSessionExpired() {
+  try {
+    sessionStorage.setItem(SESSION_EXPIRED_KEY, '1')
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+/** True once, for the login screen: reading it clears the flag. */
+export function consumeSessionExpired() {
+  try {
+    const expired = sessionStorage.getItem(SESSION_EXPIRED_KEY) === '1'
+    if (expired) sessionStorage.removeItem(SESSION_EXPIRED_KEY)
+    return expired
+  } catch {
+    return false
+  }
+}
+
 export async function apiFetch(
   path,
-  { method = 'GET', body, auth = true, headers = {}, skipUnauthorizedHandler = false } = {}
+  { method = 'GET', body, auth = true, headers = {} } = {}
 ) {
   const finalHeaders = { ...headers }
   if (body !== undefined) finalHeaders['Content-Type'] = 'application/json'
@@ -79,8 +103,17 @@ export async function apiFetch(
     // An authenticated request rejected with 401 means the session is no
     // longer valid — trigger a logout. (Login/register use auth:false, so a
     // bad-credentials 401 there does not fire this.)
-    if (res.status === 401 && auth && token && unauthorizedHandler && !skipUnauthorizedHandler) {
-      unauthorizedHandler()
+    //
+    // Every authenticated route goes through here: a 401 from one of them is
+    // always a dead session, never a rejected input. An endpoint that means
+    // "these credentials are wrong" says so with 400, so nothing needs to opt
+    // out of this — an opt-out only turns an expired session into a mystery.
+    if (res.status === 401 && auth && token) {
+      markSessionExpired()
+      if (unauthorizedHandler) unauthorizedHandler()
+      // Passport answers a rejected token with the bare word "Unauthorized",
+      // which tells the person in front of the screen nothing at all.
+      throw new Error('Your session has expired. Please sign in again.')
     }
     // Nest validation errors arrive as { message: string[] }.
     const raw = (data && data.message) || res.statusText || 'Request failed'

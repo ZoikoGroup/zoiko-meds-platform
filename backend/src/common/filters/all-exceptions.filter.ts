@@ -31,6 +31,25 @@ const SCHEMA_DRIFT_MESSAGE =
   'not a fault in the request.';
 
 /**
+ * The name of a status code, as the envelope's `error` field.
+ *
+ * Derived rather than defaulted: the field used to fall back to "Internal Server
+ * Error" whenever the thrown exception carried no `error` of its own, which is the
+ * case for everything Passport raises. A rejected token was therefore reported as
+ * `{"statusCode":401,"error":"Internal Server Error","message":"Unauthorized"}` —
+ * an expired session dressed as a crash (MP-18).
+ */
+function reasonPhrase(status: number): string {
+  const name = (HttpStatus as unknown as Record<number, string | undefined>)[status];
+  if (!name) return 'Error';
+  return name
+    .toLowerCase()
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
  * Catch-all exception filter producing a single, sanitized error envelope for
  * every failure. Client (4xx) messages are passed through; server (5xx) errors
  * are logged with their stack but return a generic message so internal details
@@ -67,10 +86,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     // Extract a client-safe message for HttpExceptions; hide everything else.
     let message: string | string[] = 'Internal server error';
-    let error = 'Internal Server Error';
+    let error = reasonPhrase(status);
     if (isSchemaDrift) {
       message = SCHEMA_DRIFT_MESSAGE;
-      error = 'Service Unavailable';
     }
     if (isHttp) {
       const body = exception.getResponse();
@@ -79,6 +97,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else if (body && typeof body === 'object') {
         const b = body as { message?: string | string[]; error?: string };
         message = b.message ?? exception.message;
+        // Only when the exception names one; otherwise keep the status's own name.
         error = b.error ?? error;
       }
     }
