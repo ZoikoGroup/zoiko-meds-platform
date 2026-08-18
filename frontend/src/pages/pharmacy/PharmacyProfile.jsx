@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,8 @@ import {
   removePharmacyLogo,
 } from '@/services/pharmacy-api'
 import { apiBaseUrl } from '@/lib/api-client'
+import { PhoneInput } from '@/components/ui/phone-input'
+import { phoneValidationError } from '@/lib/phone'
 import { CLASSIFICATION_META } from '@/lib/commercial'
 import {
   Building2,
@@ -153,6 +155,11 @@ export default function PharmacyProfile() {
   const [saving, setSaving] = useState(false)
   const [flashMsg, flash] = useFlash()
 
+  // Which country a local number is read against. Follows the pharmacy's own
+  // country once the profile loads, since that is the number's country too.
+  const [phoneCountry, setPhoneCountry] = useState('IN')
+  const [phoneTouched, setPhoneTouched] = useState(false)
+
   // Logo upload. Kept apart from saveError so a rejected image does not read as
   // a failure to save the profile fields, which are a separate request.
   const fileInputRef = useRef(null)
@@ -175,6 +182,14 @@ export default function PharmacyProfile() {
     }
   }, [])
 
+  // Adopt the pharmacy's own country for the phone field. Only while the operator
+  // has not chosen one themselves, so a deliberate pick is not overwritten by the
+  // next background refresh of the profile.
+  useEffect(() => {
+    const saved = profile?.country?.trim()?.toUpperCase()
+    if (saved && /^[A-Z]{2}$/.test(saved)) setPhoneCountry((current) => current === 'IN' && saved !== 'IN' ? saved : current)
+  }, [profile?.country])
+
   useEffect(() => {
     loadProfile()
 
@@ -188,6 +203,16 @@ export default function PharmacyProfile() {
   }, [loadProfile])
 
   const set = (key) => (value) => setProfile((p) => ({ ...p, [key]: value }))
+
+  // The same rules the API applies, so a number is refused here rather than by a
+  // save that appears to work until the response comes back (MP-23).
+  const phoneError = useMemo(
+    () => {
+      const error = phoneValidationError(profile?.phone, phoneCountry)
+      return error ? error.message : ''
+    },
+    [profile?.phone, phoneCountry],
+  )
 
   /**
    * Upload the chosen file, then adopt the URL the server returns.
@@ -244,6 +269,13 @@ export default function PharmacyProfile() {
     e.preventDefault()
     if (!profile.name?.trim() || !profile.licenseNumber?.trim()) {
       setSaveError('Pharmacy name and licence number are required.')
+      return
+    }
+    if (phoneError) {
+      // Reveal the field's own message too, rather than only the summary at the
+      // top: the operator needs to see which field is being complained about.
+      setPhoneTouched(true)
+      setSaveError(phoneError)
       return
     }
     setSaving(true)
@@ -439,7 +471,29 @@ export default function PharmacyProfile() {
             <CardDescription>Email is taken from your ZoikoMeds account.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
-            <Field id="p-phone" label="Phone" value={profile.phone} onChange={set('phone')} placeholder="e.g. +91 40 2345 6789" />
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="p-phone">Phone</Label>
+              <PhoneInput
+                id="p-phone"
+                value={profile.phone ?? ''}
+                countryProp={phoneCountry}
+                onChange={set('phone')}
+                onCountryChange={setPhoneCountry}
+                onBlur={() => setPhoneTouched(true)}
+                error={Boolean(phoneTouched && phoneError)}
+                aria-invalid={phoneTouched && phoneError ? 'true' : undefined}
+                aria-describedby={phoneTouched && phoneError ? 'p-phone-error' : undefined}
+              />
+              {phoneTouched && phoneError ? (
+                <span id="p-phone-error" role="alert" className="text-[11px] font-medium text-danger">
+                  {phoneError}
+                </span>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">
+                  Patients and the ZoikoMeds team use this to reach your pharmacy.
+                </span>
+              )}
+            </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="p-email">Email</Label>
               <Input id="p-email" value={profile.email ?? ''} readOnly disabled />

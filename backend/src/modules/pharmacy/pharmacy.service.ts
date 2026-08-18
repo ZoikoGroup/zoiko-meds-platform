@@ -12,6 +12,7 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { resolveCountryAlpha2 } from '../../common/countries';
+import { normalizePhone } from '../../common/phone';
 import { logoUrlFor } from './logo/pharmacy-logo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
@@ -50,6 +51,26 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
  * value is refused at the edge instead of becoming a purchase that fails much
  * later with a message about markets.
  */
+function normalizePhoneInput(
+  phone: string | null | undefined,
+  country: string | null | undefined,
+): string | null {
+  const typed = phone?.trim();
+  if (!typed) return null;
+
+  const normalized = normalizePhone(typed, country);
+  if (!normalized) {
+    throw new BadRequestException(
+      country
+        ? `"${typed}" is not a valid phone number for ${country}. Include the area code, or write it ` +
+          'in international form such as +91 40 2345 6789.'
+        : `"${typed}" is not a valid phone number. Write it in international form, such as ` +
+          '+91 40 2345 6789, or set your country first so a local number can be understood.',
+    );
+  }
+  return normalized;
+}
+
 function normalizeCountryInput(country?: string | null): string | null {
   const typed = country?.trim();
   if (!typed) return null;
@@ -244,17 +265,22 @@ export class PharmacyService {
       );
     }
 
+    // Resolved once, before the write: the phone number is interpreted in this
+    // country, so a national-format number and the country it belongs to have to
+    // be settled together.
+    const submittedCountry = normalizeCountryInput(dto.country);
+
     const created = await this.prisma.$transaction(async (tx) => {
       const pharmacy = await tx.pharmacy.create({
         data: {
           name,
           licenseNumber,
-          phone: dto.phone?.trim() || null,
+          phone: normalizePhoneInput(dto.phone, submittedCountry),
           addressLine1: dto.addressLine1?.trim() || null,
           addressLine2: dto.addressLine2?.trim() || null,
           city: dto.city?.trim() || null,
           region: dto.region?.trim() || null,
-          country: normalizeCountryInput(dto.country),
+          country: submittedCountry,
           postalCode: dto.postalCode?.trim() || null,
           // Awaiting review — a self-declared pharmacy is never trusted on
           // submit, so it stays out of public results until an admin approves.
@@ -339,17 +365,28 @@ export class PharmacyService {
     const existing = await this.prisma.pharmacy.findUnique({ where: { id: pharmacyId } });
     if (!existing) throw new NotFoundException('Pharmacy not found');
 
+    // The country this edit leaves the record in, which is the one a national-format
+    // phone number is read against. Taking it from `existing` alone would reject a
+    // valid number whenever the country is being corrected in the same save.
+    const country =
+      dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country;
+
+    // Only re-validated when the field was actually submitted. A stored number that
+    // predates this validation must not block an edit to the address, and it is
+    // normalized the moment the operator next touches the phone field.
+    const phone = dto.phone !== undefined ? normalizePhoneInput(dto.phone, country) : existing.phone;
+
     const updated = await this.prisma.pharmacy.update({
       where: { id: pharmacyId },
       data: {
         name: dto.name !== undefined ? dto.name : existing.name,
         licenseNumber: dto.licenseNumber !== undefined ? dto.licenseNumber : existing.licenseNumber,
-        phone: dto.phone !== undefined ? dto.phone : existing.phone,
+        phone,
         addressLine1: dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
         addressLine2: dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
         city: dto.city !== undefined ? dto.city : existing.city,
         region: dto.region !== undefined ? dto.region : existing.region,
-        country: dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country,
+        country,
         postalCode: dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
         updatedAt: new Date(),
       },

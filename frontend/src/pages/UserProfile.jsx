@@ -11,8 +11,8 @@ import { Flash, useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
 import { useLanguage } from '@/providers/language-provider'
 import { User, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react'
-import { PhoneInput, COUNTRY_MIN_DIGITS, COUNTRY_MAX_DIGITS } from '@/components/ui/phone-input'
-import { isValidPhoneNumber, isPossiblePhoneNumber, getCountryCallingCode } from 'react-phone-number-input'
+import { PhoneInput } from '@/components/ui/phone-input'
+import { phoneValidationError } from '@/lib/phone'
 
 export default function UserProfile() {
   const { user, logout, updateProfile, changePassword } = useAuth()
@@ -45,69 +45,11 @@ export default function UserProfile() {
   const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
   const isPasswordFormInvalid = !pwd.current || !pwd.next || !pwd.confirm || pwd.next !== pwd.confirm || pwd.next.length < 8
 
-  // Calculate country-specific phone number validity
+  // Country-specific validity, from the shared rules. Translated here, because
+  // this is the one screen with translations.
   const phoneError = useMemo(() => {
-    const rawPhone = form.phone
-    if (!rawPhone || !rawPhone.trim() || rawPhone.trim() === '+') {
-      return ''
-    }
-
-    const trimmed = rawPhone.trim()
-    const digitsOnly = trimmed.replace(/\D/g, '')
-
-    if (!digitsOnly) {
-      return t('validPhone', 'Please enter a valid phone number.')
-    }
-
-    let dialCodeDigits = '91'
-    try {
-      dialCodeDigits = getCountryCallingCode(phoneCountry)
-    } catch {
-      dialCodeDigits = '91'
-    }
-
-    let localDigits = digitsOnly
-    if (digitsOnly.startsWith(dialCodeDigits)) {
-      localDigits = digitsOnly.slice(dialCodeDigits.length)
-    }
-
-    if (!localDigits) {
-      return ''
-    }
-
-    const minAllowed = COUNTRY_MIN_DIGITS[phoneCountry] || 7
-    const maxAllowed = COUNTRY_MAX_DIGITS[phoneCountry] || 15
-
-    if (phoneCountry === 'IN') {
-      if (!/^[6-9]/.test(localDigits)) {
-        return t('validIndianMobile', 'Please enter a valid Indian mobile number.')
-      }
-      if (localDigits.length < 10) {
-        return t('phoneTooShort', 'Phone number is too short.')
-      }
-      if (localDigits.length > 10) {
-        return t('phoneTooLong', 'Phone number is too long.')
-      }
-      return ''
-    }
-
-    if (localDigits.length < minAllowed) {
-      return t('phoneTooShort', 'Phone number is too short.')
-    }
-    if (localDigits.length > maxAllowed) {
-      return t('phoneTooLong', 'Phone number is too long.')
-    }
-
-    const isValid =
-      isValidPhoneNumber(trimmed, phoneCountry) ||
-      isPossiblePhoneNumber(trimmed, phoneCountry) ||
-      (phoneCountry === 'US' && localDigits.length === 10)
-
-    if (!isValid) {
-      return t('invalidPhoneCountry', 'Invalid phone number for the selected country.')
-    }
-
-    return ''
+    const error = phoneValidationError(form.phone, phoneCountry)
+    return error ? t(error.key, error.message) : ''
   }, [form.phone, phoneCountry, t])
 
   const saveProfile = async (e) => {

@@ -4,6 +4,11 @@ import { ChevronDown, Search, Check } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+// The length tables belong with the validation rules that read them. Re-exported
+// here so the pages already importing them from this component keep working.
+import { COUNTRY_MAX_DIGITS, COUNTRY_MIN_DIGITS } from '@/lib/phone'
+
+export { COUNTRY_MAX_DIGITS, COUNTRY_MIN_DIGITS }
 
 /** Convert ISO2 country code (e.g., 'IN') to Flag Emoji (🇮🇳). */
 export function getCountryEmoji(countryCode) {
@@ -75,52 +80,6 @@ const PRIORITY_COUNTRIES = [
   'LK', // Sri Lanka (+94)
   'ID', // Indonesia (+62)
 ]
-
-export const COUNTRY_MAX_DIGITS = {
-  IN: 10,
-  US: 10,
-  CA: 10,
-  GB: 11,
-  AU: 10,
-  AE: 9,
-  SG: 8,
-  MY: 10,
-  SA: 9,
-  DE: 11,
-  FR: 9,
-  JP: 10,
-  CN: 11,
-  BR: 11,
-  MX: 10,
-  PK: 10,
-  BD: 10,
-  LK: 9,
-  ID: 11,
-  NZ: 10,
-}
-
-export const COUNTRY_MIN_DIGITS = {
-  IN: 10,
-  US: 10,
-  CA: 10,
-  GB: 10,
-  AU: 9,
-  AE: 8,
-  SG: 8,
-  MY: 9,
-  SA: 9,
-  DE: 10,
-  FR: 9,
-  JP: 10,
-  CN: 11,
-  BR: 10,
-  MX: 10,
-  PK: 10,
-  BD: 10,
-  LK: 9,
-  ID: 9,
-  NZ: 8,
-}
 
 export function PhoneInput({
   value = '',

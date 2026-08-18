@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdatePharmacyProfileDto {
   @ApiPropertyOptional({ example: 'Apollo Pharmacy' })
@@ -12,9 +12,19 @@ export class UpdatePharmacyProfileDto {
   @IsString()
   licenseNumber?: string;
 
-  @ApiPropertyOptional({ example: '+91 40 2345 6789' })
+  /**
+   * Local or international form, both accepted: it is read against the pharmacy's
+   * country and stored in E.164. A number that is not valid for that country is
+   * rejected rather than saved, because a number nobody can ring still looks like
+   * a way to reach the pharmacy.
+   */
+  @ApiPropertyOptional({
+    example: '+91 40 2345 6789',
+    description: 'Local or international form. Stored as E.164.',
+  })
   @IsOptional()
   @IsString()
+  @MaxLength(32)
   phone?: string;
 
   @ApiPropertyOptional({ example: 'Kompally Main Rd' })

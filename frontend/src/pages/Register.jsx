@@ -22,8 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { OAuthButtons } from '@/components/shared/oauth-buttons'
-import { PhoneInput, COUNTRY_MIN_DIGITS, COUNTRY_MAX_DIGITS } from '@/components/ui/phone-input'
-import { isValidPhoneNumber, isPossiblePhoneNumber, getCountryCallingCode } from 'react-phone-number-input'
+import { PhoneInput } from '@/components/ui/phone-input'
+import { phoneErrorMessage } from '@/lib/phone'
 
 export default function Register() {
   const { register } = useAuth()
@@ -68,69 +68,11 @@ export default function Register() {
   }, [password])
 
   // Calculate country-specific phone number validity
-  const phoneError = useMemo(() => {
-    if (!phone || !phone.trim() || phone.trim() === '+') {
-      return ''
-    }
-
-    const trimmed = phone.trim()
-    const digitsOnly = trimmed.replace(/\D/g, '')
-
-    // Extract country dial code digits
-    let dialCodeDigits = '91'
-    try {
-      dialCodeDigits = getCountryCallingCode(phoneCountry)
-    } catch {
-      dialCodeDigits = '91'
-    }
-
-    // Isolate local subscriber number digits
-    let localDigits = digitsOnly
-    if (digitsOnly.startsWith(dialCodeDigits)) {
-      localDigits = digitsOnly.slice(dialCodeDigits.length)
-    }
-
-    if (!localDigits) {
-      return ''
-    }
-
-    const minAllowed = COUNTRY_MIN_DIGITS[phoneCountry] || 7
-    const maxAllowed = COUNTRY_MAX_DIGITS[phoneCountry] || 15
-
-    // --- INDIAN PHONE NUMBER RULES (+91) ---
-    if (phoneCountry === 'IN') {
-      // Must start with 6, 7, 8, or 9
-      if (!/^[6-9]/.test(localDigits)) {
-        return 'Please enter a valid Indian mobile number.'
-      }
-      if (localDigits.length < 10) {
-        return 'Phone number is too short.'
-      }
-      if (localDigits.length > 10) {
-        return 'Phone number is too long.'
-      }
-      return ''
-    }
-
-    // --- OTHER COUNTRIES RULES ---
-    if (localDigits.length < minAllowed) {
-      return 'Phone number is too short.'
-    }
-    if (localDigits.length > maxAllowed) {
-      return 'Phone number is too long.'
-    }
-
-    const isValid =
-      isValidPhoneNumber(trimmed, phoneCountry) ||
-      isPossiblePhoneNumber(trimmed, phoneCountry) ||
-      (phoneCountry === 'US' && localDigits.length === 10)
-
-    if (!isValid) {
-      return 'Invalid phone number for the selected country.'
-    }
-
-    return ''
-  }, [phone, phoneCountry])
+  // Country-specific validity, from the shared rules in @/lib/phone.
+  const phoneError = useMemo(
+    () => phoneErrorMessage(form.phone, phoneCountry),
+    [form.phone, phoneCountry],
+  )
 
   // Handle Form Submission
   const handleSubmit = async (e) => {

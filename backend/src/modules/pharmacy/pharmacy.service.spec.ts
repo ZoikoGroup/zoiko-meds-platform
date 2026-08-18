@@ -273,6 +273,109 @@ describe('PharmacyService self-service profile onboarding', () => {
     });
   });
 
+  describe('phone numbers are validated and stored in one form (MP-23)', () => {
+    const linked = { ...USER, pharmacyId: 'ph_1' };
+
+    const seed = (over: Record<string, unknown> = {}) => {
+      const row = {
+        id: 'ph_1',
+        name: 'Apollo',
+        licenseNumber: 'LIC-1',
+        verificationStatus: 'VERIFIED',
+        isParticipating: true,
+        phone: null,
+        addressLine1: null,
+        addressLine2: null,
+        city: null,
+        region: null,
+        country: 'IN',
+        postalCode: null,
+        reliabilityScore: 0.9,
+        ...over,
+      };
+      prisma.pharmacy.findUnique.mockResolvedValue(row);
+      prisma.pharmacy.update.mockResolvedValue(row);
+      return row;
+    };
+
+    const savedPhone = () =>
+      prisma.pharmacy.update.mock.calls.at(-1)?.[0]?.data?.phone;
+
+    it('stores a local number in international form', async () => {
+      seed();
+
+      await service.saveMyProfile(linked, { phone: '040 2345 6789' });
+
+      expect(savedPhone()).toBe('+914023456789');
+    });
+
+    it('reads the number against the country being saved, not the stored one', async () => {
+      // Correcting the country and the number together has to work: validating
+      // against the old country would reject the new number.
+      seed({ country: 'IN' });
+
+      await service.saveMyProfile(linked, { country: 'United States', phone: '(415) 555-2671' });
+
+      expect(savedPhone()).toBe('+14155552671');
+    });
+
+    it('refuses a number that is not real for the country', async () => {
+      seed();
+
+      await expect(service.saveMyProfile(linked, { phone: '12345' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.pharmacy.update).not.toHaveBeenCalled();
+    });
+
+    it('says what was typed and how to write it instead', async () => {
+      seed();
+
+      await expect(service.saveMyProfile(linked, { phone: 'call the shop' })).rejects.toThrow(
+        /"call the shop" is not a valid phone number for IN.*international form/s,
+      );
+    });
+
+    it('clears the number when the field is emptied', async () => {
+      seed({ phone: '+914023456789' });
+
+      await service.saveMyProfile(linked, { phone: '' });
+
+      expect(savedPhone()).toBeNull();
+    });
+
+    it('leaves a stored number alone when the edit does not mention it', async () => {
+      // A number saved before this validation existed must not block an edit to
+      // the address. It is normalized the next time the field itself is touched.
+      seed({ phone: '040-2345-6789 ext 4' });
+
+      await service.saveMyProfile(linked, { city: 'Hyderabad' });
+
+      expect(savedPhone()).toBe('040-2345-6789 ext 4');
+    });
+
+    it('normalizes on first submit too', async () => {
+      prisma.user.findUnique.mockResolvedValue({ pharmacyId: null });
+      prisma.pharmacy.findUnique.mockResolvedValue(null);
+      prisma.pharmacy.create.mockResolvedValue({ id: 'ph_new', name: 'Apollo Kompally' });
+
+      await service
+        .saveMyProfile(USER, {
+          name: 'Apollo Kompally',
+          licenseNumber: 'LIC-9',
+          country: 'India',
+          phone: '9876543210',
+        })
+        .catch(() => undefined);
+
+      expect(prisma.pharmacy.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ phone: '+919876543210', country: 'IN' }),
+        }),
+      );
+    });
+  });
+
   describe('saveMyProfile — editing an existing pharmacy', () => {
     const linked = { ...USER, pharmacyId: 'ph_1' };
 
