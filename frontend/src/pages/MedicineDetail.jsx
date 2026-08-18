@@ -21,10 +21,10 @@ import { useLanguage } from '@/providers/language-provider'
 
 // Governance-approved FAQ (no clinical advice, dosing, or substitution guidance).
 const FAQS = [
-  { q: 'Does availability mean the medicine is in stock?', a: 'No. ZoikoMeds shows a governed confidence signal from verified pharmacies — not exact stock. Always confirm with the pharmacy before visiting.' },
-  { q: 'Can I reserve or buy this medicine here?', a: 'No. ZoikoMeds is not a pharmacy, marketplace, or delivery service. We only help you understand where a medicine may be available.' },
-  { q: 'Why do pharmacies show different confidence levels?', a: 'Confidence reflects how recent and reliable each pharmacy’s signal is. Fresher signals from highly reliable, verified pharmacies score higher.' },
-  { q: 'Is this medical advice?', a: 'No. ZoikoMeds does not provide medical advice, prescribing, or substitution guidance. Speak to a qualified healthcare professional for clinical questions.' },
+  { qKey: 'faqInStockQ', aKey: 'faqInStockA', q: 'Does availability mean the medicine is in stock?', a: 'No. ZoikoMeds shows a governed confidence signal from verified pharmacies — not exact stock. Always confirm with the pharmacy before visiting.' },
+  { qKey: 'faqReserveQ', aKey: 'faqReserveA', q: 'Can I reserve or buy this medicine here?', a: 'No. ZoikoMeds is not a pharmacy, marketplace, or delivery service. We only help you understand where a medicine may be available.' },
+  { qKey: 'faqLevelsQ', aKey: 'faqLevelsA', q: 'Why do pharmacies show different confidence levels?', a: 'Confidence reflects how recent and reliable each pharmacy’s signal is. Fresher signals from highly reliable, verified pharmacies score higher.' },
+  { qKey: 'faqAdviceQ', aKey: 'faqAdviceA', q: 'Is this medical advice?', a: 'No. ZoikoMeds does not provide medical advice, prescribing, or substitution guidance. Speak to a qualified healthcare professional for clinical questions.' },
 ]
 
 function InfoRow({ label, value }) {
@@ -32,7 +32,7 @@ function InfoRow({ label, value }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border py-2.5 last:border-0">
       <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="text-right text-sm font-semibold text-foreground">{value}</span>
+      <span className="text-end text-sm font-semibold text-foreground">{value}</span>
     </div>
   )
 }
@@ -106,26 +106,27 @@ export default function MedicineDetail() {
     if (isSaved) {
       try {
         await unsaveMutation.mutateAsync(id)
-        flash('Removed from your saved medicines.')
+        flash(t('savedRemoved', 'Removed from your saved medicines.'))
       } catch (err) {
-        flash(err?.message || 'Could not remove medicine from saved list.')
+        flash(err?.message || t('savedRemoveFailed', 'Could not remove medicine from saved list.'))
       }
     } else {
       try {
         await saveMutation.mutateAsync(id)
-        flash('Added to your saved medicines.')
+        flash(t('savedAdded', 'Added to your saved medicines.'))
       } catch (err) {
         const msg = err?.message ?? ''
         if (msg.includes('already')) {
-          flash('Already in your saved medicines.')
+          flash(t('savedAlready', 'Already in your saved medicines.'))
         } else if (msg.toLowerCase().includes('unauthorized') || msg.toLowerCase().includes('sign in')) {
-          flash('Please sign in to save medicines.')
+          flash(t('signInToSave', 'Please sign in to save medicines.'))
         } else {
-          flash(`Could not save medicine: ${msg || 'Unknown error'}`)
+          flash(t('saveFailedReason', 'Could not save medicine: {reason}', { reason: msg || t('unknownError', 'Unknown error') }))
         }
       }
     }
-  }, [id, isSaved, saving, saveMutation, unsaveMutation, flash])
+  }, [id, isSaved, saving, saveMutation, unsaveMutation, flash, t])
+
 
   if (loading) {
     return (
@@ -333,8 +334,8 @@ export default function MedicineDetail() {
         <div className="flex flex-col gap-2.5">
           {FAQS.map((f) => (
             <Card key={f.q} className="flex flex-col gap-1.5 p-5">
-              <span className="text-sm font-semibold text-foreground">{f.q}</span>
-              <span className="text-sm leading-relaxed text-muted-foreground">{f.a}</span>
+              <span className="text-sm font-semibold text-foreground">{t(f.qKey, f.q)}</span>
+              <span className="text-sm leading-relaxed text-muted-foreground">{t(f.aKey, f.a)}</span>
             </Card>
           ))}
         </div>

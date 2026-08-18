@@ -70,7 +70,9 @@ export function AppLayout() {
       {/* Desktop rail */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden border-r border-sidebar-border transition-[width] duration-300 ease-in-out lg:block',
+          // overflow-hidden keeps nav labels clipped to the rail mid-transition
+          // instead of spilling past it and nudging the page sideways.
+          'fixed inset-y-0 left-0 z-40 hidden overflow-hidden border-r border-sidebar-border transition-[width] duration-300 ease-in-out lg:block',
           collapsed ? 'lg:w-[4.5rem]' : 'lg:w-[17rem]'
         )}
       >

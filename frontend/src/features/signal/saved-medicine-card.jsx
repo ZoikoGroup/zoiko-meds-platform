@@ -6,8 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/shared/status'
 import { cn } from '@/lib/utils'
 import { STATUS_META, PRIORITY_META } from '@/features/signal/signal-meta'
+import { useLanguage } from '@/providers/language-provider'
 
 export function SavedMedicineCard({ med, index = 0, onQuickAction, onCyclePriority }) {
+  const { t } = useLanguage()
   const status = STATUS_META[med.status] ?? STATUS_META.available
   const prio = PRIORITY_META[med.priority] ?? PRIORITY_META.low
   const outOfStock = med.status === 'out-of-stock'
@@ -106,7 +108,7 @@ export function SavedMedicineCard({ med, index = 0, onQuickAction, onCyclePriori
         <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-3">
           <button
             onClick={() => onCyclePriority?.(med)}
-            title="Change priority"
+            title={t('changePriority', 'Change priority')}
             className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Badge variant={prio.variant} size="sm" className={cn('cursor-pointer', med.priority === 'high' && 'gap-1')}>

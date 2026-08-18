@@ -30,17 +30,22 @@ import { terminateOcrWorker } from './ocr-worker'
 import { useLanguage } from '@/providers/language-provider'
 
 function isAcceptedFile(file) {
-  if (file.size > MAX_BYTES) return { ok: false, reason: 'File is larger than 10 MB.' }
+  if (file.size > MAX_BYTES) {
+    return { ok: false, reasonKey: 'fileTooLarge', reason: 'File is larger than 10 MB.' }
+  }
   if (/\.(heic|heif)$/i.test(file.name) || /image\/hei[cf]/i.test(file.type)) {
     return {
       ok: false,
+      reasonKey: 'heicNotReadable',
       reason:
-        'HEIC photos cannot be read in the browser. Use "Take a photo" below, or re-save the image as JPG or PNG.',
+        'HEIC photos cannot be read in the browser. Use “Take a photo” below, or re-save the image as JPG or PNG.',
     }
   }
   const okType = /^(image\/(jpeg|png|webp)|application\/pdf)$/.test(file.type)
   const okExt = /\.(jpe?g|png|webp|pdf)$/i.test(file.name)
-  if (!okType && !okExt) return { ok: false, reason: 'Use a JPG, PNG, WebP, or PDF file.' }
+  if (!okType && !okExt) {
+    return { ok: false, reasonKey: 'unsupportedFileType', reason: 'Use a JPG, PNG, WebP, or PDF file.' }
+  }
   return { ok: true }
 }
 
@@ -107,7 +112,7 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     if (!file) return
     const check = isAcceptedFile(file)
     if (!check.ok) {
-      flash?.(check.reason)
+      flash?.(t(check.reasonKey, check.reason))
       return
     }
 
@@ -429,7 +434,7 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
               role="button"
               tabIndex={0}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), fileInput.current?.click())}
-              aria-label="Upload a prescription image"
+              aria-label={t('uploadPrescriptionImage', 'Upload a prescription image')}
               className={cn(
                 'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-colors',
                 dragActive ? 'border-teal bg-teal/[0.06]' : 'border-teal/40 bg-teal/[0.03] hover:border-teal/60',
@@ -494,13 +499,13 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
           {t('yourLocationForNearbySearch', 'Your location (for nearby search)')}
         </label>
         <div className="relative">
-          <MapPin className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <MapPin className="pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             id="scan-location"
             value={location}
             onChange={(e) => persistLocation(e.target.value)}
             placeholder={t('searchAreaPlaceholder', 'City, ZIP code, or postcode')}
-            className="h-11 rounded-xl pl-10"
+            className="h-11 rounded-xl ps-10"
           />
         </div>
         <button
@@ -519,7 +524,7 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
         <select
           value={distance}
           onChange={(e) => setDistance(Number(e.target.value))}
-          aria-label="Distance from me"
+          aria-label={t('distanceFromMe', 'Distance from me')}
           className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {DISTANCES_KM.map((d) => (

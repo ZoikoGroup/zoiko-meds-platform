@@ -230,7 +230,7 @@ export default function UserHome() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
     if (!SpeechRecognition) {
-      setVoiceError('Speech recognition is not supported in this browser. Please type your search.')
+      setVoiceError(t('voiceUnsupported', 'Speech recognition is not supported in this browser. Please type your search.'))
       setIsListening(true)
       return
     }
@@ -280,7 +280,7 @@ export default function UserHome() {
 
       recognition.onerror = (event) => {
         if (event.error !== 'no-speech') {
-          setVoiceError(`Voice error (${event.error}). Please try again or type medicine name.`)
+          setVoiceError(t('voiceErrorNamed', 'Voice error ({error}). Please try again or type medicine name.', { error: event.error }))
         }
       }
 
@@ -291,7 +291,7 @@ export default function UserHome() {
       recognition.start()
       setIsListening(true)
     } catch (_err) {
-      setVoiceError('Could not access microphone. Please check permissions or type medicine name.')
+      setVoiceError(t('microphoneAccessFailed', 'Could not access microphone. Please check permissions or type medicine name.'))
       setIsListening(true)
     }
   }
@@ -358,7 +358,7 @@ export default function UserHome() {
             </div>
             <DialogTitle className="text-lg font-bold">
               {voiceError
-                ? 'Voice Search Error'
+                ? t('voiceSearchError', 'Voice Search Error')
                 : voiceMode === 'review' && mediBaseMatch === false
                 ? 'Unrecognized Medicine'
                 : voiceMode === 'review'
@@ -369,8 +369,8 @@ export default function UserHome() {
               {voiceError
                 ? voiceError
                 : voiceMode === 'review'
-                ? 'Review or edit the captured medicine name before searching:'
-                : 'Say a medicine name clearly — e.g. "Paracetamol", "Azithromycin", or "Cetirizine"'}
+                ? t('reviewCapturedName', 'Review or edit the captured medicine name before searching:')
+                : t('sayMedicineClearly', 'Say a medicine name clearly — e.g. “Paracetamol”, “Azithromycin”, or “Cetirizine”')}
             </DialogDescription>
           </DialogHeader>
 
@@ -378,7 +378,7 @@ export default function UserHome() {
           {voiceMode === 'review' && !voiceError && (
             <div className="mt-3 flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
-                <label htmlFor="voice-edit-input" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground text-left">
+                <label htmlFor="voice-edit-input" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground text-start">
                   Edit Medicine Name
                 </label>
                 {checkingMediBase ? (
@@ -413,9 +413,9 @@ export default function UserHome() {
                       goSearch(val)
                     }
                   }}
-                  placeholder="Type or edit medicine name..."
+                  placeholder={t('typeOrEditMedicineName', 'Type or edit medicine name...')}
                   className={cn(
-                    "h-11 rounded-xl text-sm font-semibold pl-3.5 pr-10 border transition-colors",
+                    "h-11 rounded-xl text-sm font-semibold ps-3.5 pe-10 border transition-colors",
                     mediBaseMatch === false && voiceTranscript.trim()
                       ? "border-danger focus-visible:ring-danger/20 bg-danger/5"
                       : mediBaseMatch === true
@@ -423,12 +423,12 @@ export default function UserHome() {
                       : "border-primary/30 focus-visible:ring-primary/20"
                   )}
                 />
-                <Edit3 className="absolute right-3.5 size-4 text-muted-foreground pointer-events-none" />
+                <Edit3 className="absolute end-3.5 size-4 text-muted-foreground pointer-events-none" />
               </div>
 
               {/* Invalid Medicine Warning Banner */}
               {mediBaseMatch === false && !checkingMediBase && voiceTranscript.trim() && (
-                <div className="flex items-start gap-2 rounded-xl bg-danger/10 p-2.5 text-xs text-danger border border-danger/20 leading-snug text-left mt-1">
+                <div className="flex items-start gap-2 rounded-xl bg-danger/10 p-2.5 text-xs text-danger border border-danger/20 leading-snug text-start mt-1">
                   <AlertCircle className="size-4 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-bold">Invalid Medicine:</span> &ldquo;{voiceTranscript}&rdquo; is not listed in the MediBase™ catalog. Please check the spelling or brand name.
@@ -438,7 +438,7 @@ export default function UserHome() {
 
               {/* Valid Medicine Match Indicator */}
               {mediBaseMatch === true && matchedName && !checkingMediBase && (
-                <div className="flex items-center gap-1.5 text-xs text-success font-medium text-left px-1 mt-0.5">
+                <div className="flex items-center gap-1.5 text-xs text-success font-medium text-start px-1 mt-0.5">
                   <ShieldCheck className="size-3.5 text-teal shrink-0" />
                   <span>Found in MediBase™: <strong className="font-semibold">{matchedName}</strong></span>
                 </div>
@@ -519,7 +519,7 @@ export default function UserHome() {
               >
                 <MapPin className="size-3.5 text-primary" />
                 <span>{location}</span>
-                <span className="text-primary font-bold ml-1">Change</span>
+                <span className="text-primary font-bold ms-1">Change</span>
               </button>
             ) : (
               <button
@@ -545,7 +545,7 @@ export default function UserHome() {
           <div className="relative max-w-2xl">
             <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
               <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
+                <Search className="pointer-events-none absolute start-3.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={query}
                   onChange={(e) => { setQuery(e.target.value); setShowSuggestions(true) }}
@@ -553,18 +553,18 @@ export default function UserHome() {
                   onBlur={() => setShowSuggestions(false)}
                   onKeyDown={onHeroKeyDown}
                   placeholder={t('searchPlaceholder', 'Search by medicine, brand, or generic — e.g. Dolo 650')}
-                  aria-label="Search medicines"
+                  aria-label={t('searchMedicines', 'Search medicines')}
                   autoComplete="off"
                   role="combobox"
                   aria-expanded={showSuggestions && (suggLoading || suggestions.length > 0)}
                   aria-controls="home-medicine-suggestions"
-                  className="h-12 rounded-xl pl-11 pr-11 text-sm"
+                  className="h-12 rounded-xl ps-11 pe-11 text-sm"
                 />
                 <button
                   type="button"
                   onClick={triggerVoice}
-                  aria-label="Voice search"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-primary"
+                  aria-label={t('voiceSearch', 'Voice search')}
+                  className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-primary"
                 >
                   <Mic className="size-5" />
                 </button>
@@ -613,7 +613,7 @@ export default function UserHome() {
             <button
               key={a.title}
               onClick={() => navigate(a.to)}
-              className="group flex items-start gap-3.5 rounded-2xl border border-border bg-card p-5 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
+              className="group flex items-start gap-3.5 rounded-2xl border border-border bg-card p-5 text-start shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
             >
               <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', a.gradient)}>
                 <Icon className="size-5" />
@@ -651,7 +651,7 @@ export default function UserHome() {
             <button
               key={s.key}
               onClick={() => navigate(s.to)}
-              className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+              className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-start shadow-soft transition-shadow hover:shadow-card"
             >
               <span className="flex size-9 items-center justify-center rounded-xl bg-teal/10 text-teal">
                 <Icon className="size-4.5" />
@@ -685,7 +685,7 @@ export default function UserHome() {
               <button
                 key={c.med}
                 onClick={() => goSearch(c.med)}
-                className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
+                className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-start shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
               >
                 <span className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
                   <Icon className="size-5" />
@@ -740,7 +740,7 @@ export default function UserHome() {
         <div className="grid grid-cols-1 gap-5 md:grid-cols-12">
           <Card className="overflow-hidden p-0 md:col-span-8">
             <div className="relative h-[380px] w-full bg-slate-100 dark:bg-slate-900">
-              <svg className="size-full" viewBox="0 0 400 400" role="img" aria-label="Map of nearby verified pharmacies">
+              <svg className="size-full" viewBox="0 0 400 400" role="img" aria-label={t('mapOfNearbyPharmacies', 'Map of nearby verified pharmacies')}>
                 <path d="M0 200 H400 M200 0 V400" stroke="var(--border)" strokeWidth="8" strokeOpacity="0.5" strokeLinecap="round" />
                 <path d="M0 90 L400 300" stroke="var(--border)" strokeWidth="5" strokeOpacity="0.35" strokeLinecap="round" />
                 <g transform="translate(200 200)">
@@ -768,7 +768,7 @@ export default function UserHome() {
                   )
                 })}
               </svg>
-              <div className="absolute bottom-3 left-3 flex items-center gap-3 rounded-xl border border-border bg-card/90 px-3 py-2 text-xs backdrop-blur-sm">
+              <div className="absolute bottom-3 start-3 flex items-center gap-3 rounded-xl border border-border bg-card/90 px-3 py-2 text-xs backdrop-blur-sm">
                 <span className="font-semibold text-muted-foreground">{t('confidenceLabel', 'Confidence:')}</span>
                 {[[t('confidenceHigh', 'High'), 'var(--success)'], [t('confidenceModerate', 'Moderate'), 'var(--info)'], [t('confidenceLow', 'Low'), 'var(--warning)']].map(([l, c]) => (
                   <span key={l} className="flex items-center gap-1.5 text-muted-foreground">
@@ -879,7 +879,7 @@ export default function UserHome() {
               <button
                 key={r.term}
                 onClick={() => goSearch(r.term)}
-                className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+                className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-start shadow-soft transition-shadow hover:shadow-card"
               >
                 <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Search className="size-4 text-muted-foreground" />
