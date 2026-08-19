@@ -22,6 +22,7 @@ import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { ImportInventoryDto } from './dto/import-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
+import { ResolveMapLinkDto } from './dto/resolve-map-link.dto';
 
 @ApiTags('pharmacy')
 @Controller('pharmacies')
@@ -49,6 +50,21 @@ export class PharmacyController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.pharmacy.getMyProfile(user);
+  }
+
+  @Post('me/resolve-map-link')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Read coordinates out of a Google Maps share link',
+    description:
+      'For maps.app.goo.gl short links, which carry no coordinates until the ' +
+      'redirect is followed — something a browser cannot do cross-origin. ' +
+      'Reads only; saving the pair is still PATCH /pharmacies/me.',
+  })
+  resolveMapLink(@Body() dto: ResolveMapLinkDto) {
+    return this.pharmacy.resolveMapLink(dto.url);
   }
 
   @Patch('me')
