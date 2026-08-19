@@ -89,7 +89,7 @@ cd "$REPO_DIR/backend"
 # docker installed -- including a pm2 host -- and must not be the first test.
 if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
   log "Rebuilding and restarting the docker compose api service"
-  docker compose up -d --build api
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
   restarted="docker:api"
 elif command -v pm2 >/dev/null 2>&1 && pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
   log "Restarting pm2 process $PM2_NAME"
@@ -104,7 +104,7 @@ elif systemctl list-units --full --all 2>/dev/null | grep -q "${SYSTEMD_UNIT}.se
 elif docker compose ps --services 2>/dev/null | grep -qx api; then
   # Nothing has run here yet, but compose describes the service: first release.
   log "No existing process found; starting the compose api service for the first time"
-  docker compose up -d --build api
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
   restarted="docker:api"
 else
   # Falling through would leave the previous build serving while the job goes
