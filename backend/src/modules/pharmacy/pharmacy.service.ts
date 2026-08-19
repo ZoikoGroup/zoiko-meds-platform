@@ -21,6 +21,7 @@ import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { resolveMapLink } from './map-link';
 
 /**
  * Maps the pharmacy-facing status string to the AvailabilityConfidence enum
@@ -105,6 +106,17 @@ export class PharmacyService {
     return pharmacy;
   }
 
+  /**
+   * Coordinates behind a Google Maps share link.
+   *
+   * Read-only: it never touches the pharmacy record. The portal shows the pair
+   * for confirmation first, and saving it goes through the normal profile
+   * update, so a mis-pasted link cannot silently move a pharmacy.
+   */
+  async resolveMapLink(url: string) {
+    return resolveMapLink(url);
+  }
+
   async getProfile(pharmacyId: string, user?: AuthenticatedUser) {
     const pharmacy = await this.prisma.pharmacy.findUnique({
       where: { id: pharmacyId },
@@ -134,6 +146,10 @@ export class PharmacyService {
       region: pharmacy.region || '',
       country: pharmacy.country || '',
       postalCode: pharmacy.postalCode || '',
+      // Null until the operator sets a location; the portal renders the
+      // "not set yet" state from exactly that.
+      latitude: pharmacy.latitude,
+      longitude: pharmacy.longitude,
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
       // Commercial standing, so the portal can show the plan without a second
       // round trip. Deliberately not the price: what a pharmacy pays comes from
@@ -187,6 +203,8 @@ export class PharmacyService {
       region: '',
       country: '',
       postalCode: '',
+      latitude: null,
+      longitude: null,
       reliabilityScore: 0,
       // No pharmacy record exists yet, so there is nothing claimed either.
       commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
@@ -247,6 +265,10 @@ export class PharmacyService {
           region: dto.region?.trim() || null,
           country: normalizeCountryInput(dto.country),
           postalCode: dto.postalCode?.trim() || null,
+          // Without these the pharmacy is invisible to the distance-bounded
+          // patient search, however complete the rest of the profile is.
+          latitude: dto.latitude ?? null,
+          longitude: dto.longitude ?? null,
           // Awaiting review — a self-declared pharmacy is never trusted on
           // submit, so it stays out of public results until an admin approves.
           verificationStatus: VerificationStatus.PENDING,
@@ -330,18 +352,30 @@ export class PharmacyService {
     const existing = await this.prisma.pharmacy.findUnique({ where: { id: pharmacyId } });
     if (!existing) throw new NotFoundException('Pharmacy not found');
 
+    const name = dto.name !== undefined ? dto.name.trim() : undefined;
+    const licenseNumber = dto.licenseNumber !== undefined ? dto.licenseNumber.trim() : undefined;
+
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('Pharmacy name cannot be empty.');
+    }
+    if (dto.licenseNumber !== undefined && !licenseNumber) {
+      throw new BadRequestException('Licence number cannot be empty.');
+    }
+
     const updated = await this.prisma.pharmacy.update({
       where: { id: pharmacyId },
       data: {
-        name: dto.name !== undefined ? dto.name : existing.name,
-        licenseNumber: dto.licenseNumber !== undefined ? dto.licenseNumber : existing.licenseNumber,
-        phone: dto.phone !== undefined ? dto.phone : existing.phone,
-        addressLine1: dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
-        addressLine2: dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
-        city: dto.city !== undefined ? dto.city : existing.city,
-        region: dto.region !== undefined ? dto.region : existing.region,
+        name: name !== undefined ? name : existing.name,
+        licenseNumber: licenseNumber !== undefined ? licenseNumber : existing.licenseNumber,
+        phone: dto.phone !== undefined ? (dto.phone.trim() || null) : existing.phone,
+        addressLine1: dto.addressLine1 !== undefined ? (dto.addressLine1.trim() || null) : existing.addressLine1,
+        addressLine2: dto.addressLine2 !== undefined ? (dto.addressLine2.trim() || null) : existing.addressLine2,
+        city: dto.city !== undefined ? (dto.city.trim() || null) : existing.city,
+        region: dto.region !== undefined ? (dto.region.trim() || null) : existing.region,
         country: dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country,
-        postalCode: dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
+        postalCode: dto.postalCode !== undefined ? (dto.postalCode.trim() || null) : existing.postalCode,
+        latitude: dto.latitude !== undefined ? dto.latitude : existing.latitude,
+        longitude: dto.longitude !== undefined ? dto.longitude : existing.longitude,
         updatedAt: new Date(),
       },
     });

@@ -177,6 +177,8 @@ const toProfile = (row, email) => ({
   region: row.region || '',
   country: row.country || '',
   postalCode: row.postalCode || '',
+  latitude: row.latitude ?? null,
+  longitude: row.longitude ?? null,
   reliabilityScore: Math.round((row.reliabilityScore || 0) * 100),
   // Reviewer correspondence lives behind /pharmacies/me only.
   reviewStatus: null,
@@ -200,6 +202,8 @@ const emptyDraft = (email) => ({
   region: '',
   country: '',
   postalCode: '',
+  latitude: null,
+  longitude: null,
   reliabilityScore: 0,
   reviewStatus: null,
   reviewedBy: null,
@@ -244,7 +248,20 @@ export const getProfile = async () => {
 const EDITABLE_FIELDS = [
   'name', 'licenseNumber', 'phone',
   'addressLine1', 'addressLine2', 'city', 'region', 'country', 'postalCode',
+  // Set from a Google Maps link in the profile form. Without these the
+  // pharmacy cannot appear in the distance-bounded patient search.
+  'latitude', 'longitude',
 ]
+
+/**
+ * Coordinates behind a Google Maps share link (maps.app.goo.gl).
+ *
+ * Those links carry no coordinates until their redirect is followed, which the
+ * browser cannot do cross-origin. Read-only — saving still goes through
+ * updateProfile.
+ */
+export const resolveMapLink = (url) =>
+  apiFetch('/pharmacies/me/resolve-map-link', { method: 'POST', body: { url } })
 
 export const updateProfile = async (patch) => {
   const body = {}
