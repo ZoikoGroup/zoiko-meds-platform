@@ -22,6 +22,19 @@ export class CreatePharmacyDto {
   @MaxLength(120)
   licenseNumber?: string;
 
+  // The pharmacy's own street address. Coordinates are geocoded from all of it
+  // when the admin does not supply a pin: geocoding city + country alone
+  // returns the city centroid, which places every branch in town on one point.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  addressLine1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  addressLine2?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -30,7 +43,23 @@ export class CreatePharmacyDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  region?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  postalCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   country?: string;
+
+  // This branch's own contact number, shown on its patient-search card.
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  phone?: string;
 
   // 0..100 reliability/availability score shown in the console.
   @IsOptional()

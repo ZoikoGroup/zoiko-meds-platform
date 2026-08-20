@@ -21,6 +21,7 @@ import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { assertLocationIsFree } from './location-identity';
 import { resolveMapLink } from './map-link';
 
 /**
@@ -52,6 +53,31 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
  * value is refused at the edge instead of becoming a purchase that fails much
  * later with a message about markets.
  */
+/**
+ * A pharmacy's own contact number, or a refusal.
+ *
+ * Patient search offers one action on every pharmacy card — call before you
+ * travel — and it can only be the number of that exact branch. A pharmacy with
+ * no number reaches patients as a card they cannot act on, so the number is
+ * required rather than optional, and it is never defaulted or borrowed from
+ * anywhere.
+ *
+ * The check is deliberately shape-only: 7 to 15 digits, the E.164 range, with
+ * the punctuation people type left alone. Anything stricter would reject real
+ * numbers from countries nobody thought to test.
+ */
+function normalizePhoneInput(phone?: string | null): string {
+  const typed = (phone ?? '').trim();
+  const digits = typed.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) {
+    throw new BadRequestException(
+      'Enter the pharmacy\'s contact number, including its country or area code — ' +
+        'patients are shown this number to confirm availability before visiting.',
+    );
+  }
+  return typed;
+}
+
 function normalizeCountryInput(country?: string | null): string | null {
   const typed = country?.trim();
   if (!typed) return null;
@@ -253,12 +279,27 @@ export class PharmacyService {
       );
     }
 
+    // Patients are given this number to confirm before travelling, so a new
+    // pharmacy cannot be registered without one.
+    const phone = normalizePhoneInput(dto.phone);
+
+    // One physical pharmacy, one record. Checked before the insert, so the
+    // second registration of a shop is refused rather than created and merged
+    // later — by then both halves hold their own availability signals and there
+    // is no way to tell a patient which card is the real one.
+    if (dto.latitude != null && dto.longitude != null) {
+      await assertLocationIsFree(this.prisma, {
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+      });
+    }
+
     const created = await this.prisma.$transaction(async (tx) => {
       const pharmacy = await tx.pharmacy.create({
         data: {
           name,
           licenseNumber,
-          phone: dto.phone?.trim() || null,
+          phone,
           addressLine1: dto.addressLine1?.trim() || null,
           addressLine2: dto.addressLine2?.trim() || null,
           city: dto.city?.trim() || null,
@@ -362,12 +403,42 @@ export class PharmacyService {
       throw new BadRequestException('Licence number cannot be empty.');
     }
 
+    // The contact number is what a patient acts on, so it cannot be cleared,
+    // and a record that never had one has to supply it on the next save. Saves
+    // that do not touch the field on a pharmacy that already has a number are
+    // unaffected.
+    let phone = existing.phone;
+    if (dto.phone !== undefined) {
+      phone = normalizePhoneInput(dto.phone);
+    } else if (!existing.phone?.trim()) {
+      throw new BadRequestException(
+        'Add the pharmacy\'s contact number before saving — patients are shown this ' +
+          'number to confirm availability before visiting.',
+      );
+    }
+
+    // A profile edit can move the pin. Moving it onto another pharmacy's
+    // premises creates the same duplicate a second registration would; itself
+    // excluded, so re-saving an unchanged location is never blocked.
+    const movingPin =
+      (dto.latitude !== undefined && dto.latitude !== existing.latitude) ||
+      (dto.longitude !== undefined && dto.longitude !== existing.longitude);
+    const nextLat = dto.latitude !== undefined ? dto.latitude : existing.latitude;
+    const nextLng = dto.longitude !== undefined ? dto.longitude : existing.longitude;
+    if (movingPin && nextLat != null && nextLng != null) {
+      await assertLocationIsFree(this.prisma, {
+        latitude: nextLat,
+        longitude: nextLng,
+        excludeId: pharmacyId,
+      });
+    }
+
     const updated = await this.prisma.pharmacy.update({
       where: { id: pharmacyId },
       data: {
         name: name !== undefined ? name : existing.name,
         licenseNumber: licenseNumber !== undefined ? licenseNumber : existing.licenseNumber,
-        phone: dto.phone !== undefined ? (dto.phone.trim() || null) : existing.phone,
+        phone,
         addressLine1: dto.addressLine1 !== undefined ? (dto.addressLine1.trim() || null) : existing.addressLine1,
         addressLine2: dto.addressLine2 !== undefined ? (dto.addressLine2.trim() || null) : existing.addressLine2,
         city: dto.city !== undefined ? (dto.city.trim() || null) : existing.city,
@@ -634,6 +705,12 @@ export class PharmacyService {
   /**
    * List all inventory items for a pharmacy. Each row joins MedicineEntity +
    * AvailabilitySignal to produce the shape the frontend DataTable expects.
+   *
+   * Scoped to this pharmacyId and to nothing else: every AvailabilitySignal the
+   * pharmacy holds is returned whatever its confidence band, so a medicine
+   * patients can see a High / Moderate / Low signal for is always listed and
+   * editable here. These are the same rows the public surfaces read — the
+   * portal is the writer, patient search the reader, one table.
    */
   async getInventory(pharmacyId: string) {
     const signals = await this.prisma.availabilitySignal.findMany({
@@ -644,6 +721,11 @@ export class PharmacyService {
             id: true,
             canonicalName: true,
             genericName: true,
+            // Patient search matches brand names too (MediBase holds them on
+            // the identity). Without them here, a pharmacy searching its own
+            // availability page for the brand a patient searched — "Lantus" for
+            // the "Insulin Glargine" identity — was told no medicine matched.
+            brandNames: true,
             strength: true,
             dosageForm: true,
           },
@@ -657,6 +739,7 @@ export class PharmacyService {
       medicineId: s.medicineId,
       name: s.medicine.canonicalName,
       generic: s.medicine.genericName || '',
+      brands: s.medicine.brandNames ?? [],
       strength: s.medicine.strength || '',
       dosageForm: s.medicine.dosageForm || 'Tablet',
       dosageform: s.medicine.dosageForm || 'Tablet',
@@ -974,13 +1057,27 @@ export class PharmacyService {
     user?: AuthenticatedUser,
     ipAddress?: string,
   ) {
-    // 1. Find or create the medicine entity
-    let medicine = await this.prisma.medicineEntity.findFirst({
-      where: {
-        canonicalName: { equals: dto.name, mode: 'insensitive' },
-        strength: dto.strength || undefined,
-      },
-    });
+    // 1. Resolve the MediBase identity this row is about.
+    //
+    // An explicit id is authoritative: the identity is taken as given, with no
+    // name matching and nothing created, so the pharmacy's signal lands on
+    // exactly the identity patients search. A name (what the portal form sends)
+    // is resolved as before, and introduces the identity when the catalog has
+    // never seen it.
+    let medicine = dto.medicineId
+      ? await this.prisma.medicineEntity.findUnique({ where: { id: dto.medicineId } })
+      : await this.prisma.medicineEntity.findFirst({
+          where: {
+            canonicalName: { equals: dto.name, mode: 'insensitive' },
+            strength: dto.strength || undefined,
+          },
+        });
+
+    if (dto.medicineId && !medicine) {
+      throw new NotFoundException(
+        'That medicine is not in the MediBase catalog. Send the medicine name instead, or ask MediBase support to add the identity.',
+      );
+    }
 
     if (!medicine) {
       medicine = await this.prisma.medicineEntity.create({
@@ -1068,6 +1165,7 @@ export class PharmacyService {
       medicineId: medicine.id,
       name: medicine.canonicalName,
       generic: medicine.genericName || '',
+      brands: medicine.brandNames ?? [],
       strength: medicine.strength || '',
       dosageForm: medicine.dosageForm || 'Tablet',
       dosageform: medicine.dosageForm || 'Tablet',
@@ -1158,9 +1256,35 @@ export class PharmacyService {
       dto.dosageform !== undefined;
 
     let medicineId = signal.medicineId;
-    let linkTarget: { id: string; canonicalName: string } | null = null;
+    let linkTarget: { id: string; canonicalName: string; strength?: string | null } | null = null;
 
-    if (editsIdentity) {
+    // An explicit MediBase identity id wins over name resolution: it says which
+    // identity this row is about with no room for a near-miss, which is what a
+    // CSV/API integration should send. Nothing is created and no descriptive
+    // field of the shared identity is touched.
+    if (dto.medicineId !== undefined && dto.medicineId !== signal.medicineId) {
+      const target = await this.prisma.medicineEntity.findUnique({
+        where: { id: dto.medicineId },
+      });
+      if (!target) {
+        throw new NotFoundException(
+          'That medicine is not in the MediBase catalog. Send the medicine name instead, or ask MediBase support to add the identity.',
+        );
+      }
+      // One row per (medicine, pharmacy) — the unique constraint the name path
+      // guards the same way below.
+      const clash = await this.prisma.availabilitySignal.findUnique({
+        where: { medicineId_pharmacyId: { medicineId: target.id, pharmacyId } },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new ConflictException(
+          `${target.canonicalName}${target.strength ? ` ${target.strength}` : ''} is already in your inventory. Edit that entry instead.`,
+        );
+      }
+      medicineId = target.id;
+      linkTarget = target;
+    } else if (editsIdentity) {
       // Unsent fields keep their current value — this is a patch, not a replace.
       const name = (dto.name ?? current.canonicalName).trim();
       if (!name) throw new BadRequestException('Medicine name is required');
@@ -1236,6 +1360,7 @@ export class PharmacyService {
           select: {
             canonicalName: true,
             genericName: true,
+            brandNames: true,
             strength: true,
             dosageForm: true,
           },
@@ -1303,6 +1428,7 @@ export class PharmacyService {
       medicineId: updated.medicineId,
       name: updated.medicine.canonicalName,
       generic: updated.medicine.genericName || '',
+      brands: updated.medicine.brandNames ?? [],
       strength: updated.medicine.strength || '',
       dosageForm: updated.medicine.dosageForm || 'Tablet',
       // Alias kept in step with getInventory/addInventoryItem so the table and
@@ -1334,7 +1460,9 @@ export class PharmacyService {
         throw new BadRequestException('The CSV file is empty.');
       }
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-      if (!headers.includes('name')) {
+      // A file keyed on MediBase identity ids needs no name column: the id says
+      // which medicine each row is about more precisely than a name can.
+      if (!headers.includes('name') && !headers.includes('medicineid')) {
         throw new BadRequestException('CSV file missing required "name" header column.');
       }
       for (let i = 1; i < lines.length; i++) {
@@ -1358,7 +1486,11 @@ export class PharmacyService {
     for (const row of rawRows) {
       totalProcessed++;
       const name = row.name || row.canonicalName || row.medicineName;
-      if (!name) {
+      // A MediBase identity id in the file is authoritative — the row attaches
+      // to that identity with no name matching. Integrations that hold ids
+      // should send them; a file with names only behaves exactly as before.
+      const medicineIdColumn = (row.medicineid || row.medicineId || '').trim?.() || '';
+      if (!name && !medicineIdColumn) {
         skipped++;
         continue;
       }
@@ -1370,12 +1502,21 @@ export class PharmacyService {
       const reportedInStock = statusRaw !== 'out-of-stock';
 
       try {
-        let medicine = await this.prisma.medicineEntity.findFirst({
-          where: {
-            canonicalName: { equals: name, mode: 'insensitive' },
-            strength: strength || undefined,
-          },
-        });
+        let medicine = medicineIdColumn
+          ? await this.prisma.medicineEntity.findUnique({ where: { id: medicineIdColumn } })
+          : await this.prisma.medicineEntity.findFirst({
+              where: {
+                canonicalName: { equals: name, mode: 'insensitive' },
+                strength: strength || undefined,
+              },
+            });
+
+        // An id column that names no identity is a data error in the file, not
+        // an invitation to mint a new identity under a borrowed id.
+        if (medicineIdColumn && !medicine) {
+          skipped++;
+          continue;
+        }
 
         if (!medicine) {
           medicine = await this.prisma.medicineEntity.create({

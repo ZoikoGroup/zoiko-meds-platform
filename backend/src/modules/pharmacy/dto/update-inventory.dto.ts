@@ -10,6 +10,20 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
  * missing here is not merely ignored — the whole request is rejected.
  */
 export class UpdateInventoryDto {
+  /**
+   * Re-point this row at a MediBase™ identity by id.
+   *
+   * Takes precedence over `name`/`strength` resolution: the identity is taken
+   * as given, which is the unambiguous way to move a row onto the identity
+   * patients are actually searching. Omit it to keep the name-based resolution
+   * the Edit Medicine dialog uses.
+   */
+  @ApiPropertyOptional({ example: 'cmryk4tno000i6u3dvl2q2x6s' })
+  @IsString()
+  @IsOptional()
+  @IsNotEmpty({ message: 'medicineId cannot be blank' })
+  medicineId?: string;
+
   @ApiPropertyOptional({ example: 'Asthalin' })
   @IsString()
   @IsOptional()

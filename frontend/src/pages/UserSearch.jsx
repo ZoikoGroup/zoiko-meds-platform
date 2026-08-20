@@ -5,11 +5,11 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { StatusBadge, ConfidenceBadge } from '@/components/shared/status'
+import { StatusBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
-import { mapsHref, pharmacyDirectionsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
+import { mapsHref, pharmacyDirectionsHref, telHref, CONFIRM_NOTE, availabilityMeta } from '@/lib/availability'
 import { reverseGeocode } from '@/lib/geocode'
 import { validateLocation } from '@/lib/location-data'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
@@ -683,9 +683,16 @@ export default function UserSearch() {
                               </span>
                               <span className="truncate text-xs text-muted-foreground">{p.address}</span>
                             </div>
+                            {/* The pharmacy's answer for THIS medicine: High,
+                                Moderate, or Out of stock. A pharmacy that has
+                                run out still belongs in the results — it
+                                carries the medicine — so it is labelled, not
+                                dropped. */}
                             <div className="flex shrink-0 flex-col items-end gap-1">
-                              <ConfidenceBadge level={band} size="sm" />
-                              <span className="text-end text-[11px] text-muted-foreground">{AVAILABILITY[band]?.plain}</span>
+                              <StatusBadge tone={availabilityMeta(band).tone} size="sm">
+                                {availabilityMeta(band).label}
+                              </StatusBadge>
+                              <span className="text-end text-[11px] text-muted-foreground">{availabilityMeta(band).plain}</span>
                             </div>
                           </div>
 
@@ -710,6 +717,23 @@ export default function UserSearch() {
                               </span>
                               <span className="font-medium text-foreground">{p.updated}</span>
                             </div>
+                            {/* This branch's own number, as stored on its
+                                record. Shown only when it has one — a placeholder
+                                here would be a number a patient actually dials. */}
+                            {p.phone ? (
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1 text-muted-foreground">
+                                  <Phone className="size-3" />
+                                  {t('phone', 'Phone')}
+                                </span>
+                                <a
+                                  href={telHref(p.phone)}
+                                  className="font-medium text-foreground tabular hover:underline"
+                                >
+                                  {p.phone}
+                                </a>
+                              </div>
+                            ) : null}
                           </div>
 
                           <div className="mt-auto flex gap-2 border-t border-border pt-3">

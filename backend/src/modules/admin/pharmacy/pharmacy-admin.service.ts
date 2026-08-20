@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Pharmacy, Prisma, VerificationRequestStatus, VerificationStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
+import { assertLocationIsFree } from '../../pharmacy/location-identity';
 import { CreatePharmacyDto } from './dto/create-pharmacy.dto';
 import { UpdatePharmacyDto } from './dto/update-pharmacy.dto';
 import { ListPharmaciesQuery } from './dto/list-pharmacies.query';
@@ -11,6 +12,8 @@ const DEFAULT_PAGE_SIZE = 50;
 
 @Injectable()
 export class PharmacyAdminService {
+  private readonly logger = new Logger(PharmacyAdminService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditWriter,
@@ -19,12 +22,23 @@ export class PharmacyAdminService {
 
   /**
    * Coordinates for a pharmacy, preferring what the admin supplied and falling
-   * back to geocoding the address.
+   * back to geocoding the pharmacy's own street address.
    *
    * A pharmacy with no coordinates is invisible to every distance-bounded
    * patient search, so registering one by address alone silently produced a
    * record that could never be found. Geocoding failure is non-fatal — the
    * record is still saved, just not yet locatable.
+   *
+   * Two rules make the result the pharmacy's real position rather than a
+   * plausible-looking one:
+   *
+   *  - the whole address is geocoded, not [city, country]. Geocoding a city
+   *    returns its centroid, so every pharmacy registered in Hyderabad landed
+   *    on the same point, at the same distance from every patient, with nothing
+   *    to tell them apart on the map;
+   *  - an area-level match is discarded rather than stored. No coordinates is a
+   *    true statement ("not located yet", and the admin can supply the pin);
+   *    a city centre is a false one.
    */
   private async resolveCoordinates(
     supplied: { latitude?: number; longitude?: number },
@@ -35,8 +49,19 @@ export class PharmacyAdminService {
     }
     const query = address.filter(Boolean).join(', ').trim();
     if (!query) return null;
+
     const point = await this.nearby.geocode(query);
-    return point ? { latitude: point.lat, longitude: point.lng } : null;
+    if (!point) return null;
+
+    if (!point.precise) {
+      this.logger.warn(
+        `Geocoding "${query}" resolved only to ${point.granularity} — refusing to ` +
+          'store an area centroid as a pharmacy location. Supply the street ' +
+          'address or the exact coordinates.',
+      );
+      return null;
+    }
+    return { latitude: point.lat, longitude: point.lng };
   }
 
   async list(query: ListPharmaciesQuery) {
@@ -79,15 +104,38 @@ export class PharmacyAdminService {
   async create(actorId: string, dto: CreatePharmacyDto) {
     // Resolved outside the transaction: geocoding is a network call and must
     // not hold a database transaction open.
-    const coords = await this.resolveCoordinates(dto, [dto.city, dto.country]);
+    const coords = await this.resolveCoordinates(dto, [
+      dto.addressLine1,
+      dto.addressLine2,
+      dto.city,
+      dto.region,
+      dto.postalCode,
+      dto.country,
+    ]);
+
+    // One physical pharmacy, one record — checked before the insert so the
+    // duplicate is never created rather than cleaned up afterwards.
+    if (coords) {
+      await assertLocationIsFree(this.prisma, {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+      });
+    }
 
     const pharmacy = await this.prisma.$transaction(async (tx) => {
       const created = await tx.pharmacy.create({
         data: {
           name: dto.name,
           licenseNumber: dto.licenseNumber || null,
+          addressLine1: dto.addressLine1 || null,
+          addressLine2: dto.addressLine2 || null,
           city: dto.city || null,
+          region: dto.region || null,
+          postalCode: dto.postalCode || null,
           country: dto.country || null,
+          // The branch's own number. Patient search offers it as the one action
+          // the governance note asks for — confirm before travelling.
+          phone: dto.phone || null,
           latitude: coords?.latitude ?? null,
           longitude: coords?.longitude ?? null,
           reliabilityScore: (dto.availabilityScore ?? 100) / 100,
@@ -135,6 +183,17 @@ export class PharmacyAdminService {
             dto.country ?? current.country,
           ])
         : null;
+
+    // Moving a pharmacy onto another's premises makes the same duplicate a
+    // fresh registration would. Itself excluded, so re-saving an unchanged
+    // location is never blocked.
+    if (coords) {
+      await assertLocationIsFree(this.prisma, {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        excludeId: id,
+      });
+    }
 
     const pharmacy = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.pharmacy.findUnique({ where: { id } });

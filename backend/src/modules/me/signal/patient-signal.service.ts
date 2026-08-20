@@ -7,6 +7,7 @@ import {
   SignalNotificationType,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { PUBLIC_SIGNALS_INCLUDE } from '../../availability/availability.visibility';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
 
 /**
@@ -479,7 +480,10 @@ export class PatientSignalService {
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       include: {
         medicine: {
-          include: { availabilitySignals: { include: { pharmacy: true } } },
+          // Same governed-visibility rule as every other patient surface: a
+          // withdrawn or unverified pharmacy's signal must not drive an alert
+          // about what is in stock.
+          include: { availabilitySignals: PUBLIC_SIGNALS_INCLUDE },
         },
       },
     });
