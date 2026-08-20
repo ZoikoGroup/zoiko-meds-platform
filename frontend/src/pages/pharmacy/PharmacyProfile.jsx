@@ -357,6 +357,16 @@ export default function PharmacyProfile() {
       setSaveError('Pharmacy name and licence number are required.')
       return
     }
+    // Patients are shown this number to confirm availability before visiting, so
+    // it cannot be left blank. Digits only for the length check — punctuation
+    // and country codes are typed however the operator writes them.
+    const phoneDigits = (profile.phone || '').replace(/\D/g, '')
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      setSaveError(
+        'Enter your pharmacy’s contact number, including its country or area code — patients are shown this number to confirm availability before visiting.',
+      )
+      return
+    }
     setSaving(true)
     setSaveError(null)
     try {
@@ -495,7 +505,17 @@ export default function PharmacyProfile() {
             <CardDescription>Email is taken from your ZoikoMeds account.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
-            <Field id="p-phone" label="Phone" value={profile.phone} onChange={set('phone')} placeholder="e.g. +91 40 2345 6789" />
+            {/* Required: this is the number shown to patients on your pharmacy's
+                search result, and the only way they can confirm before travelling. */}
+            <Field
+              id="p-phone"
+              label="Phone"
+              required
+              value={profile.phone}
+              onChange={set('phone')}
+              placeholder="e.g. +91 40 2345 6789"
+              hint="Shown to patients on your pharmacy's search result so they can confirm availability before visiting."
+            />
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="p-email">Email</Label>
               <Input id="p-email" value={profile.email ?? ''} readOnly disabled />

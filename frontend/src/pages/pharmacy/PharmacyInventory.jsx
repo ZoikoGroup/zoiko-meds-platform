@@ -243,7 +243,9 @@ export default function PharmacyInventory() {
         getRowId={(r) => r.id}
         searchable
         searchPlaceholder="Search by name, generic, strength, dosage form..."
-        searchAccessor={(r) => `${r.name} ${r.generic} ${r.strength} ${r.dosageform || r.dosageForm} ${r.status}`}
+        // Brand names come from the row's MediBase identity, so searching the
+        // brand a patient searched finds the same medicine here.
+        searchAccessor={(r) => `${r.name} ${r.generic} ${(r.brands || []).join(' ')} ${r.strength} ${r.dosageform || r.dosageForm} ${r.status}`}
         pageSize={8}
         emptyTitle="No medicines"
         emptyDescription="Add a medicine or adjust your search filter."

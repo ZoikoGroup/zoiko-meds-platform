@@ -34,9 +34,17 @@ export default function PharmacyAvailability() {
     )
   }
 
+  // Matched against the same MediBase identity fields patient search uses —
+  // canonical name, generic and brand names — so a medicine a patient can find
+  // by brand is findable here by the same word. Strength is included because
+  // the row is per identity, and identities differ by strength.
   const term = query.trim().toLowerCase()
   const visible = term
-    ? rows.filter((m) => `${m.name} ${m.generic}`.toLowerCase().includes(term))
+    ? rows.filter((m) =>
+        `${m.name} ${m.generic} ${(m.brands || []).join(' ')} ${m.strength || ''}`
+          .toLowerCase()
+          .includes(term),
+      )
     : rows
 
   return (

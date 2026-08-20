@@ -20,10 +20,15 @@ import { toSearchQuery } from '@/lib/inn'
 const STATUS_RANK = { available: 0, limited: 1, unconfirmed: 2, unavailable: 3 }
 
 // Map the API's confidence band onto an availability status.
+//
+// LOW is the band the pharmacy portal writes when an operator sets a medicine to
+// Out of stock, so it ranks with UNKNOWN as unavailable rather than as a
+// freshness caveat. Both keep the pharmacy in the results — it carries the
+// medicine — and both keep it out of the "likely available at N of M" count.
 const STATUS_BY_CONFIDENCE = {
   high: 'available',
   moderate: 'limited',
-  low: 'unconfirmed',
+  low: 'unavailable',
   unknown: 'unavailable',
 }
 
