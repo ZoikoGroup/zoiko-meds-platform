@@ -274,6 +274,95 @@ describe('PharmacyService self-service profile onboarding', () => {
     });
   });
 
+  describe('a new medicine is matched on strength, not on name alone (MP-46)', () => {
+    const linked = { ...USER, pharmacyId: 'ph_1' };
+
+    const dto = (over: Record<string, unknown> = {}) => ({
+      name: 'Dolo',
+      generic: 'Paracetamol',
+      strength: '650 mg',
+      dosageForm: 'Tablet',
+      status: 'available',
+      ...over,
+    });
+
+    beforeEach(() => {
+      prisma.medicineEntity = {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'med_new',
+          canonicalName: 'Dolo',
+          genericName: 'Paracetamol',
+          strength: '650 mg',
+          dosageForm: 'Tablet',
+        }),
+      };
+      prisma.inventorySignal = { create: jest.fn() };
+      prisma.availabilitySignal = { upsert: jest.fn().mockResolvedValue({ id: 'av_1' }) };
+      prisma.pharmacy.findUnique.mockResolvedValue({ id: 'ph_1', name: 'Apollo' });
+    });
+
+    it('looks the medicine up by name and strength together', async () => {
+      // The strength used to be passed as `dto.strength || undefined`, which Prisma
+      // reads as "do not filter on this" — so a request matched whichever strength
+      // was stored first, and 500 mg stock was recorded against the 650 mg identity.
+      await service.addInventoryItem('ph_1', dto() as never, linked);
+
+      expect(prisma.medicineEntity.findFirst).toHaveBeenCalledWith({
+        where: {
+          canonicalName: { equals: 'Dolo', mode: 'insensitive' },
+          strength: { equals: '650 mg', mode: 'insensitive' },
+        },
+      });
+    });
+
+    it('creates the catalog identity from what was supplied, with nothing defaulted', async () => {
+      await service.addInventoryItem(
+        'ph_1',
+        dto({ name: '  Dolo  ', generic: ' Paracetamol ', strength: ' 650 mg ', dosageForm: ' Syrup ' }) as never,
+        linked,
+      );
+
+      expect(prisma.medicineEntity.create).toHaveBeenCalledWith({
+        data: {
+          canonicalName: 'Dolo',
+          genericName: 'Paracetamol',
+          strength: '650 mg',
+          // Not silently 'Tablet': a syrup recorded as a tablet is a different
+          // medicine as far as a patient reading the result is concerned.
+          dosageForm: 'Syrup',
+        },
+      });
+    });
+
+    it('reuses an existing identity rather than creating a second one', async () => {
+      prisma.medicineEntity.findFirst.mockResolvedValue({
+        id: 'med_existing',
+        canonicalName: 'Dolo',
+        genericName: 'Paracetamol',
+        strength: '650 mg',
+        dosageForm: 'Tablet',
+      });
+
+      const result = await service.addInventoryItem('ph_1', dto() as never, linked);
+
+      expect(prisma.medicineEntity.create).not.toHaveBeenCalled();
+      expect(result.medicineId).toBe('med_existing');
+    });
+
+    it('accepts the lowercase dosageform alias when that is what arrived', async () => {
+      await service.addInventoryItem(
+        'ph_1',
+        { name: 'Dolo', generic: 'Paracetamol', strength: '650 mg', dosageform: 'Injection' } as never,
+        linked,
+      );
+
+      expect(prisma.medicineEntity.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ dosageForm: 'Injection' }) }),
+      );
+    });
+  });
+
   describe('notification categories come from the row, not a constant (MP-24)', () => {
     const row = (over: Record<string, unknown> = {}) => ({
       id: 'sn_1',

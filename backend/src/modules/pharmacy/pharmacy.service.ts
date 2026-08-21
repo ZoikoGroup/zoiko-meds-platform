@@ -1023,21 +1023,35 @@ export class PharmacyService {
     user?: AuthenticatedUser,
     ipAddress?: string,
   ) {
-    // 1. Find or create the medicine entity
+    const name = dto.name.trim();
+    const generic = dto.generic.trim();
+    const strength = dto.strength.trim();
+    const dosageForm = (dto.dosageForm ?? dto.dosageform ?? '').trim();
+
+    // 1. Find or create the medicine entity.
+    //
+    // Matched on name and strength together. The strength used to be passed as
+    // `dto.strength || undefined`, which in Prisma means "do not filter on this"
+    // — so a request with no strength matched whichever strength happened to be
+    // stored first, and a pharmacy stocking 500 mg was recorded against the
+    // 650 mg identity patients were searching for.
     let medicine = await this.prisma.medicineEntity.findFirst({
       where: {
-        canonicalName: { equals: dto.name, mode: 'insensitive' },
-        strength: dto.strength || undefined,
+        canonicalName: { equals: name, mode: 'insensitive' },
+        strength: { equals: strength, mode: 'insensitive' },
       },
     });
 
     if (!medicine) {
+      // This is a MediBase identity, created from what a pharmacy typed. It is
+      // why the fields above are required rather than optional: whatever is
+      // missing here is missing from the catalog every patient searches.
       medicine = await this.prisma.medicineEntity.create({
         data: {
-          canonicalName: dto.name,
-          genericName: dto.generic || null,
-          strength: dto.strength || null,
-          dosageForm: dto.dosageForm || dto.dosageform || 'Tablet',
+          canonicalName: name,
+          genericName: generic,
+          strength,
+          dosageForm,
         },
       });
     }
@@ -1105,7 +1119,7 @@ export class PharmacyService {
         medicineName: medicine.canonicalName,
         genericName: medicine.genericName || '',
         strength: medicine.strength || '',
-        dosageForm: medicine.dosageForm || 'Tablet',
+        dosageForm: medicine.dosageForm || '',
         newValues: { status, confidence: confidence.toLowerCase() },
         status: 'Success',
       },

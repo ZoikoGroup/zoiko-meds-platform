@@ -18,9 +18,28 @@ import {
   getInventory, addMedicine, deleteMedicine, updateAvailability,
 } from '@/services/pharmacy-api'
 import { STATUS_META, AVAILABILITY_STATUSES } from '@/services/pharmacy-data'
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Download, UploadCloud } from 'lucide-react'
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Download, UploadCloud, AlertCircle } from 'lucide-react'
 
-const EMPTY_FORM = { name: '', generic: '', strength: '', dosageForm: 'Tablet', status: 'available' }
+/**
+ * The fields a new medicine cannot be created without (MP-46).
+ *
+ * Adding to inventory also creates the MediBase identity when the name and
+ * strength match nothing, so anything blank here is blank in the catalog patients
+ * search. Strength and dosage form are also what distinguish one medicine from
+ * another, not extra detail.
+ */
+const REQUIRED_FIELDS = [
+  ['name', 'Medicine name'],
+  ['generic', 'Generic name'],
+  ['strength', 'Strength'],
+  ['dosageForm', 'Dosage form'],
+]
+
+function missingRequired(form) {
+  return REQUIRED_FIELDS.filter(([key]) => !form[key]?.trim()).map(([, label]) => label)
+}
+
+const EMPTY_FORM = { name: '', generic: '', strength: '', dosageForm: '', status: 'available' }
 
 export default function PharmacyInventory() {
   const navigate = useNavigate()
@@ -34,6 +53,7 @@ export default function PharmacyInventory() {
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState('')
 
   const loadData = () => {
     getInventory()
@@ -68,7 +88,7 @@ export default function PharmacyInventory() {
     window.dispatchEvent(new CustomEvent('pharmacy-inventory-updated'))
   }
 
-  const openAdd = () => { setEditingId(null); setForm(EMPTY_FORM); setDialogOpen(true) }
+  const openAdd = () => { setEditingId(null); setForm(EMPTY_FORM); setFormError(''); setDialogOpen(true) }
   const openEdit = (m) => {
     setEditingId(m.id)
     setForm({ name: m.name, generic: m.generic, strength: m.strength, dosageForm: m.dosageForm || m.dosageform || 'Tablet', status: m.status })
@@ -77,7 +97,14 @@ export default function PharmacyInventory() {
 
   const submitForm = async (e) => {
     e.preventDefault()
-    if (!form.name.trim()) { flash('Medicine name is required'); return }
+    // Only checked when adding. Editing sends the availability status alone, and a
+    // medicine saved before these fields were required must stay editable.
+    const missing = editingId ? [] : missingRequired(form)
+    if (missing.length > 0) {
+      setFormError(`${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`)
+      return
+    }
+    setFormError('')
     setSubmitting(true)
     try {
       if (editingId) {
@@ -297,18 +324,18 @@ export default function PharmacyInventory() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="m-generic">Generic name</Label>
+                <Label htmlFor="m-generic">Generic name{editingId ? '' : ' *'}</Label>
                 <Input id="m-generic" value={form.generic} onChange={(e) => setForm((f) => ({ ...f, generic: e.target.value }))} placeholder="Paracetamol" />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="m-strength">Strength</Label>
+                <Label htmlFor="m-strength">Strength{editingId ? '' : ' *'}</Label>
                 <Input id="m-strength" value={form.strength} onChange={(e) => setForm((f) => ({ ...f, strength: e.target.value }))} placeholder="650 mg" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="m-form">Dosage form</Label>
-                <Input id="m-form" value={form.dosageForm} onChange={(e) => setForm((f) => ({ ...f, dosageForm: e.target.value }))} placeholder="Tablet" />
+                <Label htmlFor="m-form">Dosage form{editingId ? '' : ' *'}</Label>
+                <Input id="m-form" value={form.dosageForm} onChange={(e) => setForm((f) => ({ ...f, dosageForm: e.target.value }))} placeholder="Tablet, Syrup, Injection" />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="m-status">Availability</Label>
@@ -324,6 +351,21 @@ export default function PharmacyInventory() {
                 </select>
               </div>
             </div>
+            {!editingId && (
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                A medicine that is new to ZoikoMeds is created from these details, and
+                patients search them — strength and dosage form are what tell two
+                medicines apart.
+              </p>
+            )}
+
+            {formError && (
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger">
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                {formError}
+              </div>
+            )}
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button>
               <Button type="submit" disabled={submitting}>
