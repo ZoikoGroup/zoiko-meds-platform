@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
+  AlertCircle,
   Blocks,
   Building2,
+  Loader2,
   CreditCard,
   KeyRound,
   MoreHorizontal,
@@ -48,7 +50,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Check, FileText, Minus } from 'lucide-react'
-import { apiKeys, auditLogs, integrations, roleMatrix, users } from '@/services/ops-data'
+import { listIntegrations } from '@/services/admin-api'
+import { apiKeys, auditLogs, roleMatrix, users } from '@/services/ops-data'
 import { useAuth } from '@/providers/auth-provider'
 import { initials } from '@/utils/format'
 
@@ -156,6 +159,88 @@ function actionsMenu(items) {
 }
 
 /* -------------------------------- page ---------------------------------- */
+
+/**
+ * What this deployment is actually connected to (MSA-39).
+ *
+ * This tab used to render eight named enterprise systems from a fixture — Epic,
+ * Cerner, Snowflake, Okta and others — with invented statuses and sync times. The
+ * platform connects to none of them, and every Manage button opened nothing. The
+ * server now reports its real dependencies, and Manage goes to the page that
+ * governs each one, or is absent when the answer is a server credential.
+ */
+function IntegrationsPanel() {
+  const [items, setItems] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    listIntegrations()
+      .then((rows) => alive && setItems(Array.isArray(rows) ? rows : []))
+      .catch((err) => alive && setError(err.message || 'Could not load integration status.'))
+    return () => { alive = false }
+  }, [])
+
+  if (error) {
+    return (
+      <div role="alert" className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+        <AlertCircle className="mt-0.5 size-4 shrink-0" />
+        {error}
+      </div>
+    )
+  }
+
+  if (!items) {
+    return (
+      <div className="flex min-h-[30vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" /> Loading integration status…
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        The external services this deployment depends on, read from the server's own
+        configuration. Anything listed as not configured is switched off here, not
+        broken.
+      </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((it) => (
+          <Card key={it.id} className="gap-3 p-5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-xs font-semibold">
+                  {initials(it.name)}
+                </span>
+                <div>
+                  <p className="text-sm font-medium">{it.name}</p>
+                  <p className="text-xs text-muted-foreground">{it.category}</p>
+                </div>
+              </div>
+              <ServiceStatusBadge status={it.status} size="sm" />
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">{it.detail}</p>
+            <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-3">
+              <span className="text-[11px] text-muted-foreground">
+                {it.manage ? ' ' : `Set by ${it.configuredBy ?? 'server configuration'}`}
+              </span>
+              {it.manage ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link to={it.manage}>Manage</Link>
+                </Button>
+              ) : (
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  Not managed here
+                </span>
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function Settings() {
   const { user } = useAuth()
@@ -387,32 +472,7 @@ export default function Settings() {
 
         {/* Integrations */}
         <TabsContent value="integrations">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {integrations.map((it) => (
-              <Card key={it.id} className="gap-3 p-5">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex size-9 items-center justify-center rounded-lg bg-secondary text-xs font-semibold">
-                      {initials(it.name)}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">{it.name}</p>
-                      <p className="text-xs text-muted-foreground">{it.category}</p>
-                    </div>
-                  </div>
-                  <ServiceStatusBadge status={it.status} size="sm" />
-                </div>
-                <div className="flex items-center justify-between border-t border-border/70 pt-3">
-                  <span className="text-xs text-muted-foreground">
-                    Synced {it.lastSync}
-                  </span>
-                  <Button variant="outline" size="sm">
-                    Manage
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
+          <IntegrationsPanel />
         </TabsContent>
 
         {/* Billing */}
