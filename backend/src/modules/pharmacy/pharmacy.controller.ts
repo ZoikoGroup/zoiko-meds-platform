@@ -121,6 +121,24 @@ export class PharmacyController {
     return this.pharmacy.getDashboard(resolvedId);
   }
 
+  @Get('participation')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Participation and data-quality metrics for the logged-in pharmacy',
+    description:
+      "Measured from this pharmacy's own signals. Percentages are null when it lists no medicines, " +
+      'because a share of nothing is not zero.',
+  })
+  async getParticipation(@CurrentUser() user: AuthenticatedUser) {
+    const pharmacyId = await this.pharmacy.resolvePharmacyId(
+      user?.pharmacyId ?? null,
+      user?.id,
+    );
+    return this.pharmacy.getParticipation(pharmacyId);
+  }
+
   @Get('reports')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)

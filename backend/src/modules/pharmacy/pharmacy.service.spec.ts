@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
@@ -271,6 +271,80 @@ describe('PharmacyService self-service profile onboarding', () => {
         service.saveMyProfile(USER, { city: 'Hyderabad' }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.pharmacy.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('participation is measured, not fixed (MP-44)', () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
+
+    const complete = { genericName: 'Paracetamol', strength: '650 mg', dosageForm: 'Tablet' };
+    const incomplete = { genericName: null, strength: null, dosageForm: 'Tablet' };
+
+    beforeEach(() => {
+      prisma.pharmacy.findUnique.mockResolvedValue({
+        reliabilityScore: 0.9,
+        verificationStatus: 'VERIFIED',
+        isParticipating: true,
+      });
+      prisma.availabilitySignal = { findMany: jest.fn().mockResolvedValue([]) };
+      prisma.inventorySignal = { count: jest.fn().mockResolvedValue(0) };
+    });
+
+    it('reports the stored reliability score rather than a fixture', async () => {
+      // The page showed 92% for every pharmacy on the platform.
+      const result = await service.getParticipation('ph_1');
+
+      expect(result.reliabilityScore).toBe(90);
+    });
+
+    it('counts what is listed, what is current, and what is fully described', async () => {
+      prisma.availabilitySignal.findMany.mockResolvedValue([
+        { computedAt: hoursAgo(1), confidence: 'HIGH', medicine: complete },
+        { computedAt: hoursAgo(3), confidence: 'HIGH', medicine: incomplete },
+        { computedAt: hoursAgo(24 * 30), confidence: 'LOW', medicine: complete },
+      ]);
+      prisma.inventorySignal.count.mockResolvedValue(7);
+
+      const result = await service.getParticipation('ph_1');
+
+      expect(result.medicinesListed).toBe(3);
+      expect(result.updatesLast7Days).toBe(7);
+      // Two of the three were updated inside the window.
+      expect(result.upToDateCount).toBe(2);
+      expect(result.upToDatePercent).toBe(67);
+      // Two of the three carry a generic name, strength and form.
+      expect(result.detailsCompleteCount).toBe(2);
+      expect(result.detailsCompletePercent).toBe(67);
+    });
+
+    it('averages how old the availability information actually is', async () => {
+      prisma.availabilitySignal.findMany.mockResolvedValue([
+        { computedAt: hoursAgo(1), confidence: 'HIGH', medicine: complete },
+        { computedAt: hoursAgo(3), confidence: 'HIGH', medicine: complete },
+      ]);
+
+      const result = await service.getParticipation('ph_1');
+
+      expect(result.freshnessHours).toBeCloseTo(2, 1);
+    });
+
+    it('reports nothing rather than zero for a pharmacy with no medicines', async () => {
+      // 0% would read as a judgement on the pharmacy; a share of nothing has no
+      // value at all, and the page renders a dash for it.
+      const result = await service.getParticipation('ph_1');
+
+      expect(result.medicinesListed).toBe(0);
+      expect(result.upToDatePercent).toBeNull();
+      expect(result.detailsCompletePercent).toBeNull();
+      expect(result.freshnessHours).toBeNull();
+    });
+
+    it('refuses to invent a pharmacy that does not exist', async () => {
+      prisma.pharmacy.findUnique.mockResolvedValue(null);
+
+      await expect(service.getParticipation('ph_missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 

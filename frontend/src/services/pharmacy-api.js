@@ -1,13 +1,13 @@
 // Pharmacy Portal service layer.
 //
-// Inventory endpoints hit the real NestJS backend at /pharmacies/inventory.
-// Other surfaces (dashboard, notifications, participation, etc.) still use
-// demo data until their backend counterparts are implemented.
+// Inventory, reports and participation hit the real NestJS backend. The remaining
+// demo surfaces (integration sync, announcements) are marked TODO(backend) at their
+// call sites and are the only ones left resolving fixtures.
 
 import { apiFetch } from '@/lib/api-client'
 import {
   RECENT_UPDATES, PENDING_UPDATES, NOTIFICATIONS,
-  PARTICIPATION, INTEGRATION, REPORTS, INVENTORY,
+  INTEGRATION, INVENTORY,
 } from './pharmacy-data'
 
 // Resolve a (deep-cloned) value after a short latency so skeletons are exercised.
@@ -150,7 +150,10 @@ export const getNotifications = async () => {
   // invented verification messages that contradicted its actual status.
   return [...userNotifications, ...announcements]
 }
-export const getParticipation = () => settle(PARTICIPATION)
+// Participation metrics, measured server-side from this pharmacy's own rows. This
+// used to resolve a fixture — the same 92% reliability and 87% participation for
+// every pharmacy on the platform (MP-44).
+export const getParticipation = () => apiFetch('/pharmacies/participation')
 export const getIntegration = () => settle(INTEGRATION)
 // TODO(backend): POST /pharmacy/integration/sync
 export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' })
@@ -268,17 +271,15 @@ export const updateProfile = async (patch) => {
   return res
 }
 
+// Reports are computed from this pharmacy's own signals. No demo fallback: a
+// fabricated chart is indistinguishable from the operator's own figures, and it
+// was what made a failed request look like a quiet week (MP-44).
 export const getReports = async () => {
-  try {
-    const reports = await apiFetch('/pharmacies/reports')
-    if (!reports || typeof reports !== 'object') {
-      throw new Error('Reports endpoint returned an empty response')
-    }
-    return reports
-  } catch (err) {
-    console.warn('[pharmacy-api] Get reports API failed', err)
-    return settle(REPORTS)
+  const reports = await apiFetch('/pharmacies/reports')
+  if (!reports || typeof reports !== 'object') {
+    throw new Error('Reports endpoint returned an empty response')
   }
+  return reports
 }
 
 // Billing and plan view for the logged-in pharmacy. Financial detail is scoped

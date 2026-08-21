@@ -837,6 +837,92 @@ export class PharmacyService {
    * 3. Frequently Requested Medicines (ranked by real DB inquiry/saved/search counts)
    * 4. Update Activity (count of daily updates from CSV, manual edits, status changes)
    */
+  /**
+   * Participation metrics for the portal's Participation page (MP-44).
+   *
+   * Every figure here is measured from this pharmacy's own rows. The page used to
+   * render a hard-coded fixture - 92% reliability, 87% participation, 34 updates a
+   * week - identical for every pharmacy, which is worse than an empty page: it
+   * reads as the operator's own record.
+   *
+   * Two of the old fixture's numbers are deliberately not reproduced. A
+   * "participation score" and a "data quality" percentage are composites, and
+   * inventing a formula would put an authoritative-looking score on the screen that
+   * no specification defines. What is returned instead is what can be counted:
+   * how much of the catalogue is current, how complete its details are, and how
+   * often it is updated. Each is explainable from the counts returned beside it.
+   */
+  async getParticipation(pharmacyId: string) {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [pharmacy, signals, updatesLast7Days] = await Promise.all([
+      this.prisma.pharmacy.findUnique({
+        where: { id: pharmacyId },
+        select: { reliabilityScore: true, verificationStatus: true, isParticipating: true },
+      }),
+      this.prisma.availabilitySignal.findMany({
+        where: { pharmacyId },
+        select: {
+          computedAt: true,
+          confidence: true,
+          medicine: {
+            select: { genericName: true, strength: true, dosageForm: true },
+          },
+        },
+      }),
+      this.prisma.inventorySignal.count({
+        where: { pharmacyId, reportedAt: { gte: sevenDaysAgo } },
+      }),
+    ]);
+    if (!pharmacy) throw new NotFoundException('Pharmacy not found');
+
+    const medicinesListed = signals.length;
+
+    // Average age of the availability information patients are being shown. Null
+    // rather than zero when nothing is listed: "0 hours old" would read as
+    // perfectly fresh when in fact there is nothing there.
+    const freshnessHours =
+      medicinesListed === 0
+        ? null
+        : Math.round(
+            (signals.reduce((total, s) => total + (now.getTime() - s.computedAt.getTime()), 0) /
+              medicinesListed /
+              3_600_000) *
+              10,
+          ) / 10;
+
+    const currentCount = signals.filter((s) => s.computedAt >= sevenDaysAgo).length;
+    const completeCount = signals.filter(
+      (s) =>
+        !!s.medicine.genericName?.trim() &&
+        !!s.medicine.strength?.trim() &&
+        !!s.medicine.dosageForm?.trim(),
+    ).length;
+
+    const percent = (part: number) =>
+      medicinesListed === 0 ? null : Math.round((part / medicinesListed) * 100);
+
+    return {
+      // Stored, and the one governed score here: it drives ZoikoAvail confidence.
+      reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      verificationStatus: pharmacy.verificationStatus,
+      isParticipating: pharmacy.isParticipating,
+
+      medicinesListed,
+      updatesLast7Days,
+      freshnessHours,
+
+      /** Share of listed medicines updated in the last seven days. */
+      upToDatePercent: percent(currentCount),
+      upToDateCount: currentCount,
+
+      /** Share whose MediBase entry has a generic name, strength and dosage form. */
+      detailsCompletePercent: percent(completeCount),
+      detailsCompleteCount: completeCount,
+    };
+  }
+
   async getReports(pharmacyId: string) {
     const now = new Date();
     const sevenDaysAgo = new Date(now);
@@ -954,25 +1040,22 @@ export class PharmacyService {
       day.inStockCount = cumulativeSignals.filter((s) => s.reportedInStock).length;
     }
 
-    const hasTrendHistory =
-      days.some((d) => d.inventoryCount > 0) || availabilitySignals.length > 0;
+    // True only when some day in the window actually has reports behind it. It
+    // previously counted the existence of any availability signal at all, so it
+    // claimed trend data for a pharmacy that had reported nothing all week.
+    const hasTrendHistory = days.some((d) => d.inventoryCount > 0);
 
-    const availabilityTrend = days.map((day) => {
-      let pct = 0;
-      if (day.inventoryCount > 0) {
-        pct = Math.round((day.inStockCount / day.inventoryCount) * 100);
-      } else if (availabilitySignals.length > 0) {
-        const totalAvail = availabilitySignals.length;
-        const availCount = availabilitySignals.filter(
-          (s) => s.confidence === AvailabilityConfidence.HIGH,
-        ).length;
-        pct = Math.round((availCount / totalAvail) * 100);
-      }
-      return {
-        label: day.label,
-        value: pct,
-      };
-    });
+    // A day with no reports has no availability percentage, and is reported as
+    // such. Today's snapshot used to be substituted for every empty day, which
+    // drew a flat line across the week - 79% seven times over - that looked like
+    // a fortnight of stable history rather than an absence of data (MP-44).
+    const availabilityTrend = days.map((day) => ({
+      label: day.label,
+      value:
+        day.inventoryCount > 0
+          ? Math.round((day.inStockCount / day.inventoryCount) * 100)
+          : null,
+    }));
 
     // 3. Frequently Requested Medicines
     const savedMap = new Map<string, number>();
