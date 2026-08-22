@@ -67,11 +67,10 @@ export default function Register() {
     return { score, text, color }
   }, [password])
 
-  // Calculate country-specific phone number validity
   // Country-specific validity, from the shared rules in @/lib/phone.
   const phoneError = useMemo(
-    () => phoneErrorMessage(form.phone, phoneCountry),
-    [form.phone, phoneCountry],
+    () => phoneErrorMessage(phone, phoneCountry),
+    [phone, phoneCountry],
   )
 
   // Handle Form Submission
