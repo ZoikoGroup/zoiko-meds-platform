@@ -7,7 +7,10 @@ import {
   SignalNotificationType,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { PUBLIC_SIGNALS_INCLUDE } from '../../availability/availability.visibility';
+import {
+  PUBLIC_SIGNALS_INCLUDE,
+  signalAgeMinutes,
+} from '../../availability/availability.visibility';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
 
 /**
@@ -49,6 +52,16 @@ const EST_DURATION: Record<PatientStatus, string | null> = {
   'running-low': '2–3 days',
   'out-of-stock': null,
 };
+
+/**
+ * How recently a signal must have been refreshed to count as a restock event.
+ *
+ * Read through signalAgeMinutes, never off `freshnessMinutes` directly. Nothing
+ * writes that column - the pharmacy portal's upsert sets confidence and
+ * computedAt - so reading it raw made this window unreachable and an in-stock
+ * saved medicine produced no notification at all (MN-25).
+ */
+const RESTOCK_WINDOW_MINUTES = 180;
 
 // Statuses that count as an urgent, card-worthy "active alert".
 const ACTIVE_ALERT_TYPES: SignalNotificationType[] = [
@@ -247,12 +260,17 @@ export class PatientSignalService {
 
       // Prune stale availability notifications for this medicine (keeps at most
       // the one reflecting the current state).
+      //
+      // When there is no current event, only already-read rows are pruned. This
+      // regenerates on read, and a restock event stops being current once it is
+      // three hours old, so wiping unconditionally deleted alerts the patient
+      // had not opened the page in time to see.
       await this.prisma.signalNotification.deleteMany({
         where: {
           userId,
           medicineId: s.medicineId,
           dedupeKey: { startsWith: `med:${s.medicineId}:` },
-          ...(currentKey ? { NOT: { dedupeKey: currentKey } } : {}),
+          ...(currentKey ? { NOT: { dedupeKey: currentKey } } : { read: true }),
         },
       });
 
@@ -334,7 +352,7 @@ export class PatientSignalService {
     if (status === 'available') {
       if (prev && prev !== 'available') return SignalNotificationType.BACK_IN_STOCK;
       // Fresh signal on an already-stocked medicine → informational restock.
-      if (best?.signal.freshnessMinutes != null && best.signal.freshnessMinutes < 180) {
+      if (best && this.ageOf(best.signal) < RESTOCK_WINDOW_MINUTES) {
         return SignalNotificationType.NEARBY_RESTOCK;
       }
       return null;
@@ -523,6 +541,17 @@ export class PatientSignalService {
     return CONFIDENCE_TO_STATUS[best.signal.confidence];
   }
 
+  /**
+   * Age of a signal in minutes, from the stored snapshot or its timestamp.
+   *
+   * The same answer every other patient surface quotes for the same row, so an
+   * alert cannot describe a signal as stale that the ZoikoSignal page shows as
+   * minutes old.
+   */
+  private ageOf(signal: { freshnessMinutes: number | null; computedAt: Date }): number {
+    return signalAgeMinutes(signal.freshnessMinutes, signal.computedAt);
+  }
+
   /** Strongest confidence, then freshest, then nearest. */
   private bestSignal(signals: SignalWithPharmacy[]): RankedSignal | null {
     if (signals.length === 0) return null;
@@ -531,7 +560,9 @@ export class PatientSignalService {
       .sort(
         (a, b) =>
           CONFIDENCE_RANK[a.signal.confidence] - CONFIDENCE_RANK[b.signal.confidence] ||
-          (a.signal.freshnessMinutes ?? 1e9) - (b.signal.freshnessMinutes ?? 1e9) ||
+          // Derived, not read raw: with freshnessMinutes never written every
+          // signal tied here, and the freshest-first rule silently did nothing.
+          this.ageOf(a.signal) - this.ageOf(b.signal) ||
           (a.distance ?? 999) - (b.distance ?? 999),
       )[0];
   }
