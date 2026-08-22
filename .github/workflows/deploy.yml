@@ -19,18 +19,32 @@ jobs:
       # exactly the same thing (install -> generate -> migrate -> build ->
       # restart -> health check) instead of drifting apart.
       #
-      # SSH reachability: runs failed from 2026-07-29 with "ssh: handshake failed"
-      # and then "dial tcp ***:22: i/o timeout", because GitHub-hosted runners
-      # connect from rotating public IPs and a firewall rule pinned to a fixed
-      # office IP drops them. If that returns, the durable fix is an IAP tunnel
-      # rather than widening the firewall: authenticate with
-      # google-github-actions/auth (Workload Identity Federation, no long-lived
-      # key), then reach the VM with
-      #     gcloud compute ssh "$INSTANCE" --zone "$ZONE" --tunnel-through-iap       #       --command 'bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh'
-      # which needs only ingress from Google's IAP range 35.235.240.0/20 on
-      # tcp:22 -- narrower than an office CIDR, and never 0.0.0.0/0.
+      # NOTE: every run of this workflow failed between 2026-07-29 and 2026-08-17 —
+      # first "ssh: handshake failed: unable to authenticate", then
+      # "dial tcp ***:22: i/o timeout" — which is why the API served a build from
+      # before 2026-08-07 while main moved on. GitHub-hosted runners connect from
+      # rotating public IPs, so a firewall rule that allows a fixed office IP will
+      # still drop them.
+      #
+      # If it regresses, the durable fix is an IAP tunnel rather than widening the
+      # firewall: authenticate with google-github-actions/auth (Workload Identity
+      # Federation, no long-lived key), then reach the VM with
+      #     gcloud compute ssh "$INSTANCE" --zone "$ZONE" --tunnel-through-iap \
+      #       --command 'bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh'
+      # which needs only ingress from Google's IAP range 35.235.240.0/20 on tcp:22
+      # — narrower than an office CIDR, and never 0.0.0.0/0. Allowing GitHub's own
+      # ranges (https://api.github.com/meta) on tcp:22 also works, but is wider.
+      #
       # A manual release from the VM is always available as a fallback:
       #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+      #
+      # The migration ledger is printed before and after the deploy, because this
+      # log is the only view of the database for anyone without VM access. On
+      # 2026-08-17 the API served code whose migration had never been applied:
+      # every SavedMedicine query failed while the workflow was green, and nothing
+      # in the pipeline output would have shown why. `migrate status` also names
+      # the datasource host it is talking to, which is what catches migrations
+      # being applied to a different database than the API reads.
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -40,7 +54,24 @@ jobs:
           command_timeout: 15m
           script: |
             set -e
+            cd /var/www/zoiko-meds-platform/backend
+
+            echo "::group::Migration ledger before deploy (host)"
+            npx prisma migrate status || true
+            echo "::endgroup::"
+
+            # The API runs in a container whose DATABASE_URL may differ from the
+            # host's .env. Never fatal: the service name is not guaranteed here.
+            echo "::group::Migration ledger before deploy (API container)"
+            docker compose exec -T api npx prisma migrate status 2>/dev/null || \
+              echo "(could not reach the API container; skipping)"
+            echo "::endgroup::"
+
             bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+
+            echo "::group::Migration ledger after deploy"
+            npx prisma migrate status || true
+            echo "::endgroup::"
 
       # A green tick must mean the new code is actually serving. Without this the
       # workflow could pass while the API still ran the previous build — which is

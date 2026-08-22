@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -7,7 +7,16 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { ErrorState } from '@/components/shared/states'
-import { getProfile, updateProfile, resolveMapLink } from '@/services/pharmacy-api'
+import {
+  getProfile,
+  updateProfile,
+  resolveMapLink,
+  uploadPharmacyLogo,
+  removePharmacyLogo,
+} from '@/services/pharmacy-api'
+import { apiBaseUrl } from '@/lib/api-client'
+import { PhoneInput } from '@/components/ui/phone-input'
+import { phoneValidationError } from '@/lib/phone'
 import { CLASSIFICATION_META } from '@/lib/commercial'
 import {
   formatCoordinates,
@@ -23,10 +32,27 @@ import {
   AlertCircle,
   Info,
   CreditCard,
+  Upload,
+  Trash2,
   MapPin,
   CheckCircle2,
   ExternalLink,
 } from 'lucide-react'
+
+// Mirrors what the upload route accepts. Checked here as well so an oversized or
+// unsupported file is refused instantly, without spending the upload first.
+const LOGO_MAX_BYTES = 256 * 1024
+const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+/**
+ * The API returns a path relative to its own base, because the same API is
+ * reached through more than one origin. Resolve it the way every other call in
+ * this client does.
+ */
+function resolveLogoUrl(logoUrl) {
+  if (!logoUrl) return null
+  return /^https?:\/\//.test(logoUrl) ? logoUrl : `${apiBaseUrl()}${logoUrl}`
+}
 
 const VERIFY_META = {
   VERIFIED: { variant: 'success', label: 'Verified' },
@@ -297,6 +323,17 @@ export default function PharmacyProfile() {
   const [saving, setSaving] = useState(false)
   const [flashMsg, flash] = useFlash()
 
+  // Which country a local number is read against. Follows the pharmacy's own
+  // country once the profile loads, since that is the number's country too.
+  const [phoneCountry, setPhoneCountry] = useState('IN')
+  const [phoneTouched, setPhoneTouched] = useState(false)
+
+  // Logo upload. Kept apart from saveError so a rejected image does not read as
+  // a failure to save the profile fields, which are a separate request.
+  const fileInputRef = useRef(null)
+  const [logoBusy, setLogoBusy] = useState('')
+  const [logoError, setLogoError] = useState('')
+
   /**
    * The coordinates as they exist in the database.
    *
@@ -334,6 +371,14 @@ export default function PharmacyProfile() {
     }
   }, [])
 
+  // Adopt the pharmacy's own country for the phone field. Only while the operator
+  // has not chosen one themselves, so a deliberate pick is not overwritten by the
+  // next background refresh of the profile.
+  useEffect(() => {
+    const saved = profile?.country?.trim()?.toUpperCase()
+    if (saved && /^[A-Z]{2}$/.test(saved)) setPhoneCountry((current) => current === 'IN' && saved !== 'IN' ? saved : current)
+  }, [profile?.country])
+
   useEffect(() => {
     loadProfile()
 
@@ -351,17 +396,85 @@ export default function PharmacyProfile() {
     setProfile((p) => ({ ...p, [key]: value }))
   }
 
+  // The same rules the API applies, so a number is refused here rather than by a
+  // save that appears to work until the response comes back (MP-23).
+  const phoneError = useMemo(
+    () => {
+      const error = phoneValidationError(profile?.phone, phoneCountry)
+      return error ? error.message : ''
+    },
+    [profile?.phone, phoneCountry],
+  )
+
+  /**
+   * Upload the chosen file, then adopt the URL the server returns.
+   *
+   * The returned URL carries the new logo's timestamp, so the replacement appears
+   * immediately instead of the browser reusing the cached previous image.
+   */
+  const onLogoPicked = async (event) => {
+    const file = event.target.files?.[0]
+    // Reset first: picking the same file twice must fire change again, which it
+    // will not while the input still holds that file.
+    event.target.value = ''
+    if (!file) return
+
+    setLogoError('')
+    if (!LOGO_TYPES.includes(file.type)) {
+      setLogoError('Choose a PNG, JPEG or WebP image. SVG files are not accepted.')
+      return
+    }
+    if (file.size > LOGO_MAX_BYTES) {
+      setLogoError(
+        `That image is ${Math.ceil(file.size / 1024)} KB. The maximum logo size is ${LOGO_MAX_BYTES / 1024} KB.`,
+      )
+      return
+    }
+
+    setLogoBusy('upload')
+    try {
+      const result = await uploadPharmacyLogo(file)
+      setProfile((current) => ({ ...current, logoUrl: result?.logoUrl ?? current?.logoUrl }))
+      flash('Logo updated')
+    } catch (err) {
+      setLogoError(err.message || 'Could not upload that logo.')
+    } finally {
+      setLogoBusy('')
+    }
+  }
+
+  const onLogoRemove = async () => {
+    setLogoError('')
+    setLogoBusy('remove')
+    try {
+      await removePharmacyLogo()
+      setProfile((current) => ({ ...current, logoUrl: null }))
+      flash('Logo removed')
+    } catch (err) {
+      setLogoError(err.message || 'Could not remove the logo.')
+    } finally {
+      setLogoBusy('')
+    }
+  }
+
   const save = async (e) => {
     e.preventDefault()
     if (!profile.name?.trim() || !profile.licenseNumber?.trim()) {
       setSaveError('Pharmacy name and licence number are required.')
       return
     }
+    if (phoneError) {
+      // Reveal the field's own message too, rather than only the summary at the
+      // top: the operator needs to see which field is being complained about.
+      setPhoneTouched(true)
+      setSaveError(phoneError)
+      return
+    }
     // Patients are shown this number to confirm availability before visiting, so
-    // it cannot be left blank. Digits only for the length check — punctuation
-    // and country codes are typed however the operator writes them.
-    const phoneDigits = (profile.phone || '').replace(/\D/g, '')
-    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+    // it cannot be left blank. phoneValidationError has nothing to judge on an
+    // empty field, which is right where the number is optional and wrong here.
+    if (!(profile.phone || '').replace(/\D/g, '')) {
+      setPhoneTouched(true)
       setSaveError(
         'Enter your pharmacy’s contact number, including its country or area code — patients are shown this number to confirm availability before visiting.',
       )
@@ -421,6 +534,7 @@ export default function PharmacyProfile() {
     : REVIEW_NOTICE[profile.verificationStatus]
   const isVerified = profile.verificationStatus === 'VERIFIED'
   const initials = profile.name?.trim()?.slice(0, 2).toUpperCase()
+  const logoUrl = resolveLogoUrl(profile.logoUrl)
   const plan = CLASSIFICATION_META[profile.commercialClassification] ?? null
 
   return (
@@ -475,9 +589,17 @@ export default function PharmacyProfile() {
             <CardDescription>Name and logo shown to patients across the network.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5 pt-5">
-            <div className="flex items-center gap-4">
-              <span className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary">
-                {initials || <Building2 className="size-6" />}
+            <div className="flex items-start gap-4">
+              <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/10 text-lg font-bold text-primary">
+                {logoUrl ? (
+                  <img
+                    src={logoUrl}
+                    alt={profile.name ? `${profile.name} logo` : 'Pharmacy logo'}
+                    className="size-full object-contain"
+                  />
+                ) : (
+                  initials || <Building2 className="size-6" />
+                )}
               </span>
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
@@ -487,8 +609,62 @@ export default function PharmacyProfile() {
                     {verify.label}
                   </Badge>
                 </div>
-                {/* TODO(backend): logo upload → POST /pharmacy/me/logo */}
-                <Button type="button" variant="outline" size="sm">Upload logo</Button>
+                {/* Hidden, and opened by the buttons: a bare file input cannot be
+                    styled, and its "No file chosen" label reads as a broken
+                    control next to everything else on this page. */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={LOGO_TYPES.join(',')}
+                  onChange={onLogoPicked}
+                  className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={Boolean(logoBusy) || profile.isDraft}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {logoBusy === 'upload' ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="size-3.5" />
+                    )}
+                    {logoUrl ? 'Replace logo' : 'Upload logo'}
+                  </Button>
+                  {logoUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1.5 text-muted-foreground"
+                      disabled={Boolean(logoBusy)}
+                      onClick={onLogoRemove}
+                    >
+                      {logoBusy === 'remove' ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {profile.isDraft
+                    ? 'Save your pharmacy details first, then you can add a logo.'
+                    : `PNG, JPEG or WebP, up to ${LOGO_MAX_BYTES / 1024} KB. Shown to patients beside your pharmacy.`}
+                </span>
+                {logoError && (
+                  <span role="alert" className="text-[11px] font-medium text-danger">
+                    {logoError}
+                  </span>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
@@ -505,17 +681,35 @@ export default function PharmacyProfile() {
             <CardDescription>Email is taken from your ZoikoMeds account.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
-            {/* Required: this is the number shown to patients on your pharmacy's
+            {/* Required: this is the number shown to patients on the pharmacy's
                 search result, and the only way they can confirm before travelling. */}
-            <Field
-              id="p-phone"
-              label="Phone"
-              required
-              value={profile.phone}
-              onChange={set('phone')}
-              placeholder="e.g. +91 40 2345 6789"
-              hint="Shown to patients on your pharmacy's search result so they can confirm availability before visiting."
-            />
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="p-phone">
+                Phone
+                <span className="text-danger"> *</span>
+              </Label>
+              <PhoneInput
+                id="p-phone"
+                value={profile.phone ?? ''}
+                countryProp={phoneCountry}
+                onChange={set('phone')}
+                onCountryChange={setPhoneCountry}
+                onBlur={() => setPhoneTouched(true)}
+                error={Boolean(phoneTouched && phoneError)}
+                aria-invalid={phoneTouched && phoneError ? 'true' : undefined}
+                aria-describedby={phoneTouched && phoneError ? 'p-phone-error' : undefined}
+              />
+              {phoneTouched && phoneError ? (
+                <span id="p-phone-error" role="alert" className="text-[11px] font-medium text-danger">
+                  {phoneError}
+                </span>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">
+                  Shown to patients on your pharmacy&rsquo;s search result so they can confirm
+                  availability before visiting.
+                </span>
+              )}
+            </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="p-email">Email</Label>
               <Input id="p-email" value={profile.email ?? ''} readOnly disabled />

@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppLogger } from './common/logger/app-logger.service';
 import { StripeConfig } from './modules/commercial/stripe/stripe.config';
+import { appBaseUrl, appBaseUrlWarning } from './config/app-urls';
 
 async function bootstrap() {
   // rawBody keeps the exact bytes of each request available. Stripe signs the raw
@@ -69,6 +70,17 @@ async function bootstrap() {
   // Surface a dangerous billing configuration at boot rather than at first
   // charge: a live payment key outside production, or a missing webhook secret.
   app.get(StripeConfig).warnOnSuspiciousConfig(config.get<string>('NODE_ENV', 'development'));
+
+  // And an unusable APP_BASE_URL at boot rather than at the first link somebody
+  // clicks. Every browser-facing link is built from it, so pointed at the wrong
+  // host it is not one broken page but every password reset, invite and payment
+  // return at once.
+  const appUrlWarning = appBaseUrlWarning(config);
+  if (appUrlWarning) {
+    logger.warn(appUrlWarning);
+  } else {
+    logger.log(`Browser links resolve to ${appBaseUrl(config)}`);
+  }
 
   const port = config.get<number>('PORT', 8000);
   try {

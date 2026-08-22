@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card } from '@/components/ui/card'
+import { ErrorState } from '@/components/shared/states'
 import { getReports } from '@/services/pharmacy-api'
 import { PieChart, TrendingUp, Flame, Activity, Loader2, AlertCircle } from 'lucide-react'
 
@@ -17,19 +18,40 @@ function BarSeries({ series, unit = '' }) {
     )
   }
 
-  const max = Math.max(1, ...series.map((s) => s.value))
+  // A null value means nothing was reported that day. Drawing it as 0 would say
+  // "nothing was in stock", which is a different and much worse claim.
+  const measured = series.filter((s) => s.value !== null && s.value !== undefined)
+  if (measured.length === 0) {
+    return (
+      <div className="flex h-[140px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/80 px-4 text-center text-xs text-muted-foreground">
+        <AlertCircle className="size-4 shrink-0 text-muted-foreground/70" />
+        <span>Not enough history yet — this fills in as you report availability.</span>
+      </div>
+    )
+  }
+
+  const max = Math.max(1, ...measured.map((s) => s.value))
   return (
     <div className="flex items-end gap-2 pt-2" style={{ height: 140 }}>
-      {series.map((s) => (
-        <div key={s.label} className="flex flex-1 flex-col items-center justify-end gap-1.5">
-          <span className="text-[10px] font-semibold text-muted-foreground tabular">{s.value}{unit}</span>
-          <div
-            className="w-full rounded-t-md bg-primary/80 transition-all duration-300"
-            style={{ height: `${max > 0 ? (s.value / max) * 100 : 0}%`, minHeight: s.value > 0 ? '4px' : '0px' }}
-          />
-          <span className="text-[10px] text-muted-foreground">{s.label}</span>
-        </div>
-      ))}
+      {series.map((s) => {
+        const unmeasured = s.value === null || s.value === undefined
+        return (
+          <div key={s.label} className="flex flex-1 flex-col items-center justify-end gap-1.5">
+            <span className="text-[10px] font-semibold text-muted-foreground tabular">
+              {unmeasured ? '—' : `${s.value}${unit}`}
+            </span>
+            {unmeasured ? (
+              <div className="w-full rounded-t-md border-b-2 border-dashed border-border" title="No reports this day" />
+            ) : (
+              <div
+                className="w-full rounded-t-md bg-primary/80 transition-all duration-300"
+                style={{ height: `${(s.value / max) * 100}%`, minHeight: s.value > 0 ? '4px' : '0px' }}
+              />
+            )}
+            <span className="text-[10px] text-muted-foreground">{s.label}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -37,13 +59,18 @@ function BarSeries({ series, unit = '' }) {
 export default function PharmacyReports() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   const loadReports = useCallback(async () => {
     try {
       const res = await getReports()
       setData(res)
+      setError('')
     } catch (err) {
       console.error('Failed to fetch pharmacy reports analytics', err)
+      // Said out loud. This used to fall back to demo figures, which put a
+      // plausible chart of somebody else's numbers on the operator's screen.
+      setError(err.message || 'Could not load your reports.')
     } finally {
       setLoading(false)
     }
@@ -62,6 +89,17 @@ export default function PharmacyReports() {
       window.removeEventListener('focus', handleSync)
     }
   }, [loadReports])
+
+  if (error && !data) {
+    return (
+      <ErrorState
+        title="Could not load reports"
+        description={error}
+        onRetry={loadReports}
+        className="max-w-3xl"
+      />
+    )
+  }
 
   if (loading && !data) {
     return (

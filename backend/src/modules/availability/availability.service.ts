@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AvailabilityConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withLogoUrl } from '../pharmacy/logo/pharmacy-logo.service';
 import { PUBLIC_SIGNAL_WHERE, signalAgeMinutes } from './availability.visibility';
 
 /**
@@ -35,8 +36,8 @@ export class AvailabilityService {
         requiresConfirmation: true,
         computedAt: true,
         pharmacy: {
-          // `phone` is this branch's own number: availability is a confidence
-          // signal, so the one action offered with it is to call and confirm.
+          // `phone` is the number to ring: availability is a confidence signal,
+          // so the one action offered with it is to call and confirm.
           select: {
             id: true,
             name: true,
@@ -45,6 +46,9 @@ export class AvailabilityService {
             phone: true,
             latitude: true,
             longitude: true,
+            // Timestamp only: it becomes a logo URL below, and the image itself
+            // lives in another table so this stays a cheap patient-facing read.
+            logoUpdatedAt: true,
           },
         },
       },
@@ -52,7 +56,7 @@ export class AvailabilityService {
     });
 
     return signals.map((s) => ({
-      pharmacy: s.pharmacy,
+      pharmacy: withLogoUrl(s.pharmacy),
       confidence: s.confidence,
       // Derived from computedAt when the stored snapshot is absent, so the age
       // shown here matches the pharmacy portal and /me/search for the same row.

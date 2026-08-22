@@ -14,6 +14,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { IsOptional, IsString, Length } from 'class-validator';
+import { appBaseUrl, appUrl } from '../../config/app-urls';
 import { resolveCountryAlpha2 } from '../../common/countries';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -143,7 +144,10 @@ export class PharmacyCheckoutController {
         postalCode: pharmacy.postalCode,
       }));
 
-    const base = this.appBaseUrl();
+    // The shared resolver, not a local copy of it: this controller had its own,
+    // which is how the return URL kept pointing at a host with no such page while
+    // the OAuth bounce - configured separately - worked (MP-47).
+    const base = appBaseUrl(this.config);
     const session = await this.stripe.createCheckoutSession({
       billingProfileId: profile.id,
       providerPriceId: price.providerPriceId as string,
@@ -185,13 +189,8 @@ export class PharmacyCheckoutController {
 
     return this.stripe.createBillingPortalSession({
       billingProfileId: profile.id,
-      returnUrl: `${this.appBaseUrl()}/pharmacy/billing`,
+      returnUrl: appUrl(this.config, '/pharmacy/billing'),
     });
-  }
-
-  private appBaseUrl(): string {
-    // Trailing slashes would produce a double slash in the return URL.
-    return (this.config.get<string>('APP_BASE_URL') || 'http://localhost:5173').replace(/\/+$/, '');
   }
 
   private async resolvePharmacyId(user: AuthenticatedUser): Promise<string | null> {

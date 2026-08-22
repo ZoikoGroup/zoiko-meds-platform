@@ -56,10 +56,26 @@ log "Generating Prisma client"
 npx prisma generate
 
 if [ "${SKIP_MIGRATE:-0}" != "1" ]; then
+  # Printed first so the log shows what was pending, against which datasource,
+  # before anything is applied. `migrate deploy` alone reports only what it did,
+  # which is no help when the answer is "nothing, and here is why".
+  log "Migration status before applying"
+  npx prisma migrate status || true
+
   log "Applying migrations"
+  # A failed migration already recorded in the ledger makes this exit non-zero
+  # (P3009) and, with set -e, aborts the deploy before the restart. That is the
+  # intended outcome: the running build keeps serving a schema it matches, and
+  # resolving the failure is a deliberate act (`prisma migrate resolve`) rather
+  # than something a deploy script guesses at.
   npx prisma migrate deploy
 else
-  log "Skipping migrations (SKIP_MIGRATE=1)"
+  # Loud, because this is how code reaches production ahead of its schema. Every
+  # query touching a new column then fails at runtime while the deploy looks
+  # clean — which is exactly what happened to SavedMedicine on 2026-08-17.
+  log "WARNING: SKIP_MIGRATE=1 — migrations NOT applied."
+  log "WARNING: the build about to start may expect columns the database lacks."
+  npx prisma migrate status || true
 fi
 
 log "Building"

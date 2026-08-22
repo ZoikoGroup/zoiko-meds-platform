@@ -41,11 +41,15 @@ export function updateProfileRequest({ fullName, phone }) {
   })
 }
 
+// A wrong current password is answered with 400 "Current password is incorrect",
+// so a 401 here only ever means the session itself is gone. This used to opt out
+// of the shared 401 handling, which left an expired session showing the raw word
+// "Unauthorized" in the form while the user stayed on a page they could no longer
+// use (MP-18).
 export function changePasswordRequest(currentPassword, newPassword) {
   return apiFetch('/auth/change-password', {
     method: 'POST',
     body: { currentPassword, newPassword },
-    skipUnauthorizedHandler: true,
   })
 }
 

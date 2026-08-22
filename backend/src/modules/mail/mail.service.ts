@@ -23,6 +23,14 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
   private readonly enabled: boolean;
+
+  /**
+   * Whether mail actually leaves the server. Read by the admin console, which
+   * must not report email as working when it is only being written to the log.
+   */
+  get isEnabled(): boolean {
+    return this.enabled;
+  }
   private readonly fromAddress: string;
   private readonly fromName: string;
   private readonly appBaseUrl: string;

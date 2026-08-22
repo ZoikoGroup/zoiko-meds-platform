@@ -13,6 +13,11 @@ function qs(params = {}) {
 
 export const getOverview = () => apiFetch('/admin/overview')
 
+// External services this deployment actually talks to, with the state the server
+// reads from its own configuration. No fixture behind it: the page this feeds used
+// to list enterprise systems the platform has never connected to (MSA-39).
+export const listIntegrations = () => apiFetch('/admin/integrations')
+
 export const listUsers = (params) => apiFetch(`/admin/users${qs(params)}`)
 
 export const createUser = (body) =>

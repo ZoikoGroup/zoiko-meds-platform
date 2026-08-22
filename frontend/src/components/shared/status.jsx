@@ -22,6 +22,9 @@ const SERVICE = {
     degraded: { tone: 'warning', label: 'Degraded', Icon: AlertTriangle },
     maintenance: { tone: 'serious', label: 'Maintenance', Icon: Wrench },
     down: { tone: 'critical', label: 'Down', Icon: XCircle },
+    // Not configured on this deployment. A real state, and not a failure: an
+    // integration nobody has set up is neither operational nor down.
+    disabled: { tone: 'neutral', label: 'Not configured', Icon: XCircle },
 };
 export function ServiceStatusBadge({ status, ...props }) {
     const meta = SERVICE[status];

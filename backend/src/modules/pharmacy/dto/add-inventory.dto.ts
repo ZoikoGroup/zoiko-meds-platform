@@ -1,8 +1,40 @@
-import { IsString, IsNotEmpty, IsOptional, IsIn } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
+ * Trim before validating, so whitespace cannot pass for an answer.
+ *
+ * IsNotEmpty rejects an empty string but accepts "   ", which would otherwise
+ * satisfy every rule below and then be stored as a blank strength.
+ */
+const Trimmed = () =>
+  Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  );
+
+/**
  * DTO for adding a medicine to a pharmacy's inventory.
+ *
+ * Generic name, strength and dosage form are required, not courtesy fields. This
+ * request does not only record stock: when the name and strength match nothing in
+ * MediBase it creates the medicine identity itself, and everything left blank here
+ * is blank in the catalog every patient then searches (MP-46).
+ *
+ * They are required on that path only. A request carrying `medicineId` names an
+ * identity that already exists and creates nothing, so there is no catalog entry
+ * for a missing field to land in.
+ *
+ * Strength and form are also what tell two medicines apart. "Dolo" with no
+ * strength is not a medicine — it is three of them — and a patient looking for
+ * 650 mg should not be sent to a pharmacy holding 500 mg.
  */
 export class AddInventoryDto {
   /**
@@ -21,28 +53,52 @@ export class AddInventoryDto {
   medicineId?: string;
 
   @ApiProperty({ example: 'Dolo 650' })
+  @Trimmed()
+  @ValidateIf((dto: AddInventoryDto) => !dto.medicineId)
   @IsString()
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'Medicine name is required.' })
+  @MaxLength(200)
   name: string;
 
-  @ApiPropertyOptional({ example: 'Paracetamol' })
+  @ApiProperty({ example: 'Paracetamol' })
+  @Trimmed()
+  @ValidateIf((dto: AddInventoryDto) => !dto.medicineId)
   @IsString()
-  @IsOptional()
-  generic?: string;
+  @IsNotEmpty({
+    message: 'Generic name is required: it is what lets patients find equivalents.',
+  })
+  @MaxLength(200)
+  generic: string;
 
-  @ApiPropertyOptional({ example: '650 mg' })
+  @ApiProperty({ example: '650 mg' })
+  @Trimmed()
+  @ValidateIf((dto: AddInventoryDto) => !dto.medicineId)
   @IsString()
-  @IsOptional()
-  strength?: string;
+  @IsNotEmpty({
+    message: 'Strength is required: it is part of which medicine this is, not a detail.',
+  })
+  @MaxLength(60)
+  strength: string;
 
-  @ApiPropertyOptional({ example: 'Tablet' })
+  /**
+   * Required, but accepted under either spelling. `dosageform` predates this DTO
+   * and the global pipe rejects unknown properties, so dropping it would turn an
+   * older client's request into a validation error instead of a stored medicine.
+   */
+  @ApiPropertyOptional({ example: 'Tablet', description: 'Required unless dosageform is given.' })
+  @Trimmed()
+  @ValidateIf((dto: AddInventoryDto) => !dto.medicineId && !dto.dosageform?.trim())
   @IsString()
-  @IsOptional()
+  @IsNotEmpty({ message: 'Dosage form is required, e.g. Tablet, Syrup or Injection.' })
+  @MaxLength(60)
   dosageForm?: string;
 
-  @ApiPropertyOptional({ example: 'Tablet' })
+  @ApiPropertyOptional({ example: 'Tablet', description: 'Accepted alias of dosageForm.' })
+  @Trimmed()
+  @ValidateIf((dto: AddInventoryDto) => !dto.medicineId && !dto.dosageForm?.trim())
   @IsString()
-  @IsOptional()
+  @IsNotEmpty({ message: 'Dosage form is required, e.g. Tablet, Syrup or Injection.' })
+  @MaxLength(60)
   dosageform?: string;
 
   @ApiPropertyOptional({

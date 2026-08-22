@@ -1,13 +1,13 @@
 // Pharmacy Portal service layer.
 //
-// Inventory endpoints hit the real NestJS backend at /pharmacies/inventory.
-// Other surfaces (dashboard, notifications, participation, etc.) still use
-// demo data until their backend counterparts are implemented.
+// Inventory, reports and participation hit the real NestJS backend. The remaining
+// demo surfaces (integration sync, announcements) are marked TODO(backend) at their
+// call sites and are the only ones left resolving fixtures.
 
 import { apiFetch } from '@/lib/api-client'
 import {
   RECENT_UPDATES, PENDING_UPDATES, NOTIFICATIONS,
-  PARTICIPATION, INTEGRATION, REPORTS, INVENTORY,
+  INTEGRATION, INVENTORY,
 } from './pharmacy-data'
 
 // Resolve a (deep-cloned) value after a short latency so skeletons are exercised.
@@ -115,6 +115,16 @@ export const getDashboard = async () => {
 
 import { listNotifications } from './admin-api'
 
+// Read state lives on the notification row, and these endpoints are scoped to the
+// caller rather than to a role, so the portal marks its own notifications read
+// through the same routes the patient surface uses. Without this the page only
+// ever changed local state, which the ten-second refresh then reverted (MP-24).
+export const markNotificationRead = (id) =>
+  apiFetch(`/me/signal/notifications/${id}/read`, { method: 'POST' })
+
+export const markAllNotificationsRead = () =>
+  apiFetch('/me/signal/notifications/read-all', { method: 'POST' })
+
 export const getNotifications = async () => {
   let userNotifications = []
   try {
@@ -155,7 +165,10 @@ export const getNotifications = async () => {
   // invented verification messages that contradicted its actual status.
   return [...userNotifications, ...announcements]
 }
-export const getParticipation = () => settle(PARTICIPATION)
+// Participation metrics, measured server-side from this pharmacy's own rows. This
+// used to resolve a fixture — the same 92% reliability and 87% participation for
+// every pharmacy on the platform (MP-44).
+export const getParticipation = () => apiFetch('/pharmacies/participation')
 export const getIntegration = () => settle(INTEGRATION)
 // TODO(backend): POST /pharmacy/integration/sync
 export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' })
@@ -290,23 +303,35 @@ export const updateProfile = async (patch) => {
   return res
 }
 
+// Reports are computed from this pharmacy's own signals. No demo fallback: a
+// fabricated chart is indistinguishable from the operator's own figures, and it
+// was what made a failed request look like a quiet week (MP-44).
 export const getReports = async () => {
-  try {
-    const reports = await apiFetch('/pharmacies/reports')
-    if (!reports || typeof reports !== 'object') {
-      throw new Error('Reports endpoint returned an empty response')
-    }
-    return reports
-  } catch (err) {
-    console.warn('[pharmacy-api] Get reports API failed', err)
-    return settle(REPORTS)
+  const reports = await apiFetch('/pharmacies/reports')
+  if (!reports || typeof reports !== 'object') {
+    throw new Error('Reports endpoint returned an empty response')
   }
+  return reports
 }
 
 // Billing and plan view for the logged-in pharmacy. Financial detail is scoped
 // server-side by role, so a field that is absent was never sent — the client does
 // not decide what may be seen. No demo fallback: this is a financial surface.
 export const getBilling = () => apiFetch('/pharmacies/me/billing')
+
+// --- Logo (MP-22) -----------------------------------------------------------
+//
+// Multipart rather than a base64 JSON body: no inflation of the bytes, and the
+// size limit belongs to this one route instead of loosening the JSON limit for
+// every endpoint.
+export const uploadPharmacyLogo = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return apiFetch('/pharmacies/me/logo', { method: 'POST', body: form })
+}
+
+export const removePharmacyLogo = () =>
+  apiFetch('/pharmacies/me/logo', { method: 'DELETE' })
 
 // Provider-hosted purchase and payment-method management. Both return a URL to
 // redirect to: card details never touch this application. Restricted server-side

@@ -194,16 +194,18 @@ describe('registering a pharmacy — contact number', () => {
 
     await expect(
       service.saveMyProfile(USER, { ...NEW_PHARMACY, phone: '12345' } as never),
-    ).rejects.toThrow(/contact number/i);
+    ).rejects.toThrow(/not a valid phone number/i);
   });
 
-  it('stores the number as the operator typed it', async () => {
+  it('stores the number in one form, however it was typed', async () => {
+    // Contact and comparison both read this column, and three spellings of one
+    // pharmacy's landline cannot be told apart later, so E.164 is what is stored.
     const { service, tx, prisma } = buildService();
     prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
 
     await service.saveMyProfile(USER, NEW_PHARMACY as never);
 
-    expect(tx.pharmacy.create.mock.calls[0][0].data.phone).toBe('+91 40 2345 6789');
+    expect(tx.pharmacy.create.mock.calls[0][0].data.phone).toBe('+914023456789');
   });
 
   it('refuses to clear the number on an existing pharmacy', async () => {

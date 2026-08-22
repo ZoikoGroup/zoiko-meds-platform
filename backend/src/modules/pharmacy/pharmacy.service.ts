@@ -9,11 +9,14 @@ import {
   AvailabilityConfidence,
   CommercialClassification,
   QualityState,
+  SignalNotificationType,
   UserRole,
   VerificationRequestStatus,
   VerificationStatus,
 } from '@prisma/client';
 import { resolveCountryAlpha2 } from '../../common/countries';
+import { normalizePhone } from '../../common/phone';
+import { logoUrlFor } from './logo/pharmacy-logo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
@@ -44,6 +47,41 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
 };
 
 /**
+ * Which section of the portal's notification list a row belongs in.
+ *
+ * The category was previously hard-coded to 'verification' for every row, which is
+ * why the Inventory, Uploads and System filters could never match anything and
+ * read as broken (MP-24).
+ *
+ * There is no stored category to read: SignalNotificationType describes patient
+ * availability signals, and the verification workflow reuses SAFETY for its own
+ * decisions. The dedupe key is the honest discriminator - it is set by whichever
+ * workflow raised the row, and it is what distinguishes a verification decision
+ * from a genuine safety alert that happens to share a type.
+ */
+function notificationCategory(row: {
+  dedupeKey: string;
+  type: SignalNotificationType;
+}): 'inventory' | 'verification' | 'upload' | 'system' {
+  if (row.dedupeKey.startsWith('verification:')) return 'verification';
+
+  switch (row.type) {
+    // Availability signals about a medicine: stock, in this portal's language.
+    case SignalNotificationType.RUNNING_LOW:
+    case SignalNotificationType.BACK_IN_STOCK:
+    case SignalNotificationType.LIMITED:
+    case SignalNotificationType.NEARBY_RESTOCK:
+      return 'inventory';
+    // Recalls and advisories are platform-wide messages, not this pharmacy's
+    // stock, so they belong with the other platform messages.
+    case SignalNotificationType.RECALL:
+    case SignalNotificationType.SAFETY:
+    default:
+      return 'system';
+  }
+}
+
+/**
  * Store the country as its alpha-2 code, whichever form the operator typed.
  *
  * The field is free text on the form and always will be — somebody will type
@@ -54,7 +92,7 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
  * later with a message about markets.
  */
 /**
- * A pharmacy's own contact number, or a refusal.
+ * A pharmacy's own contact number in E.164, or a refusal.
  *
  * Patient search offers one action on every pharmacy card — call before you
  * travel — and it can only be the number of that exact branch. A pharmacy with
@@ -62,20 +100,34 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
  * required rather than optional, and it is never defaulted or borrowed from
  * anywhere.
  *
- * The check is deliberately shape-only: 7 to 15 digits, the E.164 range, with
- * the punctuation people type left alone. Anything stricter would reject real
- * numbers from countries nobody thought to test.
+ * Local and international form are both accepted: the number is read against the
+ * pharmacy's own country and stored in one form. A number that is not valid for
+ * that country is refused rather than saved, because a number nobody can ring
+ * still looks like a way to reach the pharmacy.
  */
-function normalizePhoneInput(phone?: string | null): string {
-  const typed = (phone ?? '').trim();
-  const digits = typed.replace(/\D/g, '');
-  if (digits.length < 7 || digits.length > 15) {
+function normalizePhoneInput(
+  phone: string | null | undefined,
+  country: string | null | undefined,
+): string {
+  const typed = phone?.trim();
+  if (!typed) {
     throw new BadRequestException(
-      'Enter the pharmacy\'s contact number, including its country or area code — ' +
+      "Enter the pharmacy's contact number, including its country or area code — " +
         'patients are shown this number to confirm availability before visiting.',
     );
   }
-  return typed;
+
+  const normalized = normalizePhone(typed, country);
+  if (!normalized) {
+    throw new BadRequestException(
+      country
+        ? `"${typed}" is not a valid phone number for ${country}. Include the area code, or write it ` +
+          'in international form such as +91 40 2345 6789.'
+        : `"${typed}" is not a valid phone number. Write it in international form, such as ` +
+          '+91 40 2345 6789, or set your country first so a local number can be understood.',
+    );
+  }
+  return normalized;
 }
 
 function normalizeCountryInput(country?: string | null): string | null {
@@ -112,7 +164,7 @@ export class PharmacyService {
   // ---------------------------------------------------------------------------
 
   async listVerified() {
-    return this.prisma.pharmacy.findMany({
+    const pharmacies = await this.prisma.pharmacy.findMany({
       where: { verificationStatus: 'VERIFIED', isParticipating: true },
       select: {
         id: true,
@@ -120,8 +172,15 @@ export class PharmacyService {
         city: true,
         region: true,
         reliabilityScore: true,
+        // The timestamp, never the image: this list is a patient-facing query and
+        // the bytes live in their own table precisely so it stays cheap.
+        logoUpdatedAt: true,
       },
     });
+    return pharmacies.map(({ logoUpdatedAt, ...pharmacy }) => ({
+      ...pharmacy,
+      logoUrl: logoUrlFor(pharmacy.id, logoUpdatedAt),
+    }));
   }
 
   async findById(id: string) {
@@ -129,7 +188,7 @@ export class PharmacyService {
     // Returning null here would serialize as a 200 with an empty body, which
     // clients cannot distinguish from a successful fetch — surface a 404.
     if (!pharmacy) throw new NotFoundException('Pharmacy not found');
-    return pharmacy;
+    return { ...pharmacy, logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt) };
   }
 
   /**
@@ -177,6 +236,7 @@ export class PharmacyService {
       latitude: pharmacy.latitude,
       longitude: pharmacy.longitude,
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt),
       // Commercial standing, so the portal can show the plan without a second
       // round trip. Deliberately not the price: what a pharmacy pays comes from
       // the catalog, and the profile is not a billing surface (ZM-COM-BILL-001).
@@ -232,6 +292,8 @@ export class PharmacyService {
       latitude: null,
       longitude: null,
       reliabilityScore: 0,
+      // Same shape as a saved profile: a draft simply has no logo yet.
+      logoUrl: null,
       // No pharmacy record exists yet, so there is nothing claimed either.
       commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
       reviewStatus: pending?.status ?? null,
@@ -279,9 +341,14 @@ export class PharmacyService {
       );
     }
 
+    // Resolved once, before the write: the phone number is interpreted in this
+    // country, so a national-format number and the country it belongs to have to
+    // be settled together.
+    const submittedCountry = normalizeCountryInput(dto.country);
+
     // Patients are given this number to confirm before travelling, so a new
     // pharmacy cannot be registered without one.
-    const phone = normalizePhoneInput(dto.phone);
+    const phone = normalizePhoneInput(dto.phone, submittedCountry);
 
     // One physical pharmacy, one record. Checked before the insert, so the
     // second registration of a shop is refused rather than created and merged
@@ -304,7 +371,7 @@ export class PharmacyService {
           addressLine2: dto.addressLine2?.trim() || null,
           city: dto.city?.trim() || null,
           region: dto.region?.trim() || null,
-          country: normalizeCountryInput(dto.country),
+          country: submittedCountry,
           postalCode: dto.postalCode?.trim() || null,
           // Without these the pharmacy is invisible to the distance-bounded
           // patient search, however complete the rest of the profile is.
@@ -383,6 +450,7 @@ export class PharmacyService {
 
     return this.getProfile(created.id, user);
   }
+  
 
   async updateProfile(
     pharmacyId: string,
@@ -403,16 +471,23 @@ export class PharmacyService {
       throw new BadRequestException('Licence number cannot be empty.');
     }
 
-    // The contact number is what a patient acts on, so it cannot be cleared,
-    // and a record that never had one has to supply it on the next save. Saves
-    // that do not touch the field on a pharmacy that already has a number are
-    // unaffected.
+    // The country this edit leaves the record in, which is the one a national-format
+    // phone number is read against. Taking it from `existing` alone would reject a
+    // valid number whenever the country is being corrected in the same save.
+    const country =
+      dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country;
+
+    // The contact number is what a patient acts on, so it cannot be cleared, and a
+    // record that never had one has to supply it on the next save. A save that does
+    // not touch the field on a pharmacy that already has a number is unaffected: a
+    // number stored before this validation existed must not block an edit to the
+    // address, and it is normalized the moment the operator next touches the field.
     let phone = existing.phone;
     if (dto.phone !== undefined) {
-      phone = normalizePhoneInput(dto.phone);
+      phone = normalizePhoneInput(dto.phone, country);
     } else if (!existing.phone?.trim()) {
       throw new BadRequestException(
-        'Add the pharmacy\'s contact number before saving — patients are shown this ' +
+        "Add the pharmacy's contact number before saving — patients are shown this " +
           'number to confirm availability before visiting.',
       );
     }
@@ -439,12 +514,15 @@ export class PharmacyService {
         name: name !== undefined ? name : existing.name,
         licenseNumber: licenseNumber !== undefined ? licenseNumber : existing.licenseNumber,
         phone,
-        addressLine1: dto.addressLine1 !== undefined ? (dto.addressLine1.trim() || null) : existing.addressLine1,
-        addressLine2: dto.addressLine2 !== undefined ? (dto.addressLine2.trim() || null) : existing.addressLine2,
-        city: dto.city !== undefined ? (dto.city.trim() || null) : existing.city,
-        region: dto.region !== undefined ? (dto.region.trim() || null) : existing.region,
-        country: dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country,
-        postalCode: dto.postalCode !== undefined ? (dto.postalCode.trim() || null) : existing.postalCode,
+        addressLine1:
+          dto.addressLine1 !== undefined ? dto.addressLine1.trim() || null : existing.addressLine1,
+        addressLine2:
+          dto.addressLine2 !== undefined ? dto.addressLine2.trim() || null : existing.addressLine2,
+        city: dto.city !== undefined ? dto.city.trim() || null : existing.city,
+        region: dto.region !== undefined ? dto.region.trim() || null : existing.region,
+        country,
+        postalCode:
+          dto.postalCode !== undefined ? dto.postalCode.trim() || null : existing.postalCode,
         latitude: dto.latitude !== undefined ? dto.latitude : existing.latitude,
         longitude: dto.longitude !== undefined ? dto.longitude : existing.longitude,
         updatedAt: new Date(),
@@ -661,13 +739,13 @@ export class PharmacyService {
 
   async getUserNotifications(userId: string) {
     const list = await this.prisma.signalNotification.findMany({
-      where: { userId },
+      where: { userId, dismissed: false, archived: false },
       orderBy: { createdAt: 'desc' },
       take: 20,
     });
     return list.map((n) => ({
       id: n.id,
-      type: 'verification',
+      type: notificationCategory(n),
       title: n.title,
       message: n.description,
       when: this.timeAgo(n.createdAt),
@@ -871,6 +949,92 @@ export class PharmacyService {
    * 3. Frequently Requested Medicines (ranked by real DB inquiry/saved/search counts)
    * 4. Update Activity (count of daily updates from CSV, manual edits, status changes)
    */
+  /**
+   * Participation metrics for the portal's Participation page (MP-44).
+   *
+   * Every figure here is measured from this pharmacy's own rows. The page used to
+   * render a hard-coded fixture - 92% reliability, 87% participation, 34 updates a
+   * week - identical for every pharmacy, which is worse than an empty page: it
+   * reads as the operator's own record.
+   *
+   * Two of the old fixture's numbers are deliberately not reproduced. A
+   * "participation score" and a "data quality" percentage are composites, and
+   * inventing a formula would put an authoritative-looking score on the screen that
+   * no specification defines. What is returned instead is what can be counted:
+   * how much of the catalogue is current, how complete its details are, and how
+   * often it is updated. Each is explainable from the counts returned beside it.
+   */
+  async getParticipation(pharmacyId: string) {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [pharmacy, signals, updatesLast7Days] = await Promise.all([
+      this.prisma.pharmacy.findUnique({
+        where: { id: pharmacyId },
+        select: { reliabilityScore: true, verificationStatus: true, isParticipating: true },
+      }),
+      this.prisma.availabilitySignal.findMany({
+        where: { pharmacyId },
+        select: {
+          computedAt: true,
+          confidence: true,
+          medicine: {
+            select: { genericName: true, strength: true, dosageForm: true },
+          },
+        },
+      }),
+      this.prisma.inventorySignal.count({
+        where: { pharmacyId, reportedAt: { gte: sevenDaysAgo } },
+      }),
+    ]);
+    if (!pharmacy) throw new NotFoundException('Pharmacy not found');
+
+    const medicinesListed = signals.length;
+
+    // Average age of the availability information patients are being shown. Null
+    // rather than zero when nothing is listed: "0 hours old" would read as
+    // perfectly fresh when in fact there is nothing there.
+    const freshnessHours =
+      medicinesListed === 0
+        ? null
+        : Math.round(
+            (signals.reduce((total, s) => total + (now.getTime() - s.computedAt.getTime()), 0) /
+              medicinesListed /
+              3_600_000) *
+              10,
+          ) / 10;
+
+    const currentCount = signals.filter((s) => s.computedAt >= sevenDaysAgo).length;
+    const completeCount = signals.filter(
+      (s) =>
+        !!s.medicine.genericName?.trim() &&
+        !!s.medicine.strength?.trim() &&
+        !!s.medicine.dosageForm?.trim(),
+    ).length;
+
+    const percent = (part: number) =>
+      medicinesListed === 0 ? null : Math.round((part / medicinesListed) * 100);
+
+    return {
+      // Stored, and the one governed score here: it drives ZoikoAvail confidence.
+      reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      verificationStatus: pharmacy.verificationStatus,
+      isParticipating: pharmacy.isParticipating,
+
+      medicinesListed,
+      updatesLast7Days,
+      freshnessHours,
+
+      /** Share of listed medicines updated in the last seven days. */
+      upToDatePercent: percent(currentCount),
+      upToDateCount: currentCount,
+
+      /** Share whose MediBase entry has a generic name, strength and dosage form. */
+      detailsCompletePercent: percent(completeCount),
+      detailsCompleteCount: completeCount,
+    };
+  }
+
   async getReports(pharmacyId: string) {
     const now = new Date();
     const sevenDaysAgo = new Date(now);
@@ -988,25 +1152,22 @@ export class PharmacyService {
       day.inStockCount = cumulativeSignals.filter((s) => s.reportedInStock).length;
     }
 
-    const hasTrendHistory =
-      days.some((d) => d.inventoryCount > 0) || availabilitySignals.length > 0;
+    // True only when some day in the window actually has reports behind it. It
+    // previously counted the existence of any availability signal at all, so it
+    // claimed trend data for a pharmacy that had reported nothing all week.
+    const hasTrendHistory = days.some((d) => d.inventoryCount > 0);
 
-    const availabilityTrend = days.map((day) => {
-      let pct = 0;
-      if (day.inventoryCount > 0) {
-        pct = Math.round((day.inStockCount / day.inventoryCount) * 100);
-      } else if (availabilitySignals.length > 0) {
-        const totalAvail = availabilitySignals.length;
-        const availCount = availabilitySignals.filter(
-          (s) => s.confidence === AvailabilityConfidence.HIGH,
-        ).length;
-        pct = Math.round((availCount / totalAvail) * 100);
-      }
-      return {
-        label: day.label,
-        value: pct,
-      };
-    });
+    // A day with no reports has no availability percentage, and is reported as
+    // such. Today's snapshot used to be substituted for every empty day, which
+    // drew a flat line across the week - 79% seven times over - that looked like
+    // a fortnight of stable history rather than an absence of data (MP-44).
+    const availabilityTrend = days.map((day) => ({
+      label: day.label,
+      value:
+        day.inventoryCount > 0
+          ? Math.round((day.inStockCount / day.inventoryCount) * 100)
+          : null,
+    }));
 
     // 3. Frequently Requested Medicines
     const savedMap = new Map<string, number>();
@@ -1057,19 +1218,32 @@ export class PharmacyService {
     user?: AuthenticatedUser,
     ipAddress?: string,
   ) {
+    // Absent when an explicit identity id is sent, and that is correct: nothing
+    // is created on that path, so there is no catalog entry a blank field could
+    // end up in. Required by the DTO on the name path, where it is.
+    const name = (dto.name ?? '').trim();
+    const generic = (dto.generic ?? '').trim();
+    const strength = (dto.strength ?? '').trim();
+    const dosageForm = (dto.dosageForm ?? dto.dosageform ?? '').trim();
+
     // 1. Resolve the MediBase identity this row is about.
     //
     // An explicit id is authoritative: the identity is taken as given, with no
     // name matching and nothing created, so the pharmacy's signal lands on
-    // exactly the identity patients search. A name (what the portal form sends)
-    // is resolved as before, and introduces the identity when the catalog has
-    // never seen it.
+    // exactly the identity patients search.
+    //
+    // A name — what the portal form sends — is matched on name and strength
+    // together. The strength used to be passed as `dto.strength || undefined`,
+    // which in Prisma means "do not filter on this", so a request without one
+    // matched whichever strength happened to be stored first: a pharmacy
+    // stocking 500 mg was recorded against the 650 mg identity a patient was
+    // searching for.
     let medicine = dto.medicineId
       ? await this.prisma.medicineEntity.findUnique({ where: { id: dto.medicineId } })
       : await this.prisma.medicineEntity.findFirst({
           where: {
-            canonicalName: { equals: dto.name, mode: 'insensitive' },
-            strength: dto.strength || undefined,
+            canonicalName: { equals: name, mode: 'insensitive' },
+            strength: { equals: strength, mode: 'insensitive' },
           },
         });
 
@@ -1080,12 +1254,15 @@ export class PharmacyService {
     }
 
     if (!medicine) {
+      // This is a MediBase identity, created from what a pharmacy typed. It is
+      // why the fields above are required rather than optional: whatever is
+      // missing here is missing from the catalog every patient searches.
       medicine = await this.prisma.medicineEntity.create({
         data: {
-          canonicalName: dto.name,
-          genericName: dto.generic || null,
-          strength: dto.strength || null,
-          dosageForm: dto.dosageForm || dto.dosageform || 'Tablet',
+          canonicalName: name,
+          genericName: generic,
+          strength,
+          dosageForm,
         },
       });
     }
@@ -1153,7 +1330,7 @@ export class PharmacyService {
         medicineName: medicine.canonicalName,
         genericName: medicine.genericName || '',
         strength: medicine.strength || '',
-        dosageForm: medicine.dosageForm || 'Tablet',
+        dosageForm: medicine.dosageForm || '',
         newValues: { status, confidence: confidence.toLowerCase() },
         status: 'Success',
       },
