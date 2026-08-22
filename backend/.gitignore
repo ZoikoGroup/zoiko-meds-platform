@@ -26,3 +26,7 @@ npm-debug.log*
 
 # Test coverage
 coverage/
+
+# TypeScript incremental build state — never committed; a stale one makes
+# `nest build` emit nothing while still exiting 0.
+*.tsbuildinfo

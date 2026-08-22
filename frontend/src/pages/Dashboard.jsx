@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { getOverview } from '@/services/admin-api'
 import {
   Activity,
+  AlertTriangle,
   ArrowUpRight,
   Clock,
   Globe2,
-  Layers3,
+  Loader2,
   ShieldCheck,
   Users,
   Building2,
@@ -27,21 +27,15 @@ import { Button } from '@/components/ui/button'
 import { TrendChart } from '@/components/charts/trend-chart'
 import { BarCompare } from '@/components/charts/bar-chart'
 import { Donut } from '@/components/charts/donut'
-import { Heatmap } from '@/components/charts/heatmap'
 import { AvailabilityMap } from '@/features/dashboard/availability-map'
-import { GroupedBars } from '@/components/charts/bar-chart'
 import {
-  apiUsage,
-  availabilityTrend,
-  confidenceDistribution,
-  HEATMAP_COLS,
-  jurisdictionComparison,
-  partnerParticipation,
-  riskHeatmap,
-  shortagePressure,
-  signalFreshness,
-  topCategories,
-} from '@/services/data'
+  categorySeries,
+  confidenceSeries,
+  getDashboardOverview,
+  kpiCards,
+  relativeAge,
+  shortageSeries,
+} from '@/services/dashboard-api'
 
 const SUPER_KPI_ICONS = {
   'total-pharmacies': Building2,
@@ -63,47 +57,72 @@ const DONUT_COLORS = {
   unknown: 'var(--chart-axis)',
 }
 
-const superAdminKpis = [
-  { id: 'total-pharmacies', label: 'Total Pharmacies', value: '1,284', delta: '+37', deltaLabel: 'vs last month', trend: 'up', upIsGood: true, status: { label: 'Active', severity: 'good' }, spark: [55, 60, 64, 72, 79, 84, 88, 92, 98, 102, 108, 114] },
-  { id: 'verified-pharmacies', label: 'Verified Pharmacies', value: '1,212', delta: '+42', deltaLabel: 'certified', trend: 'up', upIsGood: true, status: { label: 'Compliant', severity: 'good' }, spark: [50, 54, 58, 66, 72, 76, 80, 84, 90, 94, 98, 102] },
-  { id: 'pending-verifications', label: 'Pending Verifications', value: '72', delta: '−5', deltaLabel: 'review queue', trend: 'down', upIsGood: true, status: { label: 'Pending Action', severity: 'warning' }, spark: [15, 14, 13, 11, 10, 8, 9, 7, 8, 6, 5, 4] },
-  { id: 'active-users', label: 'Active Users', value: '3,482', delta: '+182', deltaLabel: 'weekly active', trend: 'up', upIsGood: true, status: { label: 'High traffic', severity: 'good' }, spark: [20, 22, 24, 25, 27, 28, 30, 31, 32, 33, 34, 35] },
-  { id: 'total-medicines', label: 'Total Medicines', value: '312.4K', delta: '+8.2K', deltaLabel: 'normalized', trend: 'up', upIsGood: true, status: { label: 'Expanding', severity: 'good' }, spark: [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92] },
-  { id: 'searches-today', label: 'Searches Today', value: '42.8K', delta: '+4.2%', deltaLabel: 'ZoikoSignal volume', trend: 'up', upIsGood: true, status: { label: 'Nominal', severity: 'good' }, spark: [30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52] },
-  { id: 'confirmation-rate', label: 'Confirmation Rate', value: '98.6%', delta: '+1.4 pts', deltaLabel: 'median accuracy', trend: 'up', upIsGood: true, status: { label: 'SLA Standard', severity: 'good' }, spark: [92, 93, 94, 94, 95, 95, 96, 96, 97, 97, 98, 98] },
-  { id: 'api-requests', label: 'API Requests Today', value: '244K', delta: '+18K', deltaLabel: 'governed endpoints', trend: 'up', upIsGood: true, status: { label: 'Operational', severity: 'good' }, spark: [12, 14, 15, 17, 19, 21, 22, 24, 25, 27, 28, 30] },
-  { id: 'system-health', label: 'System Health', value: '99.99%', delta: '0.00 pts', deltaLabel: '30-day average uptime', trend: 'flat', upIsGood: true, status: { label: 'Healthy', severity: 'good' }, spark: [99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99] },
-  { id: 'active-integrations', label: 'Active Integrations', value: '48', delta: '+3', deltaLabel: 'ERP connections', trend: 'up', upIsGood: true, status: { label: 'Online', severity: 'good' }, spark: [8, 9, 10, 11, 12, 12, 13, 14, 14, 15, 16, 17] }
-]
+/** Holds a panel's slot while its data loads. */
+function Loading({ label = 'Loading…', height = 200 }) {
+  return (
+    <div
+      className="flex items-center justify-center gap-2 text-sm text-muted-foreground"
+      style={{ minHeight: height }}
+    >
+      <Loader2 className="size-4 animate-spin" />
+      {label}
+    </div>
+  )
+}
 
-function formatNum(n) {
-  return typeof n === 'number' ? n.toLocaleString() : n
+/**
+ * A panel the platform has no source for.
+ *
+ * The chart's container, title and dimensions stay exactly as they were; only
+ * the series is replaced by the backend's stated reason. Showing the reason on
+ * the dashboard — rather than an empty axis — is what stops the gap being read
+ * as "zero".
+ */
+function Unavailable({ gap, height = 200 }) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center gap-1.5 px-6 text-center"
+      style={{ minHeight: height }}
+    >
+      <span className="text-sm font-medium text-muted-foreground">Not available</span>
+      {gap?.reason && (
+        <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/80">{gap.reason}</p>
+      )}
+    </div>
+  )
 }
 
 export default function Dashboard() {
   const [overview, setOverview] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  useEffect(() => {
-    getOverview()
-      .then(setOverview)
-      .catch(() => setOverview(null))
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      setOverview(await getDashboardOverview())
+      setError('')
+    } catch (err) {
+      setError(err.message || 'Failed to load dashboard data')
+      // Left null on purpose: no seeded fallback. Every panel then renders its
+      // own empty state rather than numbers nobody measured.
+      setOverview(null)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  // Overlay live counts from /admin/overview onto the KPI cards where we have
-  // a real backend value; the rest keep their illustrative figures.
-  const kpis = useMemo(() => {
-    if (!overview) return superAdminKpis
-    const live = {
-      'total-pharmacies': overview.pharmacies?.total,
-      'verified-pharmacies': overview.pharmacies?.verified,
-      'pending-verifications': overview.verifications?.pending,
-      'active-users': overview.users?.active,
-      'total-medicines': overview.medicines?.total,
-    }
-    return superAdminKpis.map((k) =>
-      live[k.id] != null ? { ...k, value: formatNum(live[k.id]) } : k
-    )
-  }, [overview])
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const kpis = kpiCards(overview)
+  const confidence = confidenceSeries(overview)
+  const categories = categorySeries(overview)
+  const shortage = shortageSeries(overview)
+  const gaps = overview?.unavailable ?? {}
+  const freshness = overview?.freshness
+  const highConfidence = confidence.find((c) => c.level === 'high')?.value ?? 0
 
   return (
     <div className="flex flex-col gap-8">
@@ -116,11 +135,12 @@ export default function Dashboard() {
           <>
             <Badge variant="secondary" size="sm">
               <Clock className="size-3.5" />
-              Updated 2m ago
+              {overview ? `Updated ${relativeAge(overview.generatedAt)}` : 'Updating…'}
             </Badge>
             <Badge variant="secondary" size="sm">
               <Globe2 className="size-3.5" />
-              148 regions live
+              {/* Jurisdiction records. Zero is the real count today. */}
+              {overview ? `${overview.regionsLive} regions live` : 'Regions —'}
             </Badge>
             <Badge variant="success" size="sm">
               <ShieldCheck className="size-3.5" />
@@ -146,16 +166,30 @@ export default function Dashboard() {
         }
       />
 
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <AlertTriangle className="size-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
       {/* KPI grid */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {kpis.map((metric, i) => (
-          <KpiCard
-            key={metric.id}
-            metric={metric}
-            icon={SUPER_KPI_ICONS[metric.id] ?? Activity}
-            index={i}
-          />
-        ))}
+        {loading
+          ? Array.from({ length: 10 }, (_, i) => (
+              <div
+                key={i}
+                className="h-[168px] animate-pulse rounded-2xl border border-border bg-muted/30"
+              />
+            ))
+          : kpis.map((metric, i) => (
+              <KpiCard
+                key={metric.id}
+                metric={metric}
+                icon={SUPER_KPI_ICONS[metric.id] ?? Activity}
+                index={i}
+              />
+            ))}
       </div>
 
       {/* Visualizations */}
@@ -180,7 +214,13 @@ export default function Dashboard() {
             description="Coverage and access-risk by macro-region."
             index={0}
           >
-            <AvailabilityMap />
+            {loading ? (
+              <Loading height={280} />
+            ) : overview?.regions?.length ? (
+              <AvailabilityMap regions={overview.regions} />
+            ) : (
+              <Unavailable gap={gaps.availabilityMap} height={280} />
+            )}
           </ChartCard>
 
           <ChartCard
@@ -188,15 +228,24 @@ export default function Dashboard() {
             description="Share of surfaces by availability-confidence band."
             index={1}
           >
-            <Donut
-              data={confidenceDistribution.map((d) => ({
-                label: d.label,
-                value: d.value,
-                color: DONUT_COLORS[d.level],
-              }))}
-              centerValue="64%"
-              centerLabel="High confidence"
-            />
+            {loading ? (
+              <Loading height={180} />
+            ) : confidence.length > 0 ? (
+              <Donut
+                data={confidence.map((d) => ({
+                  label: d.label,
+                  value: d.value,
+                  color: DONUT_COLORS[d.level],
+                }))}
+                centerValue={`${highConfidence}%`}
+                centerLabel="High confidence"
+              />
+            ) : (
+              <Unavailable
+                gap={{ reason: 'No availability signals have been recorded yet.' }}
+                height={180}
+              />
+            )}
           </ChartCard>
 
           <ChartCard
@@ -205,16 +254,7 @@ export default function Dashboard() {
             description="Confidence and coverage index, trailing 12 months."
             index={2}
           >
-            <TrendChart
-              data={availabilityTrend}
-              xKey="date"
-              unit="%"
-              yDomain={[60, 100]}
-              series={[
-                { key: 'confidence', label: 'Availability confidence' },
-                { key: 'coverage', label: 'Coverage index' },
-              ]}
-            />
+            {loading ? <Loading height={240} /> : <Unavailable gap={gaps.availabilityTrend} height={240} />}
           </ChartCard>
 
           <ChartCard
@@ -222,15 +262,25 @@ export default function Dashboard() {
             description="Share of feeds within the 6-hour freshness SLA."
             index={3}
           >
-            <TrendChart
-              data={signalFreshness}
-              xKey="date"
-              unit="%"
-              yDomain={[70, 100]}
-              series={[
-                { key: 'withinSla', label: 'Within SLA', color: 'var(--chart-2)' },
-              ]}
-            />
+            {loading ? (
+              <Loading height={240} />
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-2" style={{ minHeight: 240 }}>
+                {/* No history exists for a timeline, but the current share is
+                    measurable — so report that rather than nothing at all. */}
+                <span className="text-3xl font-semibold tracking-tight tabular">
+                  {freshness ? `${freshness.pct}%` : '—'}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {freshness
+                    ? `${freshness.withinSla} of ${freshness.total} signals within ${freshness.slaHours}h, right now`
+                    : 'No signals recorded'}
+                </span>
+                <p className="max-w-xs text-center text-[11px] leading-relaxed text-muted-foreground/80">
+                  {gaps.signalFreshnessTimeline?.reason}
+                </p>
+              </div>
+            )}
           </ChartCard>
 
           <ChartCard
@@ -239,7 +289,7 @@ export default function Dashboard() {
             description="Weighted access-risk intensity by region across recent periods."
             index={4}
           >
-            <Heatmap rows={riskHeatmap} cols={HEATMAP_COLS} />
+            {loading ? <Loading height={280} /> : <Unavailable gap={gaps.regionalRisk} height={280} />}
           </ChartCard>
 
           <ChartCard
@@ -247,12 +297,28 @@ export default function Dashboard() {
             description="Coverage by therapeutic category."
             index={5}
           >
-            <BarCompare
-              data={topCategories}
-              categoryKey="category"
-              valueKey="coverage"
-              unit="%"
-            />
+            {loading ? (
+              <Loading height={240} />
+            ) : categories.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                <BarCompare
+                  data={categories}
+                  categoryKey="category"
+                  valueKey="coverage"
+                  unit="%"
+                />
+                {/* How much of the catalog these shares actually describe. */}
+                <p className="text-[11px] text-muted-foreground">
+                  Share of the {overview.categories.classified} of {overview.categories.total}{' '}
+                  medicines carrying an ATC code.
+                </p>
+              </div>
+            ) : (
+              <Unavailable
+                gap={{ reason: 'No medicine carries an ATC code, so none can be classified.' }}
+                height={240}
+              />
+            )}
           </ChartCard>
 
           <ChartCard
@@ -260,15 +326,24 @@ export default function Dashboard() {
             description="Aggregate shortage-pressure index vs baseline."
             index={6}
           >
-            <TrendChart
-              data={shortagePressure}
-              xKey="date"
-              height={230}
-              series={[
-                { key: 'pressure', label: 'Pressure index', color: 'var(--chart-3)' },
-                { key: 'baseline', label: 'Baseline', color: 'var(--chart-1)' },
-              ]}
-            />
+            {loading ? (
+              <Loading height={230} />
+            ) : shortage.length > 0 ? (
+              <TrendChart
+                data={shortage}
+                xKey="date"
+                unit="%"
+                height={230}
+                series={[
+                  { key: 'unmet', label: 'Unmet demand', color: 'var(--chart-3)' },
+                ]}
+              />
+            ) : (
+              <Unavailable
+                gap={{ reason: 'No search signal events have been recorded yet.' }}
+                height={230}
+              />
+            )}
           </ChartCard>
 
           <ChartCard
@@ -276,17 +351,11 @@ export default function Dashboard() {
             description="Coverage vs preparedness by jurisdiction."
             index={7}
           >
-            <GroupedBars
-              data={jurisdictionComparison}
-              xKey="jurisdiction"
-              unit="%"
-              yDomain={[0, 100]}
-              height={230}
-              series={[
-                { key: 'coverage', label: 'Coverage' },
-                { key: 'preparedness', label: 'Preparedness' },
-              ]}
-            />
+            {loading ? (
+              <Loading height={230} />
+            ) : (
+              <Unavailable gap={gaps.jurisdictionComparison} height={230} />
+            )}
           </ChartCard>
 
           <ChartCard
@@ -294,16 +363,7 @@ export default function Dashboard() {
             description="Governed vs sandbox request volume (thousands)."
             index={8}
           >
-            <TrendChart
-              data={apiUsage}
-              xKey="date"
-              unit="K"
-              height={230}
-              series={[
-                { key: 'production', label: 'Production' },
-                { key: 'sandbox', label: 'Sandbox' },
-              ]}
-            />
+            {loading ? <Loading height={230} /> : <Unavailable gap={gaps.apiUsage} height={230} />}
           </ChartCard>
 
           <ChartCard
@@ -312,17 +372,11 @@ export default function Dashboard() {
             description="Contributing partner organizations by type, trailing 12 months."
             index={9}
           >
-            <TrendChart
-              data={partnerParticipation}
-              xKey="date"
-              type="line"
-              height={240}
-              series={[
-                { key: 'health', label: 'Health systems' },
-                { key: 'government', label: 'Government' },
-                { key: 'enterprise', label: 'Enterprise' },
-              ]}
-            />
+            {loading ? (
+              <Loading height={240} />
+            ) : (
+              <Unavailable gap={gaps.partnerParticipation} height={240} />
+            )}
           </ChartCard>
         </div>
       </section>

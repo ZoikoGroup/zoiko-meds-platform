@@ -19,6 +19,8 @@ vi.mock('@/services/pharmacy-api', () => ({
   updateProfile: (...args) => updateProfileMock(...args),
   uploadPharmacyLogo: (...args) => uploadLogoMock(...args),
   removePharmacyLogo: (...args) => removeLogoMock(...args),
+  // The page imports it for the Maps-link field; nothing here uses it.
+  resolveMapLink: vi.fn(),
 }))
 
 vi.mock('@/lib/api-client', () => ({

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AvailabilityConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withLogoUrl } from '../pharmacy/logo/pharmacy-logo.service';
+import { PUBLIC_SIGNAL_WHERE, signalAgeMinutes } from './availability.visibility';
 
 /**
  * ZoikoAvail™ — availability confidence engine.
@@ -18,13 +19,16 @@ export class AvailabilityService {
   /**
    * Public-safe availability lookup for a medicine. Returns confidence bands
    * and freshness context only — no counts.
+   *
+   * Keyed on the MediBase identity id, never on a medicine name, and filtered
+   * by the shared governed-visibility rule so this answers with exactly the
+   * records every other public surface uses.
    */
   async getAvailability(medicineId: string) {
     const signals = await this.prisma.availabilitySignal.findMany({
       where: {
         medicineId,
-        confidence: { not: AvailabilityConfidence.SUPPRESSED },
-        pharmacy: { isParticipating: true, verificationStatus: 'VERIFIED' },
+        ...PUBLIC_SIGNAL_WHERE,
       },
       select: {
         confidence: true,
@@ -32,11 +36,14 @@ export class AvailabilityService {
         requiresConfirmation: true,
         computedAt: true,
         pharmacy: {
+          // `phone` is the number to ring: availability is a confidence signal,
+          // so the one action offered with it is to call and confirm.
           select: {
             id: true,
             name: true,
             city: true,
             region: true,
+            phone: true,
             latitude: true,
             longitude: true,
             // Timestamp only: it becomes a logo URL below, and the image itself
@@ -51,7 +58,9 @@ export class AvailabilityService {
     return signals.map((s) => ({
       pharmacy: withLogoUrl(s.pharmacy),
       confidence: s.confidence,
-      freshnessMinutes: s.freshnessMinutes,
+      // Derived from computedAt when the stored snapshot is absent, so the age
+      // shown here matches the pharmacy portal and /me/search for the same row.
+      freshnessMinutes: signalAgeMinutes(s.freshnessMinutes, s.computedAt),
       requiresConfirmation: s.requiresConfirmation,
       computedAt: s.computedAt,
       // NOTE: no exact stock exposed by design.

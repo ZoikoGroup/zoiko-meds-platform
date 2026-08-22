@@ -10,6 +10,7 @@ import { ErrorState } from '@/components/shared/states'
 import {
   getProfile,
   updateProfile,
+  resolveMapLink,
   uploadPharmacyLogo,
   removePharmacyLogo,
 } from '@/services/pharmacy-api'
@@ -17,6 +18,13 @@ import { apiBaseUrl } from '@/lib/api-client'
 import { PhoneInput } from '@/components/ui/phone-input'
 import { phoneValidationError } from '@/lib/phone'
 import { CLASSIFICATION_META } from '@/lib/commercial'
+import {
+  formatCoordinates,
+  isShortMapsLink,
+  mapsLinkFor,
+  parseGoogleMapsUrl,
+} from '@/lib/google-maps-url'
+import { useLanguage } from '@/providers/language-provider'
 import {
   Building2,
   ShieldCheck,
@@ -26,6 +34,9 @@ import {
   CreditCard,
   Upload,
   Trash2,
+  MapPin,
+  CheckCircle2,
+  ExternalLink,
 } from 'lucide-react'
 
 // Mirrors what the upload route accepts. Checked here as well so an oversized or
@@ -133,6 +144,162 @@ function Field({ label, value, onChange, id, required, placeholder, hint }) {
 }
 
 /**
+ * Set the pharmacy's coordinates from a Google Maps link.
+ *
+ * Patient search is distance-bounded, so a pharmacy with no coordinates is
+ * invisible no matter how complete its profile or inventory is. Asking an
+ * operator for latitude and longitude asks for something they do not have; a
+ * Maps link is two taps away and already contains the numbers.
+ *
+ * Full URLs are parsed in the browser. Share links (maps.app.goo.gl) carry no
+ * coordinates until their redirect is followed, which a browser cannot do
+ * cross-origin, so those go to the API. Nothing is written here: the detected
+ * pair is shown for confirmation and stored by the normal profile save, so a
+ * mis-pasted link cannot silently move a pharmacy.
+ */
+function MapsLocationField({ latitude, longitude, onDetected, t }) {
+  const [link, setLink] = useState('')
+  const [error, setError] = useState(null)
+  const [detected, setDetected] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const stored = formatCoordinates(latitude, longitude)
+  const storedLink = mapsLinkFor(latitude, longitude)
+
+  const handleGetLocation = async () => {
+    const raw = link.trim()
+    setDetected(null)
+    if (!raw) {
+      setError(t('mapsLinkEmpty', 'Paste a Google Maps link first.'))
+      return
+    }
+
+    const parsed = parseGoogleMapsUrl(raw)
+    if (parsed) {
+      setError(null)
+      setDetected(parsed)
+      onDetected(parsed)
+      return
+    }
+
+    // No coordinates in the URL itself. Only a share link is worth a round
+    // trip; anything else is simply not a Maps location.
+    if (!isShortMapsLink(raw)) {
+      setError(
+        t(
+          'mapsLinkInvalid',
+          'Could not read a location from that link. Paste a Google Maps link, or coordinates like 17.5561, 78.4181.',
+        ),
+      )
+      return
+    }
+
+    setBusy(true)
+    try {
+      const resolved = await resolveMapLink(raw)
+      setError(null)
+      setDetected(resolved)
+      onDetected(resolved)
+    } catch (err) {
+      setError(
+        err?.message ||
+          t(
+            'mapsLinkInvalid',
+            'Could not read a location from that link. Paste a Google Maps link, or coordinates like 17.5561, 78.4181.',
+          ),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 sm:col-span-2">
+      <Label htmlFor="p-maps">{t('googleMapsLocation', 'Google Maps Location')}</Label>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          id="p-maps"
+          value={link}
+          inputMode="url"
+          placeholder={t('pasteMapsLink', 'Paste Google Maps location link')}
+          onChange={(e) => setLink(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter inside a form would submit the whole profile.
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleGetLocation()
+            }
+          }}
+          className="flex-1"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleGetLocation}
+          disabled={busy}
+          className="sm:w-auto"
+        >
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <MapPin className="size-4" />}
+          {busy ? t('resolvingMapsLink', 'Reading the link…') : t('getLocation', 'Get Location')}
+        </Button>
+      </div>
+
+      {error && (
+        <span className="flex items-start gap-1.5 text-[11px] text-danger">
+          <AlertCircle className="mt-0.5 size-3 shrink-0" />
+          {error}
+        </span>
+      )}
+
+      {detected && !error && (
+        <span className="flex items-start gap-1.5 text-[11px] text-success">
+          <CheckCircle2 className="mt-0.5 size-3 shrink-0" />
+          {t('locationDetected', 'Location detected successfully')} —{' '}
+          <span className="tabular">
+            {formatCoordinates(detected.latitude, detected.longitude)}
+          </span>{' '}
+          {t('locationSavedOnSave', 'Save the profile to store it.')}
+        </span>
+      )}
+
+      {/* What is stored right now, so an operator can tell "set" from "about
+          to be set" — and check the pin before committing to it. */}
+      {stored ? (
+        <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          {t('currentLocation', 'Current location')}: <span className="tabular">{stored}</span>
+          {storedLink && (
+            <a
+              href={storedLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              {t('viewOnMaps', 'View on Google Maps')}
+              <ExternalLink className="size-3" />
+            </a>
+          )}
+        </span>
+      ) : (
+        <span className="flex items-start gap-1.5 text-[11px] text-warning">
+          <AlertCircle className="mt-0.5 size-3 shrink-0" />
+          {t(
+            'noLocationSet',
+            'No location set — your pharmacy will not appear in patient search.',
+          )}
+        </span>
+      )}
+
+      <span className="text-[11px] text-muted-foreground">
+        {t(
+          'mapsLocationHelp',
+          'Open your pharmacy in Google Maps, tap Share, and paste the link here. Patients only find you in nearby search once a location is set.',
+        )}
+      </span>
+    </div>
+  )
+}
+
+/**
  * The saved country comes back as its ISO code, so echo the country it resolved to.
  * Without it the operator types "India", sees "IN" after saving, and has no way to
  * tell whether that is the right country or a truncation.
@@ -149,6 +316,7 @@ function countryHint(value) {
 }
 
 export default function PharmacyProfile() {
+  const { t } = useLanguage()
   const [profile, setProfile] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [saveError, setSaveError] = useState(null)
@@ -166,10 +334,31 @@ export default function PharmacyProfile() {
   const [logoBusy, setLogoBusy] = useState('')
   const [logoError, setLogoError] = useState('')
 
+  /**
+   * The coordinates as they exist in the database.
+   *
+   * Held apart from `profile` on purpose. `profile` is the edit buffer, so once
+   * Get Location writes a detected pair into it, showing that pair as "current
+   * location" would tell the operator their pharmacy has moved when nothing has
+   * been saved yet — and the patient search would still be using the old point.
+   */
+  const [savedCoords, setSavedCoords] = useState({ latitude: null, longitude: null })
+
+  // A ref, not state: the background refresh below reads it from inside a
+  // listener registered once, where a state value would be captured stale.
+  const dirtyRef = useRef(false)
+  const markDirty = () => {
+    dirtyRef.current = true
+  }
+
   const loadProfile = useCallback(async () => {
     try {
       const p = await getProfile()
-      setProfile(p)
+      // This runs on window focus too. Stepping away to copy a Maps link and
+      // coming back would otherwise overwrite the edit buffer and silently
+      // discard the location just detected.
+      setProfile((current) => (current && dirtyRef.current ? current : p))
+      setSavedCoords({ latitude: p.latitude ?? null, longitude: p.longitude ?? null })
       setLoadError(null)
     } catch (err) {
       console.error('Failed to load profile', err)
@@ -202,7 +391,10 @@ export default function PharmacyProfile() {
     }
   }, [loadProfile])
 
-  const set = (key) => (value) => setProfile((p) => ({ ...p, [key]: value }))
+  const set = (key) => (value) => {
+    markDirty()
+    setProfile((p) => ({ ...p, [key]: value }))
+  }
 
   // The same rules the API applies, so a number is refused here rather than by a
   // save that appears to work until the response comes back (MP-23).
@@ -278,11 +470,29 @@ export default function PharmacyProfile() {
       setSaveError(phoneError)
       return
     }
+    // Patients are shown this number to confirm availability before visiting, so
+    // it cannot be left blank. phoneValidationError has nothing to judge on an
+    // empty field, which is right where the number is optional and wrong here.
+    if (!(profile.phone || '').replace(/\D/g, '')) {
+      setPhoneTouched(true)
+      setSaveError(
+        'Enter your pharmacy’s contact number, including its country or area code — patients are shown this number to confirm availability before visiting.',
+      )
+      return
+    }
     setSaving(true)
     setSaveError(null)
     try {
       const updated = await updateProfile(profile)
-      if (updated) setProfile(updated)
+      if (updated) {
+        setProfile(updated)
+        // Echo what the server actually stored, not what was typed.
+        setSavedCoords({
+          latitude: updated.latitude ?? null,
+          longitude: updated.longitude ?? null,
+        })
+      }
+      dirtyRef.current = false
       flash(
         updated?.verificationStatus === 'VERIFIED'
           ? 'Pharmacy profile saved'
@@ -471,8 +681,13 @@ export default function PharmacyProfile() {
             <CardDescription>Email is taken from your ZoikoMeds account.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-2">
+            {/* Required: this is the number shown to patients on the pharmacy's
+                search result, and the only way they can confirm before travelling. */}
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="p-phone">Phone</Label>
+              <Label htmlFor="p-phone">
+                Phone
+                <span className="text-danger"> *</span>
+              </Label>
               <PhoneInput
                 id="p-phone"
                 value={profile.phone ?? ''}
@@ -490,7 +705,8 @@ export default function PharmacyProfile() {
                 </span>
               ) : (
                 <span className="text-[11px] text-muted-foreground">
-                  Patients and the ZoikoMeds team use this to reach your pharmacy.
+                  Shown to patients on your pharmacy&rsquo;s search result so they can confirm
+                  availability before visiting.
                 </span>
               )}
             </div>
@@ -541,6 +757,18 @@ export default function PharmacyProfile() {
             <Field id="p-postal" label="Postal code" value={profile.postalCode} onChange={set('postalCode')} />
             <Field id="p-country" label="Country" value={profile.country} onChange={set('country')}
               placeholder="India or IN" hint={countryHint(profile.country)} />
+            <MapsLocationField
+              // Remount once a save lands, clearing the pasted link and the
+              // "save to store it" prompt now that it is stored.
+              key={`${savedCoords.latitude},${savedCoords.longitude}`}
+              latitude={savedCoords.latitude}
+              longitude={savedCoords.longitude}
+              onDetected={({ latitude, longitude }) => {
+                markDirty()
+                setProfile((prev) => ({ ...prev, latitude, longitude }))
+              }}
+              t={t}
+            />
           </CardContent>
         </Card>
       </div>

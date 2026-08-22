@@ -5,17 +5,17 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { StatusBadge, ConfidenceBadge } from '@/components/shared/status'
+import { StatusBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
-import { mapsHref, telHref, CONFIRM_NOTE, AVAILABILITY } from '@/lib/availability'
+import { mapsHref, pharmacyDirectionsHref, telHref, CONFIRM_NOTE, availabilityMeta } from '@/lib/availability'
 import { reverseGeocode } from '@/lib/geocode'
 import { validateLocation } from '@/lib/location-data'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
   Search, Tag, MapPin, Check, ScanLine, Loader2, ShieldCheck, Navigation,
-  Phone, Clock, Ambulance, Pill, CheckCircle2, AlertTriangle, Info,
+  Phone, Clock, Pill, CheckCircle2, AlertTriangle, Info,
   LocateFixed, Globe, Star, Heart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -163,7 +163,7 @@ export default function UserSearch() {
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) {
       setGeoStatus('error')
-      flash('Location isn’t supported by this browser. Enter a city instead.')
+      flash(t('geolocationUnsupported', 'Location isn’t supported by this browser. Enter a city instead.'))
       return
     }
     setGeoStatus('loading')
@@ -183,7 +183,7 @@ export default function UserSearch() {
       },
       () => {
         setGeoStatus('error')
-        flash('Couldn’t get your location. Enter a city instead.')
+        flash(t('geolocationFailed', 'Couldn’t get your location. Enter a city instead.'))
       },
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
     )
@@ -197,17 +197,17 @@ export default function UserSearch() {
   const runSearch = async (overrideQuery) => {
     const q = (typeof overrideQuery === 'string' ? overrideQuery : searchQuery).trim()
     if (!q) {
-      flash('Enter a medicine name to search.')
+      flash(t('enterMedicineToSearch', 'Enter a medicine name to search.'))
       return
     }
     if (!coords && !location.trim()) {
-      flash('Set a location — type a city/PIN code or tap “Use my location”.')
+      flash(t('setLocationPrompt', 'Set a location — type a city/PIN code or tap “Use my location”.'))
       return
     }
     if (!coords && location.trim()) {
       const locRes = await validateLocation(location.trim())
       if (!locRes.isValid) {
-        flash(locRes.message || 'Please enter a valid city, area, or 6-digit PIN code.')
+        flash(locRes.message || t('invalidLocationInput', 'Please enter a valid city, area, or 6-digit PIN code.'))
         return
       }
     }
@@ -273,20 +273,24 @@ export default function UserSearch() {
       if (isIdentitySaved) {
         // Off-catalog rows have no id; the name is the handle.
         await unsaveMutation.mutateAsync(target.id || target.name)
-        flash(`Removed ${target.name} from your saved medicines.`)
+        flash(t('savedRemovedNamed', 'Removed {name} from your saved medicines.', { name: target.name }))
       } else {
         await saveMutation.mutateAsync({ id: target.id, name: target.name })
         flash(
           target.id
-            ? `Saved ${target.name} to your medicines.`
-            : `Saved ${target.name}. We'll alert you when a verified pharmacy adds it.`,
+            ? t('savedNamedToMedicines', 'Saved {name} to your medicines.', { name: target.name })
+            : t(
+                'savedNamedOffCatalog',
+                'Saved {name}. We’ll alert you when a verified pharmacy adds it.',
+                { name: target.name },
+              ),
         )
       }
     } catch (err) {
       const message = err?.message ?? ''
-      if (/already saved/i.test(message)) flash('Already in your saved medicines.')
-      else if (/unauthor/i.test(message)) flash('Please sign in to save medicines.')
-      else flash(message || 'Could not update your saved medicines.')
+      if (/already saved/i.test(message)) flash(t('savedAlready', 'Already in your saved medicines.'))
+      else if (/unauthor/i.test(message)) flash(t('signInToSave', 'Please sign in to save medicines.'))
+      else flash(message || t('savedUpdateFailed', 'Could not update your saved medicines.'))
     }
   }
 
@@ -355,7 +359,7 @@ export default function UserSearch() {
                   {t('medicineName', 'MEDICINE NAME')}
                 </label>
                 <div className="relative">
-                  <Tag className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Tag className="pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="medicine-name"
                     value={searchQuery}
@@ -364,13 +368,13 @@ export default function UserSearch() {
                     onBlur={() => setShowSuggestions(false)}
                     onKeyDown={onNameKeyDown}
                     placeholder={t('medicinePlaceholder', 'e.g. Doxycycline')}
-                    aria-label="Medicine name"
+                    aria-label={t('medicineName', 'Medicine name')}
                     autoComplete="off"
                     role="combobox"
                     aria-expanded={showSuggestions && (suggLoading || suggestions.length > 0)}
                     aria-controls="medicine-suggestions"
                     aria-activedescendant={activeIndex >= 0 ? `medicine-suggestion-${activeIndex}` : undefined}
-                    className="h-11 rounded-xl pl-10"
+                    className="h-11 rounded-xl ps-10"
                   />
                   {showSuggestions && (
                     <MedicineSuggestions
@@ -396,7 +400,7 @@ export default function UserSearch() {
                   {t('searchArea', 'SEARCH AREA')}
                 </label>
                 <div className="relative">
-                  <MapPin className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <MapPin className="pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="search-area"
                     value={location}
@@ -409,14 +413,14 @@ export default function UserSearch() {
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                     placeholder={t('searchAreaPlaceholder', 'City, ZIP code, or postcode')}
-                    aria-label="Search area"
-                    className="h-11 rounded-xl pl-10 pr-36"
+                    aria-label={t('searchArea', 'Search area')}
+                    className="h-11 rounded-xl ps-10 pe-36"
                   />
                   <button
                     type="button"
                     onClick={useMyLocation}
                     disabled={geoStatus === 'loading'}
-                    className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-accent disabled:opacity-60"
+                    className="absolute end-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-accent disabled:opacity-60"
                   >
                     {geoStatus === 'loading' ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -440,8 +444,8 @@ export default function UserSearch() {
                         localStorage.removeItem(LOC_KEY)
                         if (activeSearch) clearResults()
                       }}
-                      aria-label="Undo location selection"
-                      className="ml-1.5 font-normal text-muted-foreground underline hover:text-foreground"
+                      aria-label={t('undoLocationSelection', 'Undo location selection')}
+                      className="ms-1.5 font-normal text-muted-foreground underline hover:text-foreground"
                     >
                       {t('undo', 'Undo')}
                     </button>
@@ -460,8 +464,8 @@ export default function UserSearch() {
                         localStorage.removeItem(LOC_KEY)
                         if (activeSearch) clearResults()
                       }}
-                      aria-label="Undo location selection"
-                      className="ml-1.5 font-normal text-muted-foreground underline hover:text-foreground"
+                      aria-label={t('undoLocationSelection', 'Undo location selection')}
+                      className="ms-1.5 font-normal text-muted-foreground underline hover:text-foreground"
                     >
                       {t('undo', 'Undo')}
                     </button>
@@ -488,7 +492,7 @@ export default function UserSearch() {
                 <select
                   value={distanceKm}
                   onChange={(e) => { setDistanceKm(Number(e.target.value)); if (activeSearch) clearResults() }}
-                  aria-label="Distance from me"
+                  aria-label={t('distanceFromMe', 'Distance from me')}
                   className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {DISTANCES_KM.map((d) => (
@@ -679,9 +683,16 @@ export default function UserSearch() {
                               </span>
                               <span className="truncate text-xs text-muted-foreground">{p.address}</span>
                             </div>
+                            {/* The pharmacy's answer for THIS medicine: High,
+                                Moderate, or Out of stock. A pharmacy that has
+                                run out still belongs in the results — it
+                                carries the medicine — so it is labelled, not
+                                dropped. */}
                             <div className="flex shrink-0 flex-col items-end gap-1">
-                              <ConfidenceBadge level={band} size="sm" />
-                              <span className="text-right text-[11px] text-muted-foreground">{AVAILABILITY[band]?.plain}</span>
+                              <StatusBadge tone={availabilityMeta(band).tone} size="sm">
+                                {availabilityMeta(band).label}
+                              </StatusBadge>
+                              <span className="text-end text-[11px] text-muted-foreground">{availabilityMeta(band).plain}</span>
                             </div>
                           </div>
 
@@ -695,13 +706,7 @@ export default function UserSearch() {
                           <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-3 text-xs">
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
-                              <span className="flex items-center gap-1.5 font-semibold text-foreground tabular">
-                                {p.is24x7 && (
-                                  <Badge variant="success" size="sm" className="gap-1">
-                                    <Ambulance className="size-3" />
-                                    24/7
-                                  </Badge>
-                                )}
+                              <span className="font-semibold text-foreground tabular">
                                 {p.distance == null ? '—' : `${p.distance.toFixed(1)} km`}
                               </span>
                             </div>
@@ -712,17 +717,39 @@ export default function UserSearch() {
                               </span>
                               <span className="font-medium text-foreground">{p.updated}</span>
                             </div>
+                            {/* This branch's own number, as stored on its
+                                record. Shown only when it has one — a placeholder
+                                here would be a number a patient actually dials. */}
+                            {p.phone ? (
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1 text-muted-foreground">
+                                  <Phone className="size-3" />
+                                  {t('phone', 'Phone')}
+                                </span>
+                                <a
+                                  href={telHref(p.phone)}
+                                  className="font-medium text-foreground tabular hover:underline"
+                                >
+                                  {p.phone}
+                                </a>
+                              </div>
+                            ) : null}
                           </div>
 
                           <div className="mt-auto flex gap-2 border-t border-border pt-3">
-                            <Button variant="outline" size="sm" className="flex-1" asChild>
-                              <a href={telHref(p.phone)}>
-                                <Phone className="size-3.5" />
-                                {t('call', 'Call')}
-                              </a>
-                            </Button>
+                            {/* Only offered when the record actually carries a
+                                number — a bare `tel:` link is a dead affordance
+                                on the one action the governance note asks for. */}
+                            {p.phone ? (
+                              <Button variant="outline" size="sm" className="flex-1" asChild>
+                                <a href={telHref(p.phone)}>
+                                  <Phone className="size-3.5" />
+                                  {t('call', 'Call')}
+                                </a>
+                              </Button>
+                            ) : null}
                             <Button size="sm" className="flex-1" asChild>
-                              <a href={mapsHref(`${p.name}, ${p.address}`)} target="_blank" rel="noopener noreferrer">
+                              <a href={pharmacyDirectionsHref(p)} target="_blank" rel="noopener noreferrer">
                                 <Navigation className="size-3.5" />
                                 {t('directions', 'Directions')}
                               </a>

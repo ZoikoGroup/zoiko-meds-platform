@@ -318,6 +318,38 @@
 /* ================================================================== */
 /*  UTILITIES                                                          */
 /* ================================================================== */
+@layer base {
+  /*
+   * Right-to-left support.
+   *
+   * Layout mirroring is handled by logical CSS utilities (ps/pe, ms/me,
+   * start/end, text-start) plus dir="rtl" on <html>, which the language
+   * provider sets. Only two things do not mirror on their own:
+   */
+
+  /* 1. Arrow glyphs. A "go forward" chevron points the way reading flows, so
+   *    it has to turn around in RTL. Scoped to arrows and chevrons by name so
+   *    no non-directional icon is ever mirrored. */
+  [dir='rtl'] .lucide-arrow-right,
+  [dir='rtl'] .lucide-arrow-left,
+  [dir='rtl'] .lucide-chevron-right,
+  [dir='rtl'] .lucide-chevron-left,
+  [dir='rtl'] .lucide-arrow-up-right,
+  [dir='rtl'] .lucide-arrow-right-left,
+  [dir='rtl'] .lucide-move-right,
+  [dir='rtl'] .lucide-corner-down-right {
+    transform: scaleX(-1);
+  }
+
+  /* 2. Latin-script runs inside Arabic — phone numbers, "10 MB", km values.
+   *    The browser's bidi algorithm orders these correctly on its own, but
+   *    isolating them stops a trailing digit or bracket from escaping into the
+   *    surrounding Arabic run. */
+  [dir='rtl'] .tabular {
+    unicode-bidi: isolate;
+  }
+}
+
 @layer utilities {
   /* Glassmorphism — used only for floating chrome (topbar, command bar) */
   .glass {

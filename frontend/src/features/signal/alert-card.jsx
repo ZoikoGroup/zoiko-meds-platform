@@ -23,8 +23,8 @@ export function AlertCard({ alert, index = 0, onAction, onDismiss }) {
     >
       <Card className="group relative overflow-hidden p-5 transition-shadow hover:shadow-card">
         {/* status accent rail */}
-        <span className={cn('absolute inset-y-0 left-0 w-1', meta.dot)} aria-hidden />
-        <div className="flex items-start gap-4 pl-1">
+        <span className={cn('absolute inset-y-0 start-0 w-1', meta.dot)} aria-hidden />
+        <div className="flex items-start gap-4 ps-1">
           <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-2xl', meta.chip)}>
             <Icon className="size-5.5" />
           </span>

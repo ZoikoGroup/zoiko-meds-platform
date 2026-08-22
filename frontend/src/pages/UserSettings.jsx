@@ -63,10 +63,13 @@ export default function UserSettings() {
                 aria-label="Interface language"
                 className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="en">English</option>
-                <option value="hi">हिन्दी (Hindi)</option>
-                <option value="te">తెలుగు (Telugu)</option>
-                <option value="es">Español (Spanish)</option>
+                {/* Driven by the locale registry, so shipping a language is a
+                    file in src/locales — never an edit to this picker. */}
+                {Object.entries(LANG_NAMES).map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {name}
+                  </option>
+                ))}
               </select>
               <Button variant="teal" size="sm" onClick={handleApplyLanguage}>
                 {t('apply', 'Apply')}

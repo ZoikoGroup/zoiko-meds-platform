@@ -1,0 +1,69 @@
+import { AvailabilityConfidence, Prisma, VerificationStatus } from '@prisma/client';
+
+/**
+ * ZoikoAvail™ — the single rule that decides which availability records a
+ * patient may be shown.
+ *
+ * Every public surface (medicine search, medicine detail, saved medicines,
+ * ZoikoSignal) reads the SAME AvailabilitySignal rows the pharmacy portal
+ * writes, so they must also agree on which of those rows count. When the rule
+ * was copied per service they drifted: /availability hid non-participating
+ * pharmacies and suppressed signals while /me/search still listed them, so the
+ * same pharmacy could be "stocking" a medicine on one screen and absent on
+ * another.
+ *
+ * The identity a signal is attached to is always its `medicineId` — the MediBase
+ * identity — never a medicine name. Names are for resolving the patient's query
+ * into identities; availability is only ever looked up by identity id.
+ */
+
+/** A pharmacy whose signals may be shown publicly. */
+export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
+  // Not yet verified, rejected or suspended: not part of the verified network,
+  // so it must never be presented as one.
+  verificationStatus: VerificationStatus.VERIFIED,
+  // A pharmacy that has left the network keeps its rows (it may come back) but
+  // stops speaking to patients — otherwise its last signal reads as current.
+  isParticipating: true,
+};
+
+/**
+ * A signal that may be shown publicly, for queries already scoped to a public
+ * pharmacy (e.g. an include on a Pharmacy row that PUBLIC_PHARMACY_WHERE
+ * selected).
+ */
+export const VISIBLE_SIGNAL_WHERE: Prisma.AvailabilitySignalWhereInput = {
+  // SUPPRESSED is the governed "do not publish this signal" state.
+  confidence: { not: AvailabilityConfidence.SUPPRESSED },
+};
+
+/** A signal that may be shown publicly, pharmacy standing included. */
+export const PUBLIC_SIGNAL_WHERE: Prisma.AvailabilitySignalWhereInput = {
+  ...VISIBLE_SIGNAL_WHERE,
+  pharmacy: PUBLIC_PHARMACY_WHERE,
+};
+
+/**
+ * Publicly visible signals with their pharmacy, for `include` on a
+ * MedicineEntity or SavedMedicine query.
+ */
+export const PUBLIC_SIGNALS_INCLUDE = {
+  where: PUBLIC_SIGNAL_WHERE,
+  include: { pharmacy: true },
+};
+
+/**
+ * Age of a signal in minutes.
+ *
+ * `freshnessMinutes` is a stored, optional snapshot; when it was never written
+ * the age still follows from `computedAt`, which every row has. Public surfaces
+ * quote the same age as the pharmacy portal rather than "no recent signal" for a
+ * signal that plainly has a timestamp.
+ */
+export function signalAgeMinutes(
+  stored: number | null | undefined,
+  computedAt: Date,
+): number {
+  if (stored != null) return stored;
+  return Math.max(0, Math.round((Date.now() - computedAt.getTime()) / 60000));
+}

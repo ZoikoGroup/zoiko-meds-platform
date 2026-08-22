@@ -1,0 +1,24 @@
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:5432:5432"
+  api:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: zoikomeds-pgadmin
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@zoikomeds.com
+      PGADMIN_DEFAULT_PASSWORD: Zaq1Zaq2$123
+      PGADMIN_LISTEN_PORT: 80
+    ports:
+      - "127.0.0.1:5050:80"
+    volumes:
+      - zoikomeds-pgadmin-data:/var/lib/pgadmin
+
+volumes:
+  zoikomeds-pgadmin-data:

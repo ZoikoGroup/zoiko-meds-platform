@@ -27,7 +27,7 @@ import { getPatientNotifications } from '@/services/patient-notifications-api'
 export function UserLayout() {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
-  const { t } = useLanguage()
+  const { t, isRtl } = useLanguage()
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -139,7 +139,7 @@ export function UserLayout() {
                     className={cn(
                       'relative flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold cursor-pointer transition-all duration-200 ease-in-out',
                       active
-                        ? 'bg-primary/10 text-primary shadow-sm font-bold before:absolute before:left-1 before:top-2.5 before:bottom-2.5 before:w-1 before:rounded-full before:bg-primary'
+                        ? 'bg-primary/10 text-primary shadow-sm font-bold before:absolute before:start-1 before:top-2.5 before:bottom-2.5 before:w-1 before:rounded-full before:bg-primary'
                         : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-1',
                     )}
                   >
@@ -203,20 +203,22 @@ export function UserLayout() {
   return (
     <div className="min-h-screen bg-background">
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 lg:block">
+      <aside className="fixed inset-y-0 start-0 z-40 hidden w-64 lg:block">
         {sidebarContent}
       </aside>
 
       {/* Mobile drawer */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="w-64 p-0">
+        {/* Opens from the sidebar's edge: the inline-start side, which dir
+            flips to the right under Arabic. */}
+        <SheetContent side={isRtl ? 'right' : 'left'} className="w-64 p-0">
           <SheetTitle className="sr-only">Patient portal navigation</SheetTitle>
           {sidebarContent}
         </SheetContent>
       </Sheet>
 
       {/* Main column */}
-      <div className="flex min-h-screen flex-col lg:pl-64">
+      <div className="flex min-h-screen flex-col lg:ps-64">
         {/* Top bar */}
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b border-border px-4 glass lg:px-6">
           <div className="flex items-center gap-3">
@@ -247,7 +249,7 @@ export function UserLayout() {
               <Link to="/notifications">
                 <Bell className="size-4.5 transition-colors text-[#2563EB] dark:text-[#3B82F6]" />
                 {notifUnread > 0 && (
-                  <span className="absolute top-1 right-1 flex size-2.5">
+                  <span className="absolute top-1 end-1 flex size-2.5">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2563EB] dark:bg-[#3B82F6] opacity-75" />
                     <span className="relative inline-flex size-2.5 rounded-full bg-[#2563EB] dark:bg-[#3B82F6]" />
                   </span>

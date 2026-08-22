@@ -1,4 +1,16 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "prisma", "**/*spec.ts"]
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    // Keep the incremental state inside the output it describes. tsconfig.json
+    // sets incremental:true and nest-cli.json sets deleteOutDir:true, so with
+    // the build info outside dist/ the two disagree after the first build: tsc
+    // reads a manifest saying every file is current, dist/ has just been wiped,
+    // and nothing is emitted. `nest build` still exits 0, which is how a deploy
+    // reached "dist/main.js missing after build" with no compiler error to show.
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "test", "dist", "prisma", "scripts", "**/*spec.ts"]
 }

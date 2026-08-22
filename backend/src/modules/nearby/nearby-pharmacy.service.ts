@@ -47,60 +47,44 @@ export interface NearbyPharmacy {
   placeId: string | null;
 }
 
-const MOCK_WEB_PHARMACIES: NearbyPharmacy[] = [
-  {
-    name: 'Aditya Hospitals Medchal – Multispeciality | Cardiology',
-    address: 'SBI BANK, OPP., MAIN ROAD, VIVEKANANDA STATUE, Raghavendra Nagar, Medchal',
-    latitude: 17.6295,
-    longitude: 78.4812,
-    distanceKm: 13.6,
-    rating: 4.7,
-    userRatingCount: 580,
-    openNow: true,
-    phone: '+914023456789',
-    googleMapsUri: 'https://maps.google.com/?q=Aditya+Hospitals+Medchal',
-    placeId: 'mock-place-1',
-  },
-  {
-    name: 'SV Super Speciality Hospital',
-    address: 'beside Ayush Vanam Road, Bahadurpally, Hyderabad, Telangana 500043',
-    latitude: 17.5621,
-    longitude: 78.4312,
-    distanceKm: 16.0,
-    rating: 4.5,
-    userRatingCount: 411,
-    openNow: true,
-    phone: '+914023456790',
-    googleMapsUri: 'https://maps.google.com/?q=SV+Super+Speciality+Hospital',
-    placeId: 'mock-place-2',
-  },
-  {
-    name: 'MedPlus Nizampet Road',
-    address: 'Survey No 254, SBI Branch, Nizampet Village, opposite Nizampet, Kukatpally',
-    latitude: 17.5185,
-    longitude: 78.3842,
-    distanceKm: 18.8,
-    rating: 3.7,
-    userRatingCount: 71,
-    openNow: true,
-    phone: '+914023456791',
-    googleMapsUri: 'https://maps.google.com/?q=MedPlus+Nizampet+Road',
-    placeId: 'mock-place-3',
-  },
-  {
-    name: 'Apple pharmacy',
-    address: 'GB99+45G, 5-100/4/32, Ammenpur Biramguda Rd, Ameenpur, Miyapur',
-    latitude: 17.512,
-    longitude: 78.3421,
-    distanceKm: 19.3,
-    rating: 3.9,
-    userRatingCount: 9,
-    openNow: true,
-    phone: '+914023456792',
-    googleMapsUri: 'https://maps.google.com/?q=Apple+pharmacy+Miyapur',
-    placeId: 'mock-place-4',
-  },
-];
+/**
+ * A geocoded point, with how precisely the address behind it was resolved.
+ *
+ * `precise` is false when Google could only place the query at a locality or
+ * wider — a city centroid. Those coordinates belong to a town, not a pharmacy:
+ * every branch in the city would land on the same point, at the same distance
+ * from every patient, so callers placing a pharmacy must refuse them.
+ */
+export interface GeocodedPoint {
+  lat: number;
+  lng: number;
+  precise: boolean;
+  /** Google's own description of what was matched, for logs and audit. */
+  granularity: string;
+}
+
+/**
+ * Result granularities that describe an area rather than a building.
+ * A match whose types are all in here is a centroid, whatever its coordinates
+ * look like.
+ */
+const AREA_LEVEL_TYPES = new Set([
+  'locality',
+  'sublocality',
+  'sublocality_level_1',
+  'sublocality_level_2',
+  'neighborhood',
+  'postal_code',
+  'postal_code_prefix',
+  'administrative_area_level_1',
+  'administrative_area_level_2',
+  'administrative_area_level_3',
+  'administrative_area_level_4',
+  'administrative_area_level_5',
+  'country',
+  'political',
+  'plus_code',
+]);
 
 export interface NearbyPharmacyResult {
   source: 'google_places';
@@ -148,20 +132,14 @@ export class NearbyPharmacyService {
     });
 
     if (!this.enabled) {
-      // In development mode when no Google Places API key is configured,
-      // return sample web pharmacies so local testing matches the production Vercel UI.
-      const mockOrigin = {
-        lat: query.lat ?? 17.55,
-        lng: query.lng ?? 78.45,
-        resolvedFrom: query.city ? `geocode:${query.city}` : 'default-location',
-      };
-      return {
-        source: 'google_places',
-        configured: true,
-        origin: mockOrigin,
-        radiusKm,
-        pharmacies: MOCK_WEB_PHARMACIES,
-      };
+      // Without a key there is nothing to report. Sample pharmacies used to be
+      // returned here with `configured: true` and fixed distances, which put
+      // invented shops, addresses and phone numbers on a medicine-availability
+      // screen at a distance that never changed with the caller's location.
+      return empty(
+        'Nearby web pharmacy search is not configured on this environment.',
+        false,
+      );
     }
 
     let origin: { lat: number; lng: number; resolvedFrom: string } | null = null;
@@ -198,8 +176,56 @@ export class NearbyPharmacyService {
     return Math.min(Math.max(km, 1), MAX_RADIUS_KM);
   }
 
-  /** Prefer explicit coordinates; otherwise geocode the city string. */
-  private async resolveOrigin(
+  /**
+   * Geocode a free-text address to coordinates, reporting how precisely the
+   * address resolved.
+   *
+   * Public so pharmacy registration can place a pharmacy on the map from the
+   * address an operator typed — a pharmacy without coordinates can never appear
+   * in a distance-bounded search. Returns null on any failure (no key, no
+   * match, network error); callers treat that as "not locatable yet".
+   *
+   * The caller decides what to do with an imprecise match. For placing a
+   * pharmacy the answer is always to refuse it: a city centroid puts every
+   * branch in town on one pin.
+   */
+  async geocode(address: string): Promise<GeocodedPoint | null> {
+    const query = (address ?? '').trim();
+    if (!this.enabled || !query) return null;
+    try {
+      const url = `${GEOCODE_URL}?address=${encodeURIComponent(query)}&key=${this.apiKey}`;
+      const data = await this.fetchJson(url);
+      const best = data?.results?.[0];
+      const loc = best?.geometry?.location;
+      if (data?.status !== 'OK' || !loc) return null;
+
+      const types: string[] = Array.isArray(best?.types) ? best.types : [];
+      const locationType: string = best?.geometry?.location_type ?? 'UNKNOWN';
+      // APPROXIMATE is Google's own word for "this is the middle of an area".
+      // A result whose every type is area-level is the same thing said twice.
+      const precise =
+        locationType !== 'APPROXIMATE' &&
+        types.length > 0 &&
+        types.some((t) => !AREA_LEVEL_TYPES.has(t));
+
+      return {
+        lat: loc.lat,
+        lng: loc.lng,
+        precise,
+        granularity: `${locationType}:${types.join('+') || 'unknown'}`,
+      };
+    } catch (err) {
+      this.logger.warn(`Geocoding "${query}" failed: ${errMessage(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Prefer explicit coordinates; otherwise geocode the city string.
+   * Public so medicine search can measure distances from the caller's own
+   * location rather than a fixed origin.
+   */
+  async resolveOrigin(
     query: NearbyQuery,
   ): Promise<{ lat: number; lng: number; resolvedFrom: string } | null> {
     if (isCoord(query.lat) && isCoord(query.lng)) {

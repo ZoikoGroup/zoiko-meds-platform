@@ -54,8 +54,12 @@ export default function PharmacyManagement() {
   const [newForm, setNewForm] = useState({
     name: '',
     licenseNumber: '',
+    addressLine1: '',
     city: '',
+    region: '',
+    postalCode: '',
     country: '',
+    phone: '',
     availabilityScore: 100,
   })
 
@@ -211,7 +215,17 @@ export default function PharmacyManagement() {
     if (!newForm.name || !newForm.licenseNumber) return
     await run(() => admin.createPharmacy(newForm))
     setIsAddOpen(false)
-    setNewForm({ name: '', licenseNumber: '', city: '', country: '', availabilityScore: 100 })
+    setNewForm({
+      name: '',
+      licenseNumber: '',
+      addressLine1: '',
+      city: '',
+      region: '',
+      postalCode: '',
+      country: '',
+      phone: '',
+      availabilityScore: 100,
+    })
   }
 
   const columns = [
@@ -612,6 +626,17 @@ export default function PharmacyManagement() {
                 required
               />
             </div>
+            {/* The branch's own street address. Coordinates are geocoded from
+                the whole address — city and country alone resolve to the city
+                centre, which would put every branch in town on one map pin. */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-muted-foreground">Street address</label>
+              <Input
+                value={newForm.addressLine1}
+                onChange={(e) => setNewForm({ ...newForm, addressLine1: e.target.value })}
+                placeholder="e.g. 214 W Kinzie St"
+              />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">City</label>
@@ -622,6 +647,24 @@ export default function PharmacyManagement() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">State / region</label>
+                <Input
+                  value={newForm.region}
+                  onChange={(e) => setNewForm({ ...newForm, region: e.target.value })}
+                  placeholder="e.g. Illinois"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Postal code</label>
+                <Input
+                  value={newForm.postalCode}
+                  onChange={(e) => setNewForm({ ...newForm, postalCode: e.target.value })}
+                  placeholder="e.g. 60654"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Country</label>
                 <Input
                   value={newForm.country}
@@ -629,6 +672,15 @@ export default function PharmacyManagement() {
                   placeholder="e.g. United States"
                 />
               </div>
+            </div>
+            {/* Shown to patients on this pharmacy's search result. */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-muted-foreground">Contact number</label>
+              <Input
+                value={newForm.phone}
+                onChange={(e) => setNewForm({ ...newForm, phone: e.target.value })}
+                placeholder="e.g. +1 312 555 0142"
+              />
             </div>
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" onClick={() => setIsAddOpen(false)}>

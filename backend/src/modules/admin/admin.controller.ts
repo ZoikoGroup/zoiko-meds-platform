@@ -12,6 +12,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { AdminService } from './admin.service';
+import { DashboardOverviewService } from './dashboard-overview.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -33,12 +34,23 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 @Roles(UserRole.SUPER_ADMIN)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly dashboard: DashboardOverviewService,
+  ) {}
 
   @Get('overview')
   @ApiOperation({ summary: 'Platform-wide counts & health for the admin console' })
   overview() {
     return this.admin.overview();
+  }
+
+  @Get('dashboard/overview')
+  @ApiOperation({
+    summary: 'Super Admin dashboard rollup (KPIs, confidence, freshness, shortage)',
+  })
+  dashboardOverview() {
+    return this.dashboard.overview();
   }
 
   @Get('users')

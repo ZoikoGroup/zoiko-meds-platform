@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsLatitude, IsLongitude, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdatePharmacyProfileDto {
   @ApiPropertyOptional({ example: 'Apollo Pharmacy' })
@@ -61,4 +62,24 @@ export class UpdatePharmacyProfileDto {
   @IsOptional()
   @IsString()
   postalCode?: string;
+
+  /**
+   * Where the pharmacy actually is, as a coordinate pair.
+   *
+   * Patient search is distance-bounded, so a pharmacy without coordinates can
+   * never appear in it however well its inventory matches. The portal lets an
+   * operator set these by pasting a Google Maps link; the columns are the same
+   * ones admin geocoding and the nearby search already use.
+   */
+  @ApiPropertyOptional({ example: 17.5561 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsLatitude()
+  latitude?: number;
+
+  @ApiPropertyOptional({ example: 78.4181 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsLongitude()
+  longitude?: number;
 }

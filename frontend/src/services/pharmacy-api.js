@@ -46,10 +46,25 @@ export const addMedicine = (medicine) =>
     body: medicine,
   })
 
+/** One-tap status change from the inventory row menu. */
 export const updateAvailability = (id, status) =>
   apiFetch(`/pharmacies/inventory/${id}`, {
     method: 'PATCH',
     body: { status },
+  })
+
+/**
+ * Full edit from the Edit Medicine dialog.
+ *
+ * Sends every editable field, not just the status. The endpoint patches: any
+ * key omitted here keeps its stored value. Returns the saved row as the server
+ * resolved it, which is not always what was typed — name and strength resolve
+ * to a MediBase identity, so the response is what the table must show.
+ */
+export const updateMedicine = (id, patch) =>
+  apiFetch(`/pharmacies/inventory/${id}`, {
+    method: 'PATCH',
+    body: patch,
   })
 
 export const deleteMedicine = (id) =>
@@ -175,6 +190,8 @@ const toProfile = (row, email) => ({
   region: row.region || '',
   country: row.country || '',
   postalCode: row.postalCode || '',
+  latitude: row.latitude ?? null,
+  longitude: row.longitude ?? null,
   reliabilityScore: Math.round((row.reliabilityScore || 0) * 100),
   // Reviewer correspondence lives behind /pharmacies/me only.
   reviewStatus: null,
@@ -198,6 +215,8 @@ const emptyDraft = (email) => ({
   region: '',
   country: '',
   postalCode: '',
+  latitude: null,
+  longitude: null,
   reliabilityScore: 0,
   reviewStatus: null,
   reviewedBy: null,
@@ -242,7 +261,20 @@ export const getProfile = async () => {
 const EDITABLE_FIELDS = [
   'name', 'licenseNumber', 'phone',
   'addressLine1', 'addressLine2', 'city', 'region', 'country', 'postalCode',
+  // Set from a Google Maps link in the profile form. Without these the
+  // pharmacy cannot appear in the distance-bounded patient search.
+  'latitude', 'longitude',
 ]
+
+/**
+ * Coordinates behind a Google Maps share link (maps.app.goo.gl).
+ *
+ * Those links carry no coordinates until their redirect is followed, which the
+ * browser cannot do cross-origin. Read-only — saving still goes through
+ * updateProfile.
+ */
+export const resolveMapLink = (url) =>
+  apiFetch('/pharmacies/me/resolve-map-link', { method: 'POST', body: { url } })
 
 export const updateProfile = async (patch) => {
   const body = {}

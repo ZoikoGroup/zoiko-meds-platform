@@ -221,15 +221,15 @@ export default function UserProfile() {
                       placeholder={t('enterPassword', 'Enter password')}
                       value={pwd.current}
                       onChange={(e) => setPwd({ ...pwd, current: e.target.value })}
-                      className="pr-10"
+                      className="pe-10"
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPwd((prev) => ({ ...prev, current: !prev.current }))}
-                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      className="absolute end-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
                       tabIndex={-1}
-                      aria-label={showPwd.current ? 'Hide current password' : 'Show current password'}
+                      aria-label={showPwd.current ? t('hideCurrentPassword', 'Hide current password') : t('showCurrentPassword', 'Show current password')}
                     >
                       {showPwd.current ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                     </button>
@@ -245,15 +245,15 @@ export default function UserProfile() {
                       placeholder={t('enterPassword', 'Enter password')}
                       value={pwd.next}
                       onChange={(e) => setPwd({ ...pwd, next: e.target.value })}
-                      className={`pr-10 ${isPasswordTooShort ? 'border-danger focus-visible:ring-danger/30' : ''}`}
+                      className={`pe-10 ${isPasswordTooShort ? 'border-danger focus-visible:ring-danger/30' : ''}`}
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPwd((prev) => ({ ...prev, next: !prev.next }))}
-                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      className="absolute end-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
                       tabIndex={-1}
-                      aria-label={showPwd.next ? 'Hide new password' : 'Show new password'}
+                      aria-label={showPwd.next ? t('hideNewPassword', 'Hide new password') : t('showNewPassword', 'Show new password')}
                     >
                       {showPwd.next ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                     </button>
@@ -272,15 +272,15 @@ export default function UserProfile() {
                       placeholder={t('enterPassword', 'Enter password')}
                       value={pwd.confirm}
                       onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })}
-                      className={`pr-10 ${passwordsMismatch ? 'border-danger focus-visible:ring-danger/30' : ''}`}
+                      className={`pe-10 ${passwordsMismatch ? 'border-danger focus-visible:ring-danger/30' : ''}`}
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPwd((prev) => ({ ...prev, confirm: !prev.confirm }))}
-                      className="absolute right-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
+                      className="absolute end-3 flex items-center text-muted-foreground hover:text-foreground outline-none cursor-pointer"
                       tabIndex={-1}
-                      aria-label={showPwd.confirm ? 'Hide confirm password' : 'Show confirm password'}
+                      aria-label={showPwd.confirm ? t('hideConfirmPassword', 'Hide confirm password') : t('showConfirmPassword', 'Show confirm password')}
                     >
                       {showPwd.confirm ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                     </button>

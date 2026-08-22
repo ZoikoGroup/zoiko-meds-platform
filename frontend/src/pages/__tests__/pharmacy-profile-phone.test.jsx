@@ -16,6 +16,8 @@ vi.mock('@/services/pharmacy-api', () => ({
   updateProfile: (...args) => updateProfileMock(...args),
   uploadPharmacyLogo: vi.fn(),
   removePharmacyLogo: vi.fn(),
+  // The page imports it for the Maps-link field; nothing here uses it.
+  resolveMapLink: vi.fn(),
 }))
 
 vi.mock('@/lib/api-client', () => ({
@@ -116,12 +118,16 @@ describe('pharmacy profile phone validation', () => {
     expect(updateProfileMock.mock.calls[0][0].phone).toContain('9876543210')
   })
 
-  it('still saves when the number is left empty, because it is optional', async () => {
+  it('will not save with the number left empty', async () => {
+    // Patient search offers one action on every pharmacy card - call before you
+    // travel - so the number is required rather than optional, and the API
+    // refuses the save too.
     await renderProfile()
 
     await userEvent.click(saveButton())
 
-    await waitFor(() => expect(updateProfileMock).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText(/contact number/i)).toBeTruthy()
+    expect(updateProfileMock).not.toHaveBeenCalled()
   })
 
   it('does not scold the operator before they have typed anything', async () => {

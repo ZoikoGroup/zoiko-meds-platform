@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
-# Deploy the ZoikoMeds API on a Compute Engine VM that runs Node directly under
-# pm2 or systemd (no docker compose — the container path in
-# .github/workflows/deploy.yml never matched this host).
+# Deploy the ZoikoMeds API on the Compute Engine VM.
+#
+# The restart target is detected from what is actually running on the host --
+# the docker compose `api` service, a pm2 process, or a systemd unit. The host
+# has changed hands between them, and a hardcoded guess either fails outright or
+# "succeeds" while the previous build keeps serving.
 #
 # Run it on the VM, from anywhere:
 #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
@@ -11,6 +14,7 @@
 #     REPO_DIR   checkout root                (default /var/www/zoiko-meds-platform)
 #     BRANCH     branch to deploy             (default main)
 #     PM2_NAME   pm2 process name             (default zoikomeds-api)
+#     CONTAINER_NAME docker container name       (default zoikomeds-api)
 #     SYSTEMD_UNIT systemd unit               (default zoikomeds-api)
 #     PORT       port the API listens on      (default 8000)
 #     API_PREFIX global route prefix          (default api)
@@ -25,6 +29,7 @@ set -euo pipefail
 REPO_DIR="${REPO_DIR:-/var/www/zoiko-meds-platform}"
 BRANCH="${BRANCH:-main}"
 PM2_NAME="${PM2_NAME:-zoikomeds-api}"
+CONTAINER_NAME="${CONTAINER_NAME:-zoikomeds-api}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-zoikomeds-api}"
 PORT="${PORT:-8000}"
 API_PREFIX="${API_PREFIX:-api}"
@@ -74,19 +79,56 @@ else
 fi
 
 log "Building"
-npm run build
-
-# dist/main.js is what start:prod runs; if it is missing the build silently
-# produced nothing and restarting would take the API down.
-if [ ! -f dist/main.js ]; then
-  echo "[deploy] FAILED: dist/main.js missing after build" >&2
+if ! npm run build; then
+  echo "[deploy] FAILED: nest build exited non-zero -- see the compiler output above." >&2
   exit 1
 fi
 
-log "Rebuilding and restarting Docker container"
+# dist/main.js is what the runtime starts: both `start:prod` and the Dockerfile
+# CMD name it. A build can succeed and still put it somewhere else -- any .ts
+# outside src/ in the compilation moves TypeScript's inferred rootDir up to
+# backend/, which emits dist/src/main.js instead. Print the layout so the next
+# failure names itself rather than looking like an empty build.
+if [ ! -f dist/main.js ]; then
+  echo "[deploy] FAILED: dist/main.js missing after build" >&2
+  echo "[deploy] dist/ contains:" >&2
+  find dist -maxdepth 2 -name '*.js' -print 2>/dev/null | head -20 >&2 || true
+  echo "[deploy] If main.js sits under dist/src/, tsconfig.build.json has lost its" >&2
+  echo "[deploy] rootDir/outDir pin -- restore that rather than moving files." >&2
+  exit 1
+fi
+
 cd "$REPO_DIR/backend"
-docker compose up -d --build api
-restarted="docker:api"
+# Order matters: look for something this host has actually run before falling
+# back to what the repo merely describes. `docker compose ps --services` lists
+# services defined in the committed compose file, so it matches on any host with
+# docker installed -- including a pm2 host -- and must not be the first test.
+if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
+  log "Rebuilding and restarting the docker compose api service"
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
+  restarted="docker:api"
+elif command -v pm2 >/dev/null 2>&1 && pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
+  log "Restarting pm2 process $PM2_NAME"
+  # --update-env so a changed .env is picked up instead of inherited stale.
+  pm2 restart "$PM2_NAME" --update-env
+  pm2 save || true
+  restarted="pm2:$PM2_NAME"
+elif systemctl list-units --full --all 2>/dev/null | grep -q "${SYSTEMD_UNIT}.service"; then
+  log "Restarting systemd unit $SYSTEMD_UNIT"
+  sudo systemctl restart "$SYSTEMD_UNIT"
+  restarted="systemd:$SYSTEMD_UNIT"
+elif docker compose ps --services 2>/dev/null | grep -qx api; then
+  # Nothing has run here yet, but compose describes the service: first release.
+  log "No existing process found; starting the compose api service for the first time"
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
+  restarted="docker:api"
+else
+  # Falling through would leave the previous build serving while the job goes
+  # green -- the exact drift this script exists to prevent.
+  echo "[deploy] FAILED: no restart target found (no compose 'api' service, no pm2" >&2
+  echo "[deploy] process '$PM2_NAME', no systemd unit '$SYSTEMD_UNIT')." >&2
+  exit 1
+fi
 
 # Poll rather than sleep-and-hope: the process needs a moment to bind the port.
 log "Waiting for health on 127.0.0.1:$PORT/$API_PREFIX/health"
@@ -100,9 +142,9 @@ for i in $(seq 1 30); do
 done
 
 echo "[deploy] FAILED: no health response after 30s. Recent logs:" >&2
-if [ "${restarted%%:*}" = "pm2" ]; then
-  pm2 logs "$PM2_NAME" --lines 40 --nostream >&2 || true
-else
-  sudo journalctl -u "$SYSTEMD_UNIT" -n 40 --no-pager >&2 || true
-fi
+case "${restarted%%:*}" in
+  docker) docker compose logs --tail 40 api >&2 || true ;;
+  pm2)    pm2 logs "$PM2_NAME" --lines 40 --nostream >&2 || true ;;
+  *)      sudo journalctl -u "$SYSTEMD_UNIT" -n 40 --no-pager >&2 || true ;;
+esac
 exit 1

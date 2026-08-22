@@ -82,16 +82,43 @@ function HelpCenter({ collapsed }) {
       </DialogContent>
     </Dialog>);
 }
+/**
+ * The collapse control.
+ *
+ * Lives in the sidebar header in BOTH states, vertically centred in the same
+ * h-16 band, so toggling never moves it. It used to be rendered twice — in the
+ * header when expanded and in the footer when collapsed — which sent it to the
+ * bottom of a full-height fixed rail the moment you collapsed the sidebar, out
+ * of reach without scrolling.
+ */
+function CollapseToggle({ collapsed, onToggle }) {
+    const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    const button = (<Button variant="ghost" size="icon-sm" onClick={onToggle} aria-label={label} aria-expanded={!collapsed} className="shrink-0 text-muted-foreground">
+      <PanelLeft className={cn('transition-transform duration-300 ease-in-out', collapsed && 'rotate-180')}/>
+    </Button>);
+    // Collapsed, the button carries no adjacent text, so name it on hover the
+    // same way the collapsed nav items are named.
+    if (collapsed) {
+        return (<Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>);
+    }
+    return button;
+}
 export function Sidebar({ collapsed = false, onNavigate, onToggleCollapse, showCollapseButton = false, }) {
     const isActive = useActiveMatcher();
+    // The rail is 4.5rem wide collapsed; the brand mark (34px) and the toggle
+    // (32px) cannot sit side by side in it. The toggle wins that space, because
+    // it is the only control in the rail and the full brand returns the instant
+    // the sidebar expands.
+    const showBrand = !(collapsed && showCollapseButton);
     return (<div className="flex h-full flex-col bg-sidebar">
-      <div className={cn('flex h-16 items-center border-b border-sidebar-border px-4', collapsed ? 'justify-center' : 'justify-between')}>
-        <Link to="/admin" onClick={onNavigate} aria-label="ZoikoMeds home">
-          <Brand collapsed={collapsed}/>
-        </Link>
-        {showCollapseButton && !collapsed && (<Button variant="ghost" size="icon-sm" onClick={onToggleCollapse} aria-label="Collapse sidebar" className="text-muted-foreground">
-            <PanelLeft />
-          </Button>)}
+      <div className={cn('flex h-16 shrink-0 items-center border-b border-sidebar-border', collapsed ? 'justify-center px-2' : 'justify-between px-4')}>
+        {showBrand && (<Link to="/admin" onClick={onNavigate} aria-label="ZoikoMeds home">
+            <Brand collapsed={collapsed}/>
+          </Link>)}
+        {showCollapseButton && (<CollapseToggle collapsed={collapsed} onToggle={onToggleCollapse}/>)}
       </div>
 
       <ScrollArea className="flex-1" viewportClassName="px-3 py-4">
@@ -106,10 +133,7 @@ export function Sidebar({ collapsed = false, onNavigate, onToggleCollapse, showC
         </nav>
       </ScrollArea>
 
-      <div className="flex flex-col gap-2 border-t border-sidebar-border p-3">
-        {showCollapseButton && collapsed && (<Button variant="ghost" size="icon" onClick={onToggleCollapse} aria-label="Expand sidebar" className="mx-auto text-muted-foreground">
-            <PanelLeft className="rotate-180"/>
-          </Button>)}
+      <div className="flex shrink-0 flex-col gap-2 border-t border-sidebar-border p-3">
         <HelpCenter collapsed={collapsed}/>
         {!collapsed && (<div className="flex items-center gap-2.5 rounded-xl border border-sidebar-border bg-card/50 px-3 py-2.5">
             <span className="relative flex size-2">

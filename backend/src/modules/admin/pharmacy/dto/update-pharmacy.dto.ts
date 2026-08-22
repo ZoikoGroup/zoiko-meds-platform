@@ -1,6 +1,8 @@
 import {
   IsEnum,
   IsInt,
+  IsLatitude,
+  IsLongitude,
   IsOptional,
   IsString,
   Max,
@@ -8,6 +10,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { VerificationStatus } from '@prisma/client';
 
 export class UpdatePharmacyDto {
@@ -71,4 +74,16 @@ export class UpdatePharmacyDto {
   @IsOptional()
   @IsEnum(VerificationStatus)
   verificationStatus?: VerificationStatus;
+
+  // See CreatePharmacyDto: without coordinates a pharmacy cannot appear in any
+  // distance-bounded patient search. Omit to have the address geocoded.
+  @IsOptional()
+  @Type(() => Number)
+  @IsLatitude()
+  latitude?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsLongitude()
+  longitude?: number;
 }

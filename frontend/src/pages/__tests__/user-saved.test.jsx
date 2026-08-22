@@ -16,7 +16,14 @@ vi.mock('react-router-dom', () => ({
 }))
 
 vi.mock('@/providers/language-provider', () => ({
-  useLanguage: () => ({ t: (_key, fallback) => fallback }),
+  // Mirrors the real t(): substitutes {token} params, so a message like
+  // 'Remove {name} from saved' renders with the medicine name as it does in app.
+  useLanguage: () => ({
+    t: (_key, fallback, params) =>
+      params
+        ? String(fallback).replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m))
+        : fallback,
+  }),
 }))
 
 const listSavedMock = vi.fn()

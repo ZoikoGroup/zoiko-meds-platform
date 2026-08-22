@@ -159,6 +159,9 @@ describe('PharmacyService self-service profile onboarding', () => {
       const result = await service.saveMyProfile(USER, {
         name: 'Apollo Kompally',
         licenseNumber: 'LIC-9',
+        // Required on submit: patients are shown this number to confirm
+        // availability before visiting (see pharmacy-contact-and-location.spec).
+        phone: '+91 40 2345 6789',
         addressLine1: 'Kompally Main Rd',
         city: 'Hyderabad',
         country: 'India',
@@ -210,6 +213,7 @@ describe('PharmacyService self-service profile onboarding', () => {
       await service.saveMyProfile(USER, {
         name: 'Apollo Kompally',
         licenseNumber: 'LIC-REAL',
+        phone: '+91 40 2345 6789',
       });
 
       expect(prisma.verificationRequest.update).toHaveBeenCalledWith(
@@ -248,7 +252,11 @@ describe('PharmacyService self-service profile onboarding', () => {
         verificationStatus: 'PENDING', isParticipating: false, reliabilityScore: 0,
       });
 
-      await service.saveMyProfile(USER, { name: 'Apollo', licenseNumber: 'LIC-9' });
+      await service.saveMyProfile(USER, {
+        name: 'Apollo',
+        licenseNumber: 'LIC-9',
+        phone: '+91 40 2345 6789',
+      });
 
       expect(prisma.verificationRequest.update).toHaveBeenCalledWith({
         where: { id: 'vr_orphan' },
@@ -567,12 +575,15 @@ describe('PharmacyService self-service profile onboarding', () => {
       );
     });
 
-    it('clears the number when the field is emptied', async () => {
+    it('refuses to clear the number rather than saving a card nobody can act on', async () => {
+      // Patient search offers one action on every pharmacy card - call before you
+      // travel - so an emptied field is a refusal, not a cleared value.
       seed({ phone: '+914023456789' });
 
-      await service.saveMyProfile(linked, { phone: '' });
-
-      expect(savedPhone()).toBeNull();
+      await expect(service.saveMyProfile(linked, { phone: '' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.pharmacy.update).not.toHaveBeenCalled();
     });
 
     it('leaves a stored number alone when the edit does not mention it', async () => {
@@ -617,7 +628,12 @@ describe('PharmacyService self-service profile onboarding', () => {
         licenseNumber: 'LIC-1',
         verificationStatus,
         isParticipating: verificationStatus === 'VERIFIED',
-        phone: null, addressLine1: null, addressLine2: null, city: null,
+        // A registered pharmacy has a contact number on record — patients are
+        // shown it to confirm before visiting, so a save cannot clear it and a
+        // record without one is asked to supply it
+        // (see pharmacy-contact-and-location.spec).
+        phone: '+91 40 2345 6789',
+        addressLine1: null, addressLine2: null, city: null,
         region: null, country: null, postalCode: null, reliabilityScore: 0.9,
         ...over,
       };
