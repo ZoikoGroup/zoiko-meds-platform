@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
 
 /**
@@ -97,12 +98,18 @@ function buildService() {
 
   const audit = { write: jest.fn() };
   const savedLink = { linkPendingSaves: jest.fn().mockResolvedValue(0) };
+  const portalNotifications = {
+    inventoryBecameAvailable: jest.fn(),
+    inventoryBecameUnavailable: jest.fn(),
+    bulkUploadCompleted: jest.fn(),
+  };
   const service = new PharmacyService(
     prisma as unknown as PrismaService,
     audit as unknown as AuditWriter,
     savedLink as unknown as SavedMedicineLinkService,
+    portalNotifications as unknown as PharmacyNotificationService,
   );
-  return { service, prisma, audit, savedLink, state };
+  return { service, prisma, audit, savedLink, portalNotifications, state };
 }
 
 const edit = (service: PharmacyService, dto: Record<string, unknown>) =>
@@ -242,6 +249,56 @@ describe('editing an inventory item', () => {
     await edit(service, { name: 'Volini Gel', status: 'out-of-stock' });
 
     expect(savedLink.linkPendingSaves).not.toHaveBeenCalled();
+  });
+
+  it('links patients when a medicine the pharmacy already held is restocked', async () => {
+    const { service, savedLink } = buildService();
+
+    // The row starts out of stock (LOW). A status-only edit back to available is
+    // the other way a saved medicine becomes available, and it used to raise
+    // nothing: the link hook fired only when the edit re-pointed the row at a
+    // different identity, so a patient waiting on this exact medicine heard
+    // nothing when the only pharmacy stocking it flipped it back.
+    await edit(service, { status: 'available' });
+
+    expect(savedLink.linkPendingSaves).toHaveBeenCalledWith({
+      id: 'med_asthalin_100',
+      canonicalName: 'Asthalin',
+    });
+  });
+
+  it('tells the pharmacy portal when its own row becomes available', async () => {
+    const { service, portalNotifications } = buildService();
+
+    await edit(service, { status: 'available' });
+
+    expect(portalNotifications.inventoryBecameAvailable).toHaveBeenCalledTimes(1);
+    const [pharmacyId, medicine] = portalNotifications.inventoryBecameAvailable.mock.calls[0];
+    expect(pharmacyId).toBe(PHARMACY);
+    expect(medicine).toMatchObject({ id: 'med_asthalin_100', canonicalName: 'Asthalin' });
+  });
+
+  it('raises nothing for an edit that leaves the row out of stock', async () => {
+    const { service, portalNotifications } = buildService();
+
+    // Correcting a descriptive field on a row nobody can buy from takes nothing
+    // away from patients and gives them nothing. Reporting it would fill the
+    // Inventory tab with rows saying only that someone pressed Save, burying the
+    // transitions that matter.
+    await edit(service, { generic: 'Salbutamol sulfate' });
+
+    expect(portalNotifications.inventoryBecameAvailable).not.toHaveBeenCalled();
+    expect(portalNotifications.inventoryBecameUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('reports losing availability the pharmacy actually had', async () => {
+    const { service, portalNotifications, state } = buildService();
+    state.row = { ...signalRow(), confidence: 'HIGH' };
+
+    await edit(service, { status: 'out-of-stock' });
+
+    expect(portalNotifications.inventoryBecameUnavailable).toHaveBeenCalledTimes(1);
+    expect(portalNotifications.inventoryBecameUnavailable.mock.calls[0][2]).toBe('out-of-stock');
   });
 
   it('records both the old and the new identity in the audit trail', async () => {
