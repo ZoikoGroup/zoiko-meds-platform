@@ -1,19 +1,42 @@
 import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis, } from 'recharts';
 import { CHART_GRID, CHART_MUTED, CHART_SERIES, axisProps } from '@/utils/chart';
+import { useElementWidth } from '@/hooks/use-element-width';
 import { ChartTooltip } from './chart-tooltip';
 import { ChartLegend } from './chart-legend';
+/** Widest the category axis may get, and the narrowest still worth labelling. */
+const MAX_CATEGORY_AXIS = 148;
+const MIN_CATEGORY_AXIS = 72;
+/** Share of the chart the category labels may claim. The rest draws the bars. */
+const CATEGORY_AXIS_SHARE = 0.42;
+/**
+ * Horizontal bars with the category names down the left.
+ *
+ * The axis width is measured rather than fixed (MSA-28). At 148px hard-coded,
+ * a card a third of a grid column wide — 232px of content on a 1536px screen
+ * with the activity panel open — spent 196px of it on the axis and margins and
+ * left 36px for the bars, so the panel read as empty next to full-length
+ * labels. Now the labels take at most 42% and the bars always get the rest.
+ */
 export function BarCompare({ data, categoryKey, valueKey, color = CHART_SERIES[0], height = 280, unit = '', showValues = true, }) {
-    return (<ResponsiveContainer width="100%" height={height}>
-      <BarChart layout="vertical" data={data} margin={{ top: 4, right: showValues ? 40 : 12, bottom: 0, left: 8 }} barCategoryGap="26%">
-        <CartesianGrid horizontal={false} stroke={CHART_GRID} strokeWidth={1}/>
-        <XAxis type="number" hide domain={[0, 'dataMax']}/>
-        <YAxis type="category" dataKey={categoryKey} {...axisProps} width={148} tick={{ fill: CHART_MUTED, fontSize: 12 }}/>
-        <Tooltip cursor={{ fill: 'var(--accent)', opacity: 0.5 }} content={<ChartTooltip unit={unit}/>}/>
-        <Bar dataKey={valueKey} fill={color} radius={[0, 4, 4, 0]} maxBarSize={20}>
-          {showValues && (<LabelList dataKey={valueKey} position="right" className="fill-foreground text-xs tabular" formatter={(v) => `${v}${unit}`}/>)}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>);
+    const [ref, width] = useElementWidth();
+    // Before the first measurement, keep the old fixed width: it is right on a
+    // wide card and no worse than before on a narrow one.
+    const categoryAxis = width
+        ? Math.max(MIN_CATEGORY_AXIS, Math.min(MAX_CATEGORY_AXIS, Math.round(width * CATEGORY_AXIS_SHARE)))
+        : MAX_CATEGORY_AXIS;
+    return (<div ref={ref}>
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart layout="vertical" data={data} margin={{ top: 4, right: showValues ? 40 : 12, bottom: 0, left: 8 }} barCategoryGap="26%">
+          <CartesianGrid horizontal={false} stroke={CHART_GRID} strokeWidth={1}/>
+          <XAxis type="number" hide domain={[0, 'dataMax']}/>
+          <YAxis type="category" dataKey={categoryKey} {...axisProps} width={categoryAxis} tick={{ fill: CHART_MUTED, fontSize: 12 }}/>
+          <Tooltip cursor={{ fill: 'var(--accent)', opacity: 0.5 }} content={<ChartTooltip unit={unit}/>}/>
+          <Bar dataKey={valueKey} fill={color} radius={[0, 4, 4, 0]} maxBarSize={20}>
+            {showValues && (<LabelList dataKey={valueKey} position="right" className="fill-foreground text-xs tabular" formatter={(v) => `${v}${unit}`}/>)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>);
 }
 export function GroupedBars({ data, xKey, series, height = 280, unit = '', yDomain, }) {
     const resolved = series.map((s, i) => ({
