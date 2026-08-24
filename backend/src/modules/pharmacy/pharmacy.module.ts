@@ -4,12 +4,13 @@ import { SavedMedicineLinkModule } from '../saved-link/saved-medicine-link.modul
 import { PharmacyController } from './pharmacy.controller';
 import { PharmacyService } from './pharmacy.service';
 import { PharmacyLogoService } from './logo/pharmacy-logo.service';
+import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 
 @Module({
   imports: [AdminModule, SavedMedicineLinkModule],
   controllers: [PharmacyController],
-  providers: [PharmacyService, PharmacyLogoService],
-  exports: [PharmacyService, PharmacyLogoService],
+  providers: [PharmacyService, PharmacyLogoService, PharmacyNotificationService],
+  exports: [PharmacyService, PharmacyLogoService, PharmacyNotificationService],
 })
 export class PharmacyModule {}
 

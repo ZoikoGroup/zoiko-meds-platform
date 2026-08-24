@@ -26,6 +26,11 @@ import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { assertLocationIsFree } from './location-identity';
 import { resolveMapLink } from './map-link';
+import {
+  PHARMACY_INVENTORY_KEY_PREFIX,
+  PHARMACY_UPLOAD_KEY_PREFIX,
+  PharmacyNotificationService,
+} from './notifications/pharmacy-notification.service';
 
 /**
  * Maps the pharmacy-facing status string to the AvailabilityConfidence enum
@@ -58,12 +63,18 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
  * decisions. The dedupe key is the honest discriminator - it is set by whichever
  * workflow raised the row, and it is what distinguishes a verification decision
  * from a genuine safety alert that happens to share a type.
+ *
+ * The two pharmacy-written prefixes are imported rather than repeated: they are
+ * a contract with PharmacyNotificationService, and a prefix that drifts on one
+ * side of it is an empty filter tab with nothing to show it is broken.
  */
 function notificationCategory(row: {
   dedupeKey: string;
   type: SignalNotificationType;
 }): 'inventory' | 'verification' | 'upload' | 'system' {
   if (row.dedupeKey.startsWith('verification:')) return 'verification';
+  if (row.dedupeKey.startsWith(PHARMACY_UPLOAD_KEY_PREFIX)) return 'upload';
+  if (row.dedupeKey.startsWith(PHARMACY_INVENTORY_KEY_PREFIX)) return 'inventory';
 
   switch (row.type) {
     // Availability signals about a medicine: stock, in this portal's language.
@@ -157,6 +168,7 @@ export class PharmacyService {
     private readonly prisma: PrismaService,
     private readonly auditWriter: AuditWriter,
     private readonly savedLink: SavedMedicineLinkService,
+    private readonly portalNotifications: PharmacyNotificationService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -1271,6 +1283,18 @@ export class PharmacyService {
     const confidence = STATUS_TO_CONFIDENCE[status] || AvailabilityConfidence.HIGH;
     const reportedInStock = status !== 'out-of-stock';
 
+    // The availability this pharmacy was publishing for this medicine before
+    // now, if any. Read here because the upsert below is the point it stops
+    // existing, and the portal notification is about the transition rather than
+    // about the save.
+    const priorSignal = await this.prisma.availabilitySignal.findUnique({
+      where: { medicineId_pharmacyId: { medicineId: medicine.id, pharmacyId } },
+      select: { confidence: true },
+    });
+    const priorStatus = priorSignal
+      ? CONFIDENCE_TO_STATUS[priorSignal.confidence] || 'out-of-stock'
+      : null;
+
     // 2. Create the raw inventory signal
     await this.prisma.inventorySignal.create({
       data: {
@@ -1307,6 +1331,15 @@ export class PharmacyService {
     if (reportedInStock) {
       await this.savedLink.linkPendingSaves(medicine);
     }
+
+    // 3c. Tell this pharmacy's own portal what changed, on the Inventory tab.
+    await this.notifyAvailabilityTransition(
+      pharmacyId,
+      medicine,
+      priorStatus,
+      status,
+      Date.now(),
+    );
 
     // 4. Audit log entry
     const pharmacyName = await this.getPharmacyName(pharmacyId);
@@ -1350,6 +1383,49 @@ export class PharmacyService {
       confidence: confidence.toLowerCase(),
       updated: 'just now',
     };
+  }
+
+  /**
+   * Tell the pharmacy's own portal that a medicine's patient-facing
+   * availability changed — when it actually changed.
+   *
+   * `previousStatus` is null for a medicine this pharmacy was publishing
+   * nothing for, which counts as a transition into whatever it now is. The same
+   * status in and out is not an event and raises nothing: re-saving a row must
+   * not manufacture news, or the Inventory tab fills with rows that say only
+   * that somebody pressed Save.
+   *
+   * Never rethrows — a failed notification must not undo the inventory write it
+   * is describing.
+   */
+  private async notifyAvailabilityTransition(
+    pharmacyId: string,
+    medicine: { id: string; canonicalName: string; strength?: string | null },
+    previousStatus: string | null,
+    status: string,
+    occurredAtMs: number,
+  ): Promise<void> {
+    if (previousStatus === status) return;
+
+    if (status === 'available') {
+      await this.portalNotifications.inventoryBecameAvailable(
+        pharmacyId,
+        medicine,
+        occurredAtMs,
+      );
+      return;
+    }
+
+    // A row that arrives already out of stock takes nothing away from patients,
+    // so only the loss of availability the pharmacy actually had is reported.
+    if (previousStatus === null) return;
+
+    await this.portalNotifications.inventoryBecameUnavailable(
+      pharmacyId,
+      medicine,
+      status,
+      occurredAtMs,
+    );
   }
 
   /**
@@ -1550,7 +1626,33 @@ export class PharmacyService {
     // told — the same hook addInventoryItem uses.
     if (linkTarget && medicineId !== signal.medicineId && reportedInStock) {
       await this.savedLink.linkPendingSaves(linkTarget);
+    } else if (reportedInStock && oldStatus === 'out-of-stock') {
+      // Restocking a row the pharmacy already held is the other way a saved
+      // medicine becomes available, and it used to raise nothing: the link hook
+      // only fired when the edit re-pointed the row at a different identity, so
+      // a patient waiting on this exact medicine heard nothing when the only
+      // pharmacy stocking it flipped it back to available.
+      await this.savedLink.linkPendingSaves({
+        id: updated.medicineId,
+        canonicalName: updated.medicine.canonicalName,
+      });
     }
+
+    // Tell this pharmacy's own portal what changed, on the Inventory tab.
+    await this.notifyAvailabilityTransition(
+      pharmacyId,
+      {
+        id: updated.medicineId,
+        canonicalName: updated.medicine.canonicalName,
+        strength: updated.medicine.strength,
+      },
+      // Re-pointing the row at a different identity means this pharmacy was
+      // publishing no availability at all for the medicine it now holds, so the
+      // old row's status is not this medicine's previous state.
+      medicineId === signal.medicineId ? oldStatus : null,
+      status,
+      Date.now(),
+    );
 
     // Audit log entry
     const pharmacyName = await this.getPharmacyName(pharmacyId);
@@ -1660,6 +1762,16 @@ export class PharmacyService {
     let totalProcessed = 0;
     const processedSignalIds = new Set<string>();
 
+    /**
+     * Identities this file reported as in stock, deduplicated.
+     *
+     * Collected during the loop and fanned out to patients afterwards rather
+     * than inside it: a file may list the same medicine twice, and
+     * linkPendingSaves is a query per call. Keyed by identity id so a 400-row
+     * import costs one lookup per distinct medicine, not one per row.
+     */
+    const stockedIdentities = new Map<string, { id: string; canonicalName: string }>();
+
     for (const row of rawRows) {
       totalProcessed++;
       const name = row.name || row.canonicalName || row.medicineName;
@@ -1745,6 +1857,16 @@ export class PharmacyService {
           processedSignalIds.add(createdSignal.id);
           imported++;
         }
+
+        // An out-of-stock line is a record, not an availability event, so only
+        // stocked rows are followed up on — the same rule addInventoryItem
+        // applies on the single-item path.
+        if (reportedInStock) {
+          stockedIdentities.set(medicine.id, {
+            id: medicine.id,
+            canonicalName: medicine.canonicalName,
+          });
+        }
       } catch (err: any) {
         skipped++;
       }
@@ -1766,6 +1888,24 @@ export class PharmacyService {
         });
       }
     }
+
+    // Attach name-only saved medicines to the identities this file stocked and
+    // alert the patients waiting on them. A bulk import used to skip this
+    // entirely, so the same medicine that raised an alert when typed into the
+    // form raised none when it arrived in a CSV — a pharmacy's upload method is
+    // not something a patient should be able to feel.
+    for (const identity of stockedIdentities.values()) {
+      await this.savedLink.linkPendingSaves(identity);
+    }
+
+    // Report the outcome on the portal's Uploads tab. Raised for every import,
+    // including one that applied nothing: a file that failed silently is the
+    // case the pharmacy most needs told about.
+    await this.portalNotifications.bulkUploadCompleted(
+      pharmacyId,
+      { imported, updated, skipped, totalProcessed, mode },
+      Date.now(),
+    );
 
     const pharmacyName = await this.getPharmacyName(pharmacyId);
     await this.auditWriter.write(

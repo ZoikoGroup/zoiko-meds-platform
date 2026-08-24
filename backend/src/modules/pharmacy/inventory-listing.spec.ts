@@ -1,6 +1,7 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
 
 /**
@@ -40,6 +41,7 @@ describe('PharmacyService.getInventory', () => {
       prisma as unknown as PrismaService,
       {} as unknown as AuditWriter,
       {} as unknown as SavedMedicineLinkService,
+      { inventoryBecameAvailable: jest.fn(), inventoryBecameUnavailable: jest.fn(), bulkUploadCompleted: jest.fn() } as unknown as PharmacyNotificationService,
     );
   });
 

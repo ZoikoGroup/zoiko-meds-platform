@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
 
 /**
@@ -83,6 +84,7 @@ function buildService(state: { neighbours?: Record<string, unknown>[]; existing?
     prisma as unknown as PrismaService,
     { write: jest.fn() } as unknown as AuditWriter,
     { linkPendingSaves: jest.fn() } as unknown as SavedMedicineLinkService,
+    { inventoryBecameAvailable: jest.fn(), inventoryBecameUnavailable: jest.fn(), bulkUploadCompleted: jest.fn() } as unknown as PharmacyNotificationService,
   );
   return { service, prisma, tx };
 }

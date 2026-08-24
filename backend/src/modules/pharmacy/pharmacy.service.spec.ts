@@ -3,11 +3,20 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
 
 /** Linking saved medicines is exercised in saved-medicine-link.spec.ts. */
 const savedLinkStub = () =>
   ({ linkPendingSaves: jest.fn().mockResolvedValue(0) }) as unknown as SavedMedicineLinkService;
+
+/** Portal notification writing is exercised in pharmacy-portal-notifications.spec.ts. */
+const portalNotificationStub = () =>
+  ({
+    inventoryBecameAvailable: jest.fn(),
+    inventoryBecameUnavailable: jest.fn(),
+    bulkUploadCompleted: jest.fn(),
+  }) as unknown as PharmacyNotificationService;
 
 describe('PharmacyService.resolvePharmacyId', () => {
   let service: PharmacyService;
@@ -19,6 +28,7 @@ describe('PharmacyService.resolvePharmacyId', () => {
       prisma as unknown as PrismaService,
       {} as unknown as AuditWriter,
       savedLinkStub(),
+      portalNotificationStub(),
     );
   });
 
@@ -68,6 +78,7 @@ describe('PharmacyService self-service profile onboarding', () => {
       prisma as unknown as PrismaService,
       audit as unknown as AuditWriter,
       savedLinkStub(),
+      portalNotificationStub(),
     );
   });
 
@@ -380,7 +391,13 @@ describe('PharmacyService self-service profile onboarding', () => {
         }),
       };
       prisma.inventorySignal = { create: jest.fn() };
-      prisma.availabilitySignal = { upsert: jest.fn().mockResolvedValue({ id: 'av_1' }) };
+      prisma.availabilitySignal = {
+        // The pharmacy holds nothing for this medicine yet — these tests add a
+        // medicine the catalog has never seen, so the prior-availability read
+        // that decides whether to raise a portal notification finds no row.
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({ id: 'av_1' }),
+      };
       prisma.pharmacy.findUnique.mockResolvedValue({ id: 'ph_1', name: 'Apollo' });
     });
 
