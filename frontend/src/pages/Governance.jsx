@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Users, ShieldCheck, BookOpen, ChevronRight, ScanSearch } from 'lucide-react'
 import {
@@ -11,6 +12,7 @@ import {
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { SecurityReviewDialog } from '@/components/shared/security-review-dialog'
 import { cn } from '@/lib/utils'
 import {
   oversightFunctions,
@@ -18,7 +20,22 @@ import {
   governanceStage,
 } from '@/services/governance-data'
 
+/**
+ * The published Trust Center, when there is one.
+ *
+ * `/trust` is Phase 5 of the frontend build plan and has not shipped, so this
+ * is unset on every deployment today and the Trust Center links point at the
+ * standards published on this page instead. Setting VITE_TRUST_CENTER_URL is
+ * the whole switch-over — nothing else here has to change.
+ */
+const TRUST_CENTER_URL = import.meta.env.VITE_TRUST_CENTER_URL || ''
+
+/** Where the in-page Trust Center links land: the standards card below. */
+const STANDARDS_ANCHOR = '#trust-center'
+
 export default function Governance() {
+  const [reviewOpen, setReviewOpen] = useState(false)
+
   return (
     <div className="flex flex-col gap-8">
       {/* Header: intro (left) + position-based governance staging note (right) */}
@@ -52,9 +69,11 @@ export default function Governance() {
           <p className="text-base text-muted-foreground">
             Every function below is anchored to published standards in the
             ZoikoMeds{' '}
-            {/* Trust Center is a placeholder route until the trust site ships. */}
             <a
-              href="#trust-center"
+              href={TRUST_CENTER_URL || STANDARDS_ANCHOR}
+              {...(TRUST_CENTER_URL
+                ? { target: '_blank', rel: 'noreferrer noopener' }
+                : {})}
               className="font-medium text-teal underline-offset-4 hover:underline"
             >
               Trust Center
@@ -119,8 +138,10 @@ export default function Governance() {
         })}
       </div>
 
-      {/* Standards we operate against */}
-      <Card className="p-6">
+      {/* Standards we operate against — the destination of the Trust Center
+          links until the trust site ships, so it carries the anchor. scroll-mt
+          keeps the heading clear of the sticky app header on arrival. */}
+      <Card id="trust-center" className="scroll-mt-24 p-6">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:gap-8">
           <div className="flex items-start gap-3 lg:max-w-xs lg:shrink-0">
             <ShieldCheck className="mt-0.5 size-5 shrink-0 text-teal" />
@@ -180,12 +201,21 @@ export default function Governance() {
             </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row lg:shrink-0">
-            <Button variant="teal" size="lg">
-              <BookOpen />
-              Visit the Trust Center
-              <ChevronRight />
+            {/* An anchor, not a button with a handler: it is navigation, so it
+                has to be middle-clickable and readable as a link. */}
+            <Button asChild variant="teal" size="lg">
+              <a
+                href={TRUST_CENTER_URL || STANDARDS_ANCHOR}
+                {...(TRUST_CENTER_URL
+                  ? { target: '_blank', rel: 'noreferrer noopener' }
+                  : {})}
+              >
+                <BookOpen />
+                {TRUST_CENTER_URL ? 'Visit the Trust Center' : 'See the standards we operate against'}
+                <ChevronRight />
+              </a>
             </Button>
-            <Button variant="outline" size="lg">
+            <Button variant="outline" size="lg" onClick={() => setReviewOpen(true)}>
               <ScanSearch />
               Request Security &amp; Procurement Review
               <ChevronRight />
@@ -200,6 +230,12 @@ export default function Governance() {
         Governed for patient safety, data trust, medicine availability integrity,
         and responsible healthcare intelligence.
       </div>
+
+      <SecurityReviewDialog
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+        requestSource="admin-governance"
+      />
     </div>
   )
 }
