@@ -1,18 +1,14 @@
 // Pharmacy Portal service layer.
 //
-// Inventory, reports and participation hit the real NestJS backend. The remaining
-// demo surfaces (integration sync, announcements) are marked TODO(backend) at their
-// call sites and are the only ones left resolving fixtures.
+// Inventory, reports, participation and the POS/ERP integration all hit the real
+// NestJS backend. Announcements are the only surface left resolving a fixture,
+// and it is marked TODO(backend) at its call site.
 
 import { apiFetch } from '@/lib/api-client'
 import {
-  RECENT_UPDATES, PENDING_UPDATES, NOTIFICATIONS,
-  INTEGRATION, INVENTORY,
+  NOTIFICATIONS,
+  INVENTORY,
 } from './pharmacy-data'
-
-// Resolve a (deep-cloned) value after a short latency so skeletons are exercised.
-const settle = (value, ms = 300) =>
-  new Promise((resolve) => setTimeout(() => resolve(structuredClone(value)), ms))
 
 // Marker for "this account has no pharmacy linked yet". The API answers 403 with
 // this wording from PharmacyService.resolvePharmacyId. It is a real state with a
@@ -169,9 +165,45 @@ export const getNotifications = async () => {
 // used to resolve a fixture — the same 92% reliability and 87% participation for
 // every pharmacy on the platform (MP-44).
 export const getParticipation = () => apiFetch('/pharmacies/participation')
-export const getIntegration = () => settle(INTEGRATION)
-// TODO(backend): POST /pharmacy/integration/sync
-export const triggerSync = () => settle({ ...INTEGRATION, lastSync: 'just now' })
+
+// --- POS / ERP integration (REAL API) ---------------------------------------
+//
+// No demo fallback anywhere below. This page used to resolve a fixture, so every
+// pharmacy on the platform was shown the same connected Marg ERP and the same
+// five sync runs — an operator could read "last sync: 6 minutes ago" off a
+// pharmacy that had never been connected to anything (MP-31).
+
+export const getIntegration = async () => {
+  try {
+    return await apiFetch('/pharmacies/integration')
+  } catch (err) {
+    if (isNotLinked(err)) throw new PharmacyNotLinkedError(err.message)
+    throw err
+  }
+}
+
+/** Connect, or re-save the configuration. Answers with the refreshed page state. */
+export const saveIntegration = (config) =>
+  apiFetch('/pharmacies/integration', { method: 'PUT', body: config })
+
+export const disconnectIntegration = () =>
+  apiFetch('/pharmacies/integration', { method: 'DELETE' })
+
+/**
+ * Run the feed now. Resolves for a failed attempt too — the failure is a row in
+ * the returned history with its reason on it, which is the thing the operator
+ * came to the page to read. Only a transport or authorization error rejects.
+ */
+export const triggerSync = () =>
+  apiFetch('/pharmacies/integration/sync', { method: 'POST' })
+
+/**
+ * Issue or rotate the push key. The raw key comes back exactly once — the server
+ * stores only its hash — so the page must show it before the response is
+ * discarded, and cannot offer to show it again later.
+ */
+export const issueIntegrationKey = () =>
+  apiFetch('/pharmacies/integration/key', { method: 'POST' })
 
 // Shape a raw Pharmacy row (GET /pharmacies/:id) like the /pharmacies/me
 // payload, so the profile page renders identically from either source.

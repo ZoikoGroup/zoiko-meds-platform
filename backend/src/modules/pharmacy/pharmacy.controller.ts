@@ -10,6 +10,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Res,
   UploadedFile,
   UseGuards,
@@ -36,6 +37,9 @@ import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { ImportInventoryDto } from './dto/import-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { ResolveMapLinkDto } from './dto/resolve-map-link.dto';
+import { SaveIntegrationDto } from './dto/save-integration.dto';
+import { PushInventoryDto } from './dto/push-inventory.dto';
+import { PharmacyIntegrationService } from './integration/pharmacy-integration.service';
 
 @ApiTags('pharmacy')
 @Controller('pharmacies')
@@ -43,6 +47,7 @@ export class PharmacyController {
   constructor(
     private readonly pharmacy: PharmacyService,
     private readonly logos: PharmacyLogoService,
+    private readonly integrations: PharmacyIntegrationService,
   ) {}
 
   // --- Authenticated inventory & dashboard routes (MUST be declared before :id) ---------
@@ -153,6 +158,143 @@ export class PharmacyController {
       user?.id,
     );
     return this.pharmacy.getParticipation(pharmacyId);
+  }
+
+  // --- POS / ERP integration (MP-31) ---------------------------------------
+  //
+  // Declared above the ':id' routes, like everything else scoped to the caller's
+  // own pharmacy: Nest matches in declaration order, and 'integration' would
+  // otherwise be read as a pharmacy id.
+
+  @Get('integration')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Feed configuration and sync history for the logged-in pharmacy',
+    description:
+      'A pharmacy with no feed set up gets connected: false and an empty history. ' +
+      'The feed auth credential is never included — only whether one is stored.',
+  })
+  async getIntegration(@CurrentUser() user: AuthenticatedUser) {
+    const pharmacyId = await this.pharmacy.resolvePharmacyId(
+      user?.pharmacyId ?? null,
+      user?.id,
+    );
+    return this.integrations.getIntegration(pharmacyId);
+  }
+
+  @Put('integration')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Connect or reconfigure the pharmacy POS / ERP feed',
+    description:
+      'PUT rather than POST: there is one feed per pharmacy, and saving the form ' +
+      'twice must produce one configuration, not two.',
+  })
+  async saveIntegration(
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
+    @Body() dto: SaveIntegrationDto,
+  ) {
+    const pharmacyId = await this.pharmacy.resolvePharmacyId(
+      user?.pharmacyId ?? null,
+      user?.id,
+    );
+    return this.integrations.saveIntegration(pharmacyId, dto, user, ipAddress);
+  }
+
+  @Delete('integration')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Disconnect the feed',
+    description:
+      'Removes the configuration and its sync history. Stock already imported is ' +
+      'left in place — it is the pharmacy\'s own inventory, not the feed\'s.',
+  })
+  async disconnectIntegration(
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
+  ) {
+    const pharmacyId = await this.pharmacy.resolvePharmacyId(
+      user?.pharmacyId ?? null,
+      user?.id,
+    );
+    return this.integrations.disconnect(pharmacyId, user, ipAddress);
+  }
+
+  @Post('integration/sync')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Fetch the feed now, without waiting for the schedule',
+    description:
+      'Runs inline and answers with the refreshed integration, so the page shows ' +
+      'the attempt it just triggered — including a failure and its reason.',
+  })
+  async syncIntegration(
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
+  ) {
+    const pharmacyId = await this.pharmacy.resolvePharmacyId(
+      user?.pharmacyId ?? null,
+      user?.id,
+    );
+    return this.integrations.syncNow(pharmacyId, user, ipAddress);
+  }
+
+  @Post('integration/key')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Issue or rotate the push API key',
+    description:
+      'The key is returned in full exactly once; only its hash is stored. Rotating ' +
+      'invalidates the previous key immediately. Manager-only — a key is a credential ' +
+      'that writes this pharmacy\'s inventory without a user session.',
+  })
+  async issueIntegrationKey(
+    @CurrentUser() user: AuthenticatedUser,
+    @Ip() ipAddress: string,
+  ) {
+    const pharmacyId = await this.pharmacy.resolvePharmacyId(
+      user?.pharmacyId ?? null,
+      user?.id,
+    );
+    return this.integrations.issueApiKey(pharmacyId, user, ipAddress);
+  }
+
+  /**
+   * Stock pushed by a pharmacy's own system. No JWT: the caller is a POS
+   * server, not a person, and the API key in the header both authenticates it
+   * and decides which pharmacy is being written — there is no id in the body
+   * for a stolen key to aim somewhere else.
+   */
+  @Post('integration/push')
+  @ApiOperation({
+    summary: 'Push stock from a pharmacy POS / ERP',
+    description:
+      'Authenticated with the X-Zoiko-Api-Key header issued from the portal. Body is ' +
+      '{ rows } or { csvText }, optionally with mode: merge | replace.',
+  })
+  async pushInventory(
+    @Headers('x-zoiko-api-key') apiKey: string | undefined,
+    @Ip() ipAddress: string,
+    @Body() dto: PushInventoryDto,
+  ) {
+    return this.integrations.ingestPush(
+      apiKey,
+      dto.rows,
+      dto.csvText,
+      dto.mode,
+      ipAddress,
+    );
   }
 
   @Get('reports')

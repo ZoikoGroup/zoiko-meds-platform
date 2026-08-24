@@ -321,6 +321,11 @@ model Pharmacy {
   commercialClassification CommercialClassification @default(DIRECTORY_UNCLAIMED)
   subscriptionLocations    SubscriptionLocation[]
 
+  /// POS/ERP feed configuration, one per pharmacy. Optional: a pharmacy that
+  /// maintains stock by hand simply has no row here.
+  integration PharmacyIntegration?
+  syncRuns    PharmacySyncRun[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1325,4 +1330,127 @@ model TaxDetermination {
   invoices Invoice[]
 
   @@index([billingProfileId, determinedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Pharmacy POS / ERP integration (MP-31)
+//
+// The portal's Integration page was a fixture: it showed a connected Marg ERP
+// and five invented sync runs to every pharmacy on the platform. These two
+// models are what make it real — one configuration row per pharmacy, and one
+// audit row per sync attempt.
+//
+// A sync is not a new write path: it fetches the pharmacy's own feed and hands
+// the rows to the same PharmacyService.importCsv that the Uploads tab uses, so
+// an integrated pharmacy and one uploading a CSV by hand produce identical
+// AvailabilitySignal rows.
+// ---------------------------------------------------------------------------
+
+enum IntegrationSyncStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+/// How stock reaches ZoikoMeds for this pharmacy.
+enum IntegrationDirection {
+  /// ZoikoMeds fetches `feedUrl` on a schedule. Nothing to install at the
+  /// pharmacy beyond exposing a file or endpoint.
+  PULL
+  /// The pharmacy's own system posts rows to /pharmacies/integration/push,
+  /// authenticated with an issued API key. For systems behind a firewall that
+  /// cannot be reached from outside.
+  PUSH
+}
+
+model PharmacyIntegration {
+  id         String   @id @default(cuid())
+  pharmacyId String   @unique
+  pharmacy   Pharmacy @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+
+  /// Free text, shown as the connection's name: "Marg ERP", "Tally", a bespoke
+  /// export. ZoikoMeds does not maintain a list of blessed vendors — the shape
+  /// of the feed is the contract, not the product name.
+  provider String
+
+  direction IntegrationDirection @default(PULL)
+
+  /// Paused rather than deleted. Disconnecting removes the row; this is the
+  /// switch an operator flips while their POS is being upgraded, and it keeps
+  /// the credentials and the history.
+  enabled Boolean @default(true)
+
+  // --- PULL configuration --------------------------------------------------
+
+  /// http(s) only, and never an address inside the deployment's own network:
+  /// the guard lives in feed.ts, because this column is operator-supplied and
+  /// the server is the one that dials it.
+  feedUrl String?
+
+  /// Optional single auth header for the feed, e.g. Authorization / X-Api-Key.
+  /// The value is encrypted at rest and is never returned by the API — the
+  /// portal only ever learns whether one is set.
+  authHeaderName   String?
+  authHeaderSecret String?
+
+  /// merge keeps medicines the feed does not mention; replace prunes them, so
+  /// the feed becomes the whole truth about this pharmacy's stock.
+  syncMode        String @default("merge")
+  intervalMinutes Int    @default(60)
+
+  // --- PUSH credentials ----------------------------------------------------
+
+  /// SHA-256 of the issued key, never the key itself — same treatment as a
+  /// password-reset token. The raw key is shown once, at issue.
+  apiKeyHash     String?
+  /// First characters of the key, so the portal can say which key is installed
+  /// without being able to reconstruct it.
+  apiKeyPrefix   String?
+  apiKeyIssuedAt DateTime?
+
+  // --- Scheduling state ----------------------------------------------------
+
+  lastSyncAt     DateTime?
+  lastSyncStatus IntegrationSyncStatus?
+  nextSyncAt     DateTime?
+
+  /// Held for the duration of a run. Claimed with a conditional update, so two
+  /// API instances polling the same database cannot sync one pharmacy twice.
+  /// A stale lock expires (see STALE_LOCK_MS) rather than wedging the feed.
+  syncingSince DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs PharmacySyncRun[]
+
+  @@index([enabled, nextSyncAt])
+}
+
+/// One sync attempt, successful or not. This is the Integration page's history
+/// list, and the only record of why a feed stopped updating.
+model PharmacySyncRun {
+  id            String              @id @default(cuid())
+  integrationId String
+  integration   PharmacyIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  pharmacyId    String
+  pharmacy      Pharmacy            @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+
+  /// manual | scheduled | push
+  trigger String
+
+  status     IntegrationSyncStatus
+  startedAt  DateTime              @default(now())
+  finishedAt DateTime?
+
+  rows     Int @default(0)
+  imported Int @default(0)
+  updated  Int @default(0)
+  skipped  Int @default(0)
+
+  /// What the operator is told: "Delta sync", "4 rows skipped", or the reason
+  /// the attempt failed. Never a stack trace — this is a customer-facing line.
+  note String?
+
+  @@index([pharmacyId, startedAt])
 }

@@ -69,21 +69,6 @@ export const PARTICIPATION = {
   coverage: 89,
 }
 
-// API integration status + sync history.
-export const INTEGRATION = {
-  connected: true,
-  provider: 'POS Integration (Marg ERP)',
-  lastSync: '6 minutes ago',
-  nextSync: 'in ~54 minutes',
-  history: [
-    { id: 's1', when: '6 minutes ago', status: 'success', rows: 214, note: 'Delta sync' },
-    { id: 's2', when: '1 hour ago', status: 'success', rows: 209, note: 'Delta sync' },
-    { id: 's3', when: '2 hours ago', status: 'partial', rows: 198, note: '4 rows skipped' },
-    { id: 's4', when: '3 hours ago', status: 'success', rows: 205, note: 'Delta sync' },
-    { id: 's5', when: 'Yesterday', status: 'failed', rows: 0, note: 'Auth token expired' },
-  ],
-}
-
 // Pharmacy profile (would come from GET /pharmacy/:id or a /pharmacy/me endpoint).
 export const PROFILE = {
   name: 'Apollo Pharmacy',
