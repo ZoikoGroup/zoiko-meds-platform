@@ -97,7 +97,7 @@ jobs:
       - name: Compare the result with schema.prisma
         run: |
           set -e
-          if npx prisma migrate diff               --from-url "$DATABASE_URL"               --to-schema-datamodel prisma/schema.prisma               --exit-code; then
+          if npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code; then
             echo "The migrations reproduce schema.prisma exactly."
             exit 0
           fi
