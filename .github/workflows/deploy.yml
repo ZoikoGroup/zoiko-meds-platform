@@ -93,3 +93,26 @@ jobs:
           done
           echo "Release did not become live: PATCH /api/pharmacies/me never returned 401." >&2
           exit 1
+
+      # The release being live says nothing about the database it is live
+      # against. This is the check that would have caught 2026-08-17: the code
+      # was current, the workflow was green, and every SavedMedicine query
+      # failed because its migration had never been applied. The API reports its
+      # own ledger, so this sees the database the API actually reads — not the
+      # one whichever shell ran `migrate deploy` happened to be pointed at.
+      - name: Verify the served schema is up to date
+        run: |
+          set -e
+          body=$(curl -fsS https://get.zoikomeds.com/api/health/schema)
+          echo "$body"
+          case "$body" in
+            *'"status":"ok"'*) echo "Schema is up to date." ;;
+            *)
+              echo "The deployed API is running against a schema that is not up to date." >&2
+              echo "Apply the pending migrations to the datasource named above:" >&2
+              echo "  bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh" >&2
+              echo "or, if that reports nothing pending, it is connected to a different" >&2
+              echo "database than the API reads." >&2
+              exit 1
+              ;;
+          esac

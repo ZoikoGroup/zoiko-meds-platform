@@ -135,6 +135,35 @@ log "Waiting for health on 127.0.0.1:$PORT/$API_PREFIX/health"
 for i in $(seq 1 30); do
   if curl -fsS "http://127.0.0.1:${PORT}/${API_PREFIX}/health" >/dev/null 2>&1; then
     log "Healthy after ${i}s — restarted via $restarted"
+
+    # A bound port is not a working release. The migrations above ran against
+    # whatever DATABASE_URL this shell has; the API may read a different
+    # database (a container's env overrides the host .env), in which case every
+    # query touching a new column fails while this script reports success —
+    # which is exactly what happened to SavedMedicine on 2026-08-17. Ask the
+    # running process what its own database says, and report the datasource it
+    # names so a mismatch is visible rather than inferred.
+    schema=$(curl -fsS "http://127.0.0.1:${PORT}/${API_PREFIX}/health/schema" 2>/dev/null || echo '')
+    if [ -z "$schema" ]; then
+      log "WARNING: /health/schema did not answer. This build predates it, or the"
+      log "WARNING: process is not serving yet. Schema state is UNVERIFIED."
+    else
+      log "Schema as the API sees it: $schema"
+      case "$schema" in
+        *'"status":"ok"'*)
+          log "Schema is up to date on the database the API actually reads."
+          ;;
+        *)
+          echo "[deploy] FAILED: the API is serving against a schema that is not up to date." >&2
+          echo "[deploy] $schema" >&2
+          echo "[deploy] The migrations applied above went to \$DATABASE_URL as this shell" >&2
+          echo "[deploy] sees it. If that reported nothing pending, it is a different" >&2
+          echo "[deploy] database than the one named above." >&2
+          exit 1
+          ;;
+      esac
+    fi
+
     log "Deployed $(git rev-parse --short HEAD)"
     exit 0
   fi

@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { EmptyState } from '@/components/shared/states'
+import { EmptyState, ErrorState } from '@/components/shared/states'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Search, Trash2, Heart, ArrowRight, MapPin, Clock } from 'lucide-react'
@@ -14,7 +14,7 @@ import { useLanguage } from '@/providers/language-provider'
 
 export default function UserSaved() {
   const { t } = useLanguage()
-  const { data: saved = [], isLoading } = useSavedMedicines()
+  const { data: saved = [], isLoading, isError, error, refetch } = useSavedMedicines()
   const unsaveMutation = useUnsaveMedicine()
   const toggleAlertsMutation = useToggleSavedAlerts()
   const [flashMsg, flash] = useFlash()
@@ -61,7 +61,24 @@ export default function UserSaved() {
 
       {flashMsg && <Flash message={flashMsg} />}
 
-      {saved.length === 0 ? (
+      {isError ? (
+        // A failed load used to fall through to `saved = []` and render "No
+        // saved medicines yet" — the page told the patient their list was empty
+        // when it had never been read. Report the failure, and pass the API's
+        // own message through: it is what distinguishes a dead session from a
+        // migration the database has not been given yet.
+        <ErrorState
+          title={t('savedMedicinesLoadFailed', 'Could not load your saved medicines')}
+          description={
+            error?.message ||
+            t(
+              'savedMedicinesLoadFailedDesc',
+              'We could not reach your saved medicines just now. Please try again.',
+            )
+          }
+          onRetry={refetch}
+        />
+      ) : saved.length === 0 ? (
         <EmptyState
           icon={Heart}
           title={t('noSavedMedicinesYet', 'No saved medicines yet')}
@@ -170,7 +187,7 @@ export default function UserSaved() {
         </div>
       )}
 
-      {saved.length > 0 && (
+      {!isError && saved.length > 0 && (
         <p className="text-xs leading-relaxed text-muted-foreground">{CONFIRM_NOTE}</p>
       )}
     </div>
