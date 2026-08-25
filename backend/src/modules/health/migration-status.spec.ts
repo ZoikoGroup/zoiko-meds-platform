@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { MigrationStatusService } from './migration-status.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -19,6 +20,35 @@ describe('MigrationStatusService', () => {
     rolled_back_at: null,
   });
 
+  /**
+   * Every column the datamodel declares, as information_schema would report it
+   * for a database that is fully in step — the baseline a drift test removes
+   * from. Built from the DMMF so it cannot fall behind the schema.
+   */
+  const everyColumn = () =>
+    Prisma.dmmf.datamodel.models.flatMap((model) =>
+      model.fields
+        .filter((field) => field.kind === 'scalar' || field.kind === 'enum')
+        .map((field) => ({
+          table_name: model.dbName ?? model.name,
+          column_name: field.dbName ?? field.name,
+        })),
+    );
+
+  /**
+   * The service asks two questions in order: the ledger, then the table shapes.
+   * Answering by call order keeps each test stating only what it is about.
+   */
+  const answer = (ledger: unknown, columns: unknown = everyColumn()) => {
+    prisma.$queryRaw
+      .mockImplementationOnce(() =>
+        ledger instanceof Error ? Promise.reject(ledger) : Promise.resolve(ledger),
+      )
+      .mockImplementationOnce(() =>
+        columns instanceof Error ? Promise.reject(columns) : Promise.resolve(columns),
+      );
+  };
+
   beforeEach(() => {
     prisma = { $queryRaw: jest.fn() };
     service = new MigrationStatusService(prisma as unknown as PrismaService);
@@ -36,20 +66,21 @@ describe('MigrationStatusService', () => {
     else process.env.DATABASE_URL = originalUrl;
   });
 
-  it('reports ok when every shipped migration is applied', async () => {
-    prisma.$queryRaw.mockResolvedValue(SHIPPED.map(finished));
+  it('reports ok when the ledger is complete and the tables match it', async () => {
+    answer(SHIPPED.map(finished));
 
     const status = await service.status();
 
     expect(status.status).toBe('ok');
     expect(status.applied).toBe(2);
     expect(status.pending).toEqual([]);
+    expect(status.missing).toEqual([]);
   });
 
   // The 2026-08-17 failure: the API served code whose migration had never been
   // applied, and every SavedMedicine query failed while the deploy looked clean.
   it('names the migrations the database is missing', async () => {
-    prisma.$queryRaw.mockResolvedValue([finished('0_init')]);
+    answer([finished('0_init')]);
 
     const status = await service.status();
 
@@ -61,7 +92,7 @@ describe('MigrationStatusService', () => {
   });
 
   it('distinguishes a half-applied migration from a missing one', async () => {
-    prisma.$queryRaw.mockResolvedValue([
+    answer([
       finished('0_init'),
       {
         migration_name: '20260814120000_saved_medicine_off_catalog',
@@ -80,7 +111,7 @@ describe('MigrationStatusService', () => {
   });
 
   it('treats a rolled-back migration as unapplied', async () => {
-    prisma.$queryRaw.mockResolvedValue([
+    answer([
       finished('0_init'),
       {
         migration_name: '20260814120000_saved_medicine_off_catalog',
@@ -96,7 +127,7 @@ describe('MigrationStatusService', () => {
   });
 
   it('reports unknown, not ok, when the ledger cannot be read', async () => {
-    prisma.$queryRaw.mockRejectedValue(new Error('relation "_prisma_migrations" does not exist'));
+    answer(new Error('relation "_prisma_migrations" does not exist'));
 
     const status = await service.status();
 
@@ -105,7 +136,7 @@ describe('MigrationStatusService', () => {
   });
 
   it('names the datasource without leaking the password', async () => {
-    prisma.$queryRaw.mockResolvedValue(SHIPPED.map(finished));
+    answer(SHIPPED.map(finished));
 
     const status = await service.status();
 
@@ -115,12 +146,87 @@ describe('MigrationStatusService', () => {
 
   it('does not echo an unparseable DATABASE_URL back to the caller', async () => {
     process.env.DATABASE_URL = 'postgres@@@not-a-url:hunter2';
-    prisma.$queryRaw.mockResolvedValue(SHIPPED.map(finished));
+    answer(SHIPPED.map(finished));
 
     const status = await service.status();
 
     expect(status.datasource).toBe('unparseable');
     expect(JSON.stringify(status)).not.toContain('hunter2');
+  });
+
+  // The case a ledger check cannot reach, and the one that made /health/schema
+  // report "ok" over a database Saved Medicines was still failing against:
+  // `migrate resolve --applied` records a migration as applied without running
+  // its SQL, and every status command reads clean from then on.
+  it('reports drift when the ledger is complete but a column is absent', async () => {
+    const withoutSavedMedicineColumns = everyColumn().filter(
+      (column) =>
+        !(
+          column.table_name === 'SavedMedicine' &&
+          ['medicineName', 'normalizedName', 'linkedAt'].includes(column.column_name)
+        ),
+    );
+    answer(SHIPPED.map(finished), withoutSavedMedicineColumns);
+
+    const status = await service.status();
+
+    expect(status.status).toBe('drift');
+    expect(status.missing).toEqual(
+      expect.arrayContaining([
+        'SavedMedicine.medicineName',
+        'SavedMedicine.normalizedName',
+        'SavedMedicine.linkedAt',
+      ]),
+    );
+    // Nothing is pending: telling an operator to run `migrate deploy` here sends
+    // them in a circle, so the detail must say what will actually reconcile it.
+    expect(status.pending).toEqual([]);
+    expect(status.detail).toContain('migrate diff');
+  });
+
+  it('reports an absent table once, not once per column', async () => {
+    answer(
+      SHIPPED.map(finished),
+      everyColumn().filter((column) => column.table_name !== 'SavedMedicine'),
+    );
+
+    const status = await service.status();
+
+    expect(status.status).toBe('drift');
+    expect(status.missing).toContain('SavedMedicine.*');
+    expect(status.missing.filter((name) => name.startsWith('SavedMedicine.'))).toEqual([
+      'SavedMedicine.*',
+    ]);
+  });
+
+  it('caps how many missing identifiers it names, and says how many it did not', async () => {
+    answer(SHIPPED.map(finished), []);
+
+    const status = await service.status();
+
+    expect(status.status).toBe('drift');
+    expect(status.missing.length).toBe(25);
+    expect(status.detail).toMatch(/further identifier\(s\) not listed/);
+  });
+
+  it('does not read an unreadable information_schema as a healthy one', async () => {
+    answer(SHIPPED.map(finished), new Error('permission denied for schema information_schema'));
+
+    const status = await service.status();
+
+    expect(status.status).toBe('unknown');
+    expect(status.detail).toContain('unverified');
+  });
+
+  // Relations are joins; the foreign key behind one is a scalar field in its own
+  // right, so treating them as columns would report drift on a correct database.
+  it('does not expect a column for a relation field', async () => {
+    answer(SHIPPED.map(finished));
+
+    const status = await service.status();
+
+    expect(status.status).toBe('ok');
+    expect(status.missing).toEqual([]);
   });
 
   it('lists the real migration directory when nothing is stubbed', async () => {

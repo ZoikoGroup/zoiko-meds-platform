@@ -156,9 +156,12 @@ for i in $(seq 1 30); do
         *)
           echo "[deploy] FAILED: the API is serving against a schema that is not up to date." >&2
           echo "[deploy] $schema" >&2
-          echo "[deploy] The migrations applied above went to \$DATABASE_URL as this shell" >&2
-          echo "[deploy] sees it. If that reported nothing pending, it is a different" >&2
-          echo "[deploy] database than the one named above." >&2
+          echo "[deploy] The 'detail' field above says what will reconcile it. Two cases" >&2
+          echo "[deploy] look alike from here and are not: 'behind' means migrations were" >&2
+          echo "[deploy] applied to a different database than the API reads (compare the" >&2
+          echo "[deploy] datasource above with \$DATABASE_URL as this shell sees it), while" >&2
+          echo "[deploy] 'drift' means the ledger is complete but the tables are not, which" >&2
+          echo "[deploy] no amount of 'migrate deploy' will fix." >&2
           exit 1
           ;;
       esac
