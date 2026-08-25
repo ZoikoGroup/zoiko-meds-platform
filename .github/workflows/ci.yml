@@ -43,6 +43,72 @@ jobs:
       - name: Test
         run: npm test -- --ci --coverage
 
+  # The check that would have caught SavedMedicine.alertsEnabled before it
+  # shipped. It was declared in schema.prisma, reached developer databases
+  # through `db push` — which writes to the database without recording a
+  # migration — and no migration ever created it. Production, built from the
+  # migrations alone, never had the column, and every SavedMedicine query failed
+  # with P2022 while `prisma migrate status` reported "up to date": the ledger
+  # knows which migrations ran, never what they produced.
+  #
+  # So this builds a database from the committed migrations and asks Prisma
+  # whether the result is the schema. `migrate diff --exit-code` answers 2 when
+  # it is not, which fails the job and names what is missing.
+  migrations:
+    name: Backend · migrations reproduce the schema
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zoikomeds_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/zoikomeds_ci?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Deliberately `migrate deploy`, the command production runs — not
+      # `db push`, which would build the schema from the datamodel and make the
+      # comparison below compare the datamodel with itself.
+      - name: Apply the committed migrations to an empty database
+        run: npx prisma migrate deploy
+
+      - name: Compare the result with schema.prisma
+        run: |
+          set -e
+          if npx prisma migrate diff               --from-url "$DATABASE_URL"               --to-schema-datamodel prisma/schema.prisma               --exit-code; then
+            echo "The migrations reproduce schema.prisma exactly."
+            exit 0
+          fi
+          echo "::error::The committed migrations do not reproduce schema.prisma." >&2
+          echo "The difference is printed above, as the SQL that would close it." >&2
+          echo "A model field with no migration works on any database that was" >&2
+          echo "reached with 'db push' and is absent everywhere else, so it fails" >&2
+          echo "in production only. Generate the migration and commit it:" >&2
+          echo "  npx prisma migrate dev --name <what_it_adds>" >&2
+          exit 1
+
   frontend:
     name: Frontend · lint · build
     runs-on: ubuntu-latest
