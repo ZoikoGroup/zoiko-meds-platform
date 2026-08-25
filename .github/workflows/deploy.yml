@@ -109,10 +109,12 @@ jobs:
             *'"status":"ok"'*) echo "Schema is up to date." ;;
             *)
               echo "The deployed API is running against a schema that is not up to date." >&2
-              echo "Apply the pending migrations to the datasource named above:" >&2
-              echo "  bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh" >&2
-              echo "or, if that reports nothing pending, it is connected to a different" >&2
-              echo "database than the API reads." >&2
+              echo "The 'detail' field above says what will reconcile it:" >&2
+              echo "  behind - migrations went to a different database than the API reads;" >&2
+              echo "           compare the datasource above with the VM's DATABASE_URL." >&2
+              echo "  drift  - the ledger is complete but the tables are not, which is what" >&2
+              echo "           'migrate resolve --applied' leaves behind. 'migrate deploy'" >&2
+              echo "           will report nothing to do; reconcile with 'migrate diff'." >&2
               exit 1
               ;;
           esac
