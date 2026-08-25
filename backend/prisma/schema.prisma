@@ -464,9 +464,21 @@ model SignalAggregate {
   suppressed        Boolean         @default(false)
   // Aggregated only — no user-level or patient-level data.
   createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  // @default(now()) alongside @updatedAt because the column was created with
+  // DEFAULT CURRENT_TIMESTAMP (20260716120000_zoikosignal_intelligence) and the
+  // datamodel never said so. Declaring what the database already has costs
+  // nothing and needs no DDL; the alternative was altering a production table
+  // to erase a default that @updatedAt makes unreachable anyway.
+  updatedAt         DateTime        @updatedAt @default(now())
 
-  @@unique([medicineId, jurisdictionId, bucket, periodStart])
+  // The map is the name Postgres actually gave this index, not the one the
+  // migration asked for. 0_init's successor wrote
+  // "SignalAggregate_medicineId_jurisdictionId_bucket_periodStart_key" — 64
+  // characters — and Postgres silently truncated it to 63, taking the "_key"
+  // suffix with it. Prisma's own convention shortens the middle instead, so it
+  // expects "..._periodStar_key" and reads the difference as schema drift.
+  // Naming the real index here is a no-op against every existing database.
+  @@unique([medicineId, jurisdictionId, bucket, periodStart], map: "SignalAggregate_medicineId_jurisdictionId_bucket_periodStart_ke")
   @@index([medicineId, periodStart])
   @@index([bucket, periodStart])
   @@index([suppressed])
