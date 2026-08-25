@@ -21,6 +21,13 @@ RUN npm run build
 # ---- Production dependencies only ----
 FROM base AS prod-deps
 COPY package.json package-lock.json* ./
+# The `prisma` CLI is a runtime dependency of this image, not a build tool: the
+# CMD below runs `prisma migrate deploy` on every container start. Kept in
+# `dependencies` for that reason — as a devDependency it is stripped here, and
+# the CMD's `npx` then has to fetch it from the registry as the unprivileged
+# `nestjs` user at boot. That resolves to "migrations were never applied" the
+# moment the container cannot reach npm, which is how code reaches production
+# ahead of its schema (see SavedMedicine, 2026-08-17). Do not move it back.
 RUN npm ci --omit=dev
 # Prisma client needs to be generated against the schema for the runtime engine
 COPY prisma ./prisma

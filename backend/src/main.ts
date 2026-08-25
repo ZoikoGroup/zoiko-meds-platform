@@ -9,6 +9,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppLogger } from './common/logger/app-logger.service';
 import { StripeConfig } from './modules/commercial/stripe/stripe.config';
 import { appBaseUrl, appBaseUrlWarning } from './config/app-urls';
+import { MigrationStatusService } from './modules/health/migration-status.service';
 
 async function bootstrap() {
   // rawBody keeps the exact bytes of each request available. Stripe signs the raw
@@ -80,6 +81,22 @@ async function bootstrap() {
     logger.warn(appUrlWarning);
   } else {
     logger.log(`Browser links resolve to ${appBaseUrl(config)}`);
+  }
+
+  // And a database behind the code at boot rather than at the first request
+  // that touches a missing column. Not fatal — the features whose migrations
+  // are applied still work, and refusing to start would turn a partial outage
+  // into a total one — but it must never again be invisible: this line is what
+  // separates "correct code, unapplied migration" from "bug in the feature".
+  const schema = await app.get(MigrationStatusService).status();
+  if (schema.status === 'ok') {
+    logger.log(`Schema up to date on ${schema.datasource} (${schema.applied} migrations applied).`);
+  } else {
+    logger.error(
+      `SCHEMA ${schema.status.toUpperCase()} on ${schema.datasource}: ${schema.detail}` +
+        (schema.pending.length ? ` Pending: ${schema.pending.join(', ')}.` : '') +
+        (schema.failed.length ? ` Failed: ${schema.failed.join(', ')}.` : ''),
+    );
   }
 
   const port = config.get<number>('PORT', 8000);

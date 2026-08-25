@@ -27,11 +27,21 @@ vi.mock('@/providers/language-provider', () => ({
 }))
 
 const listSavedMock = vi.fn()
+// Query state for the saved-medicines list, so a test can put the page in the
+// failed-load state the API returns while a migration is pending.
+let savedQueryError = null
+const refetchMock = vi.fn()
 const unsaveMock = vi.fn(async () => ({ saved: false }))
 const toggleAlertsMock = vi.fn(async () => ({ success: true }))
 
 vi.mock('@/hooks/use-saved-medicines', () => ({
-  useSavedMedicines: () => ({ data: listSavedMock(), isLoading: false }),
+  useSavedMedicines: () => ({
+    data: savedQueryError ? undefined : listSavedMock(),
+    isLoading: false,
+    isError: !!savedQueryError,
+    error: savedQueryError,
+    refetch: refetchMock,
+  }),
   useUnsaveMedicine: () => ({ mutate: (id, opts) => { unsaveMock(id); opts?.onSuccess?.() }, isPending: false }),
   useToggleSavedAlerts: () => ({ mutate: (vars, opts) => { toggleAlertsMock(vars); opts?.onSuccess?.() }, isPending: false }),
 }))
@@ -65,6 +75,7 @@ const { default: UserSaved } = await import('../UserSaved')
 
 beforeEach(() => {
   vi.clearAllMocks()
+  savedQueryError = null
   listSavedMock.mockReturnValue(SAVED)
 })
 
@@ -125,6 +136,33 @@ describe('Saved Medicines page', () => {
     const card = within(screen.getByText('Amoxicillin 500 mg').closest('div').parentElement.parentElement)
     await user.click(card.getByRole('button', { name: /View details/i }))
     expect(navigateMock).toHaveBeenCalledWith('/medicine/med_1')
+  })
+
+  // A failed request left `data` undefined, which the page defaulted to [] and
+  // rendered as "No saved medicines yet" — an empty list the API never reported.
+  // The distinction matters most when the cause is a pending migration: the
+  // patient's medicines are still there, and telling them otherwise is a lie.
+  it('reports a failed load instead of claiming the list is empty', () => {
+    savedQueryError = new Error(
+      'This feature is temporarily unavailable: the database schema is behind the deployed application.',
+    )
+    const { container } = render(<UserSaved />)
+
+    expect(screen.getByRole('alert')).toBeDefined()
+    expect(container.textContent).toContain('Could not load your saved medicines')
+    expect(container.textContent).toContain('the database schema is behind')
+    expect(screen.queryByText('No saved medicines yet')).toBeNull()
+    // No governance disclaimer either — nothing was shown to disclaim.
+    expect(container.textContent).not.toMatch(/not exact stock/i)
+  })
+
+  it('retries the load from the error state', async () => {
+    savedQueryError = new Error('Request failed')
+    const user = userEvent.setup()
+    render(<UserSaved />)
+
+    await user.click(screen.getByRole('button', { name: /Retry/i }))
+    expect(refetchMock).toHaveBeenCalled()
   })
 
   it('shows an empty state, and no disclaimer, with nothing saved', () => {
