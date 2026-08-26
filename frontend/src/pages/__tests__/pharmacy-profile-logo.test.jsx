@@ -5,7 +5,7 @@
 // way to notice was to press it and watch for something that never happened.
 // These tests hold the whole path: pick a file, send it, show what came back.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -65,6 +65,8 @@ async function renderProfile(profile = PROFILE) {
 const fileInput = () => document.querySelector('input[type="file"]')
 
 describe('pharmacy profile logo upload', () => {
+  afterEach(cleanup)
+
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
