@@ -61,6 +61,7 @@ model User {
   capabilityGrants             CapabilityGrant[]             @relation("CapabilityGrantUser")
   capabilityGrantsIssued       CapabilityGrant[]             @relation("CapabilityGrantIssuer")
   organizationsUpdated         Organization[]                @relation("OrganizationUpdatedBy")
+  platformApiKeys              PlatformApiKey[]              @relation("PlatformApiKeyCreatedBy")
 
   @@index([role])
 }
@@ -584,6 +585,35 @@ model Organization {
   updatedById String?
   updatedBy   User?    @relation("OrganizationUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
+}
+
+/// A scoped key for the ZoikoAvail™ availability API.
+///
+/// Only the hash is stored, so a key is shown in full exactly once, at the
+/// moment it is issued. The prefix is kept so the console can identify which key
+/// a row refers to without being able to reconstruct it.
+model PlatformApiKey {
+  id     String @id @default(cuid())
+  label  String
+  /// What this key may read. One of: availability | medibase | signal.
+  scope  String
+
+  keyHash   String  @unique
+  /// First few characters of the key, for display. Never enough to use.
+  keyPrefix String
+
+  /// Null until the key is used. The console shows it so an operator can tell a
+  /// key that is carrying traffic from one that was issued and forgotten.
+  lastUsedAt DateTime?
+  /// Set instead of deleting the row: a revoked key still has to be named in the
+  /// audit trail, and its hash must stay claimed so it can never be reissued.
+  revokedAt  DateTime?
+
+  createdById String?
+  createdBy   User?    @relation("PlatformApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([revokedAt])
 }
 
 model AuditLog {
