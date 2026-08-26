@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/shared/status'
 import { ErrorState } from '@/components/shared/states'
 import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
 import { Flash, useFlash } from '@/components/shared/flash'
+import { CopyButton } from '@/components/shared/copy-button'
 import {
   getIntegration,
   saveIntegration,
@@ -20,7 +21,7 @@ import {
 import { apiBaseUrl } from '@/lib/api-client'
 import { formatRelative } from '@/utils/format'
 import {
-  PlugZap, RefreshCw, Loader2, Clock, KeyRound, Copy, Check,
+  PlugZap, RefreshCw, Loader2, Clock, KeyRound,
   TriangleAlert, Unplug, Download, Upload, BookOpen,
 } from 'lucide-react'
 
@@ -83,32 +84,6 @@ function pushEndpoint() {
     ? base
     : `${window.location.origin}${base}`
   return `${absolute.replace(/\/$/, '')}/pharmacies/integration/push`
-}
-
-/** Copy-to-clipboard button for a value the operator has to paste elsewhere. */
-function CopyButton({ value, label = 'Copy' }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value)
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1800)
-        } catch {
-          // Clipboard access can be refused (insecure origin, denied permission).
-          // The value is on screen and selectable either way.
-          setCopied(false)
-        }
-      }}
-    >
-      {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-      {copied ? 'Copied' : label}
-    </Button>
-  )
 }
 
 export default function PharmacyIntegration() {

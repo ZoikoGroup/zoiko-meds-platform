@@ -4,7 +4,7 @@
 // text input with no validation on either side, so "12345" or "call the shop" saved
 // as the number patients would be given to reach the pharmacy.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -60,6 +60,8 @@ const phoneField = () => document.querySelector('#p-phone')
 const saveButton = () => screen.getByRole('button', { name: /save|submit/i })
 
 describe('pharmacy profile phone validation', () => {
+  afterEach(cleanup)
+
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
