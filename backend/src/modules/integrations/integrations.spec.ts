@@ -83,7 +83,7 @@ describe('IntegrationsService — the real dependencies, not a catalogue of name
 
       expect(row.status).toBe('disabled');
       expect(row.configured).toBe(false);
-      expect(row.manage).toBe('/commercial');
+      expect(row.manage).toBe('/admin/commercial');
     });
   });
 
@@ -157,5 +157,33 @@ describe('IntegrationsService — the real dependencies, not a catalogue of name
       expect(row.detail.length).toBeGreaterThan(20);
       expect(row.manage ?? row.configuredBy).toBeTruthy();
     }
+  });
+
+  // Every Manage button pointed outside the console it links into: the admin
+  // pages are mounted under /admin, and these paths omitted it, so React Router
+  // matched neither the admin subtree nor the patient portal and fell through to
+  // the catch-all NotFound. A button that opens a 404 is the same broken promise
+  // as the button with no handler that MSA-39 opened with.
+  it('points every Manage link at a page inside the admin console', async () => {
+    const rows = await serviceFor({ mailEnabled: true, visionEnabled: true }).list();
+    const managed = rows.filter((row) => row.manage !== null);
+
+    // Guards the assertion itself: were every row unmanaged, the loop below
+    // would pass without checking anything.
+    expect(managed.length).toBeGreaterThan(0);
+    for (const row of managed) {
+      expect(row.manage).toMatch(/^\/admin\/[a-z-]+$/);
+    }
+  });
+
+  // The set is pinned rather than pattern-matched because the routes exist in
+  // the frontend router, which this service cannot see. Changing either side
+  // alone is what breaks the link, so the pairing is written down here.
+  it('names only pages the admin console actually mounts', async () => {
+    const rows = await serviceFor({ mailEnabled: true, visionEnabled: true }).list();
+    const targets = new Set(rows.map((row) => row.manage).filter(Boolean));
+
+    // frontend/src/routes/index.jsx — children of the '/admin' route.
+    expect([...targets].sort()).toEqual(['/admin/commercial', '/admin/notifications']);
   });
 });
