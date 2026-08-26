@@ -18,6 +18,9 @@ import { OrganizationService } from './organization/organization.service';
 import { UpdateOrganizationDto } from './organization/update-organization.dto';
 import { SecurityPostureService } from './security/security-posture.service';
 import { UpdateSecurityPolicyDto } from './security/update-security-policy.dto';
+import { RoleCapabilitiesService } from './roles/role-capabilities.service';
+import { PlatformApiKeyService } from './api-keys/platform-api-key.service';
+import { CreateApiKeyDto } from './api-keys/create-api-key.dto';
 import { HelpResourcesService } from './help/help-resources.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -45,6 +48,8 @@ export class AdminController {
     private readonly dashboard: DashboardOverviewService,
     private readonly organization: OrganizationService,
     private readonly security: SecurityPostureService,
+    private readonly roleCapabilities: RoleCapabilitiesService,
+    private readonly apiKeys: PlatformApiKeyService,
     private readonly help: HelpResourcesService,
   ) {}
 
@@ -186,6 +191,54 @@ export class AdminController {
   @ApiOperation({ summary: 'Permanently delete a user' })
   deleteUser(@CurrentUser('id') actorId: string, @Param('id') id: string) {
     return this.admin.deleteUser(actorId, id);
+  }
+
+  @Get('roles')
+  @ApiOperation({
+    summary: 'Which roles can reach which parts of the platform',
+    description:
+      'Derived from the @Roles metadata RolesGuard enforces, by walking the controllers. A hand-written matrix answers from whenever it was last edited; this cannot disagree with what the routes do.',
+  })
+  getRoleMatrix() {
+    return this.roleCapabilities.matrix();
+  }
+
+  // --- ZoikoAvail API keys -------------------------------------------------
+  //
+  // There is no "reveal" here and there cannot be: only the hash is stored, so a
+  // key exists in the open exactly once, in the response to the POST below.
+
+  @Get('api-keys')
+  @ApiOperation({ summary: 'List issued keys, live ones first' })
+  listApiKeys() {
+    return this.apiKeys.list();
+  }
+
+  @Post('api-keys')
+  @ApiOperation({
+    summary: 'Issue a key',
+    description: 'The key is returned in full exactly once. Only its hash is stored.',
+  })
+  createApiKey(
+    @CurrentUser('id') actorId: string,
+    @Ip() ipAddress: string,
+    @Body() dto: CreateApiKeyDto,
+  ) {
+    return this.apiKeys.create(actorId, dto.label, dto.scope, ipAddress);
+  }
+
+  @Delete('api-keys/:id')
+  @ApiOperation({
+    summary: 'Revoke a key',
+    description:
+      'Stops it working immediately. The row stays, because a revoked key still has to be nameable in the audit trail and its hash must stay claimed.',
+  })
+  revokeApiKey(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.apiKeys.revoke(actorId, id, ipAddress);
   }
 
   @Get('audit-logs')

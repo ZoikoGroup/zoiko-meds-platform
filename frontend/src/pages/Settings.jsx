@@ -11,12 +11,14 @@ import {
   Plus,
   ScrollText,
   ShieldCheck,
+  TriangleAlert,
   Users as UsersIcon,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { EmptyState } from '@/components/shared/states'
 import { StatusBadge, ServiceStatusBadge } from '@/components/shared/status'
 import { DataTable } from '@/components/shared/data-table'
+import { CopyButton } from '@/components/shared/copy-button'
 import {
   Card,
   CardContent,
@@ -57,8 +59,12 @@ import {
   getSecurityPosture,
   updateSecurityPolicy,
   listUsers,
+  getRoleMatrix,
+  listAuditLogs,
+  listApiKeys,
+  createApiKey,
+  revokeApiKey,
 } from '@/services/admin-api'
-import { apiKeys, auditLogs, roleMatrix } from '@/services/ops-data'
 import { useFlash } from '@/components/shared/flash'
 import {
   getMfaStatus,
@@ -69,7 +75,6 @@ import {
 import { useAuth } from '@/providers/auth-provider'
 import { initials, formatRelative } from '@/utils/format'
 
-const ROLE_KEYS = ['Owner', 'Admin', 'Analyst', 'Viewer', 'Auditor']
 
 const TABS = [
   { value: 'organization', label: 'Organization', icon: Building2 },
@@ -166,52 +171,45 @@ const memberColumns = [
   },
 ]
 
-const apiKeyColumns = [
-  { key: 'label', header: 'Key', sortable: true, cell: (r) => <span className="font-medium">{r.label}</span> },
-  { key: 'prefix', header: 'Prefix', cell: (r) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{r.prefix}••••</code> },
-  { key: 'scope', header: 'Scope', cell: (r) => <span className="text-muted-foreground">{r.scope}</span> },
-  { key: 'lastUsed', header: 'Last used', cell: (r) => <span className="text-muted-foreground">{r.lastUsed}</span> },
+/**
+ * Columns for the real audit rows.
+ *
+ * Not the fixture's shape: that had `resource` and `scope`, which the API does
+ * not return, so reusing it rendered two blank columns over live data. The API
+ * gives timestamp / action / actor / module / severity / ip / summary.
+ */
+const auditColumns = [
   {
-    key: 'status',
-    header: 'Status',
+    key: 'timestamp',
+    header: 'When',
+    sortable: true,
     cell: (r) => (
-      <StatusBadge tone={r.status === 'active' ? 'good' : 'neutral'} size="sm">
-        {r.status === 'active' ? 'Active' : 'Revoked'}
-      </StatusBadge>
+      <span className="tabular whitespace-nowrap text-muted-foreground">
+        {formatRelative(r.timestamp) || '—'}
+      </span>
     ),
+  },
+  {
+    key: 'actor',
+    header: 'Actor',
+    sortable: true,
+    cell: (r) => <span className="font-medium">{r.actor}</span>,
+  },
+  { key: 'action', header: 'Action' },
+  {
+    key: 'summary',
+    header: 'Summary',
+    // The server writes this from the action and its metadata, so the row reads
+    // as a sentence rather than as an event name and a JSON blob.
+    cell: (r) => <span className="text-muted-foreground">{r.summary || '—'}</span>,
+  },
+  {
+    key: 'module',
+    header: 'Module',
+    cell: (r) => <Badge variant="outline" size="sm">{r.module}</Badge>,
   },
 ]
 
-const auditColumns = [
-  { key: 'actor', header: 'Actor', sortable: true, cell: (r) => <span className="font-medium">{r.actor}</span> },
-  { key: 'action', header: 'Action' },
-  { key: 'resource', header: 'Resource', cell: (r) => <span className="text-muted-foreground">{r.resource}</span> },
-  { key: 'scope', header: 'Scope', cell: (r) => <Badge variant="outline" size="sm">{r.scope}</Badge> },
-  { key: 'timestamp', header: 'Timestamp', sortable: true, cell: (r) => <span className="tabular text-muted-foreground">{r.timestamp}</span> },
-]
-
-function actionsMenu(items) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="Actions">
-          <MoreHorizontal />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {items.map((it, i) =>
-          it === '---' ? (
-            <DropdownMenuSeparator key={i} />
-          ) : (
-            <DropdownMenuItem key={i} variant={it.danger ? 'danger' : 'default'}>
-              {it.label}
-            </DropdownMenuItem>
-          )
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
 
 /* -------------------------------- page ---------------------------------- */
 
@@ -825,6 +823,353 @@ function SecurityPanel() {
   )
 }
 
+/**
+ * The capability matrix, read from the guards that enforce it (MSA-41).
+ *
+ * This was a hand-written table in a frontend fixture. A matrix is what someone
+ * reads to answer "can a pharmacist see this?", and a hand-written one answers
+ * from whenever it was last edited. The API derives it by walking the
+ * controllers and reading the same @Roles metadata RolesGuard reads.
+ */
+function RolesPanel() {
+  const [matrix, setMatrix] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    getRoleMatrix()
+      .then((data) => alive && setMatrix(data))
+      .catch((err) => alive && setError(err.message || 'Could not load the role matrix.'))
+    return () => { alive = false }
+  }, [])
+
+  if (error) return <PanelError message={error} />
+  if (!matrix) return <PanelLoading label="Loading roles…" />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Roles &amp; permissions</CardTitle>
+        <CardDescription>
+          Which roles can reach which parts of the platform, derived from the checks the
+          API actually enforces. It cannot claim access a route refuses.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="py-2">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Capability</TableHead>
+                {matrix.roles.map((role) => (
+                  <TableHead key={role.id} className="text-center whitespace-nowrap">
+                    {role.label}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {matrix.capabilities.map((capability) => (
+                <TableRow key={capability.id}>
+                  <TableCell className="font-medium">
+                    <span className="flex flex-col">
+                      {capability.label}
+                      <span className="text-[11px] font-normal text-muted-foreground">
+                        {capability.routes} {capability.routes === 1 ? 'route' : 'routes'}
+                        {/* "Every role can reach this" and "this needs no account
+                            at all" look identical in a row of ticks. */}
+                        {capability.hasPublicRoutes && ' · some need no account'}
+                      </span>
+                    </span>
+                  </TableCell>
+                  {matrix.roles.map((role) => (
+                    <TableCell key={role.id} className="text-center">
+                      {capability.roles.includes(role.id) ? (
+                        <Check className="mx-auto size-4 text-success" aria-label="allowed" />
+                      ) : (
+                        <Minus
+                          className="mx-auto size-4 text-muted-foreground/50"
+                          aria-label="not allowed"
+                        />
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/** The real audit trail, which the console already serves at /admin/audit-logs. */
+function AuditPanel() {
+  const [rows, setRows] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    listAuditLogs({ limit: 50 })
+      .then((data) => {
+        if (!alive) return
+        // The endpoint is paginated, so the rows may arrive wrapped.
+        setRows(Array.isArray(data) ? data : (data?.items ?? data?.data ?? []))
+      })
+      .catch((err) => alive && setError(err.message || 'Could not load the audit log.'))
+    return () => { alive = false }
+  }, [])
+
+  if (error) return <PanelError message={error} />
+  if (!rows) return <PanelLoading label="Loading audit log…" />
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between space-y-0">
+        <div>
+          <CardTitle>Audit log</CardTitle>
+          <CardDescription>
+            The most recent governed actions on this platform.
+          </CardDescription>
+        </div>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/admin/audit-logs">Open the full log</Link>
+        </Button>
+      </CardHeader>
+      <CardContent className="py-2">
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={FileText}
+            title="Nothing recorded yet"
+            description="Governed actions appear here as they happen."
+          />
+        ) : (
+          <DataTable
+            columns={auditColumns}
+            data={rows}
+            getRowId={(r) => r.id}
+            searchAccessor={(r) =>
+              `${r.actor ?? ''} ${r.action ?? ''} ${r.module ?? ''} ${r.summary ?? ''}`
+            }
+            searchPlaceholder="Search audit log…"
+            pageSize={8}
+          />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Scoped keys for ZoikoAvail (MSA-41).
+ *
+ * There is no Reveal, and there cannot be: only the hash is stored, so a key
+ * exists in the open exactly once. The fixture this replaces offered Reveal,
+ * Rotate and Revoke, none of which had a handler.
+ */
+function ApiKeysPanel() {
+  const [keys, setKeys] = useState(null)
+  const [error, setError] = useState('')
+  const [issued, setIssued] = useState(null)
+  const [label, setLabel] = useState('')
+  const [scope, setScope] = useState('availability')
+  const [busy, setBusy] = useState(false)
+  const [flashMsg, flash] = useFlash()
+
+  const load = useCallback(async () => {
+    try {
+      setKeys(await listApiKeys())
+    } catch (err) {
+      setError(err?.message || 'Could not load API keys.')
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const create = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const { apiKey } = await createApiKey({ label, scope })
+      setIssued(apiKey)
+      setLabel('')
+      await load()
+      flash('Key issued — copy it now, it is not shown again')
+    } catch (err) {
+      setError(err?.message || 'Could not issue a key.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const revoke = async (id, name) => {
+    if (!window.confirm(`Revoke "${name}"? Anything using it stops working immediately.`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await revokeApiKey(id)
+      await load()
+      flash(`Revoked ${name}`)
+    } catch (err) {
+      setError(err?.message || 'Could not revoke the key.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (error && !keys) return <PanelError message={error} />
+  if (!keys) return <PanelLoading label="Loading API keys…" />
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Issue a key</CardTitle>
+          <CardDescription>
+            Scoped keys for ZoikoAvail™. Only a hash is stored, so a key is shown in full
+            exactly once — there is no way to look one up later.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {flashMsg && <p className="pb-3 text-xs font-medium text-success">{flashMsg}</p>}
+          {error && (
+            <p role="alert" className="flex items-start gap-2 pb-3 text-xs font-medium text-danger">
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              {error}
+            </p>
+          )}
+          <form onSubmit={create} className="flex flex-wrap items-end gap-3">
+            <div className="flex min-w-48 flex-1 flex-col gap-1.5">
+              <Label htmlFor="key-label">Label</Label>
+              <Input
+                id="key-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Partner availability feed"
+              />
+            </div>
+            <div className="flex min-w-40 flex-col gap-1.5">
+              <Label htmlFor="key-scope">Scope</Label>
+              <select
+                id="key-scope"
+                value={scope}
+                onChange={(e) => setScope(e.target.value)}
+                className="h-9 rounded-lg border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                <option value="availability">Availability</option>
+                <option value="medibase">MediBase</option>
+                <option value="signal">ZoikoSignal</option>
+              </select>
+            </div>
+            <Button type="submit" size="sm" disabled={busy || label.trim().length < 2}>
+              {busy && <Loader2 className="size-4 animate-spin" />}
+              <Plus className="size-4" />
+              Create key
+            </Button>
+          </form>
+
+          {issued && (
+            <div className="mt-4 flex flex-col gap-2 rounded-xl border border-warning/30 bg-warning/5 p-4">
+              <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <TriangleAlert className="size-4 text-warning" aria-hidden />
+                Copy this key now — it is not shown again
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                  {issued}
+                </code>
+                <CopyButton value={issued} label="Copy key" />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Issued keys</CardTitle>
+          <CardDescription>Live keys first. Revoking one stops it immediately.</CardDescription>
+        </CardHeader>
+        <CardContent className="py-2">
+          {keys.length === 0 ? (
+            <EmptyState
+              icon={KeyRound}
+              title="No keys issued"
+              description="Issue one above to let a partner system read availability."
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Label</TableHead>
+                  <TableHead>Scope</TableHead>
+                  <TableHead>Key</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead className="text-right">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {keys.map((key) => (
+                  <TableRow key={key.id}>
+                    <TableCell className="font-medium">{key.label}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{key.scope}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {key.prefix}…
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {/* An issued-and-forgotten key reads differently from one
+                          carrying traffic, so the two are not both blank. */}
+                      {key.lastUsedAt ? formatRelative(key.lastUsedAt) : 'Never used'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {key.status === 'revoked' ? (
+                        <Badge variant="outline" size="sm">Revoked</Badge>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-danger hover:bg-danger/5"
+                          disabled={busy}
+                          onClick={() => revoke(key.id, key.label)}
+                        >
+                          Revoke
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/** Shared shells, so each panel says "loading" and "failed" the same way. */
+function PanelLoading({ label }) {
+  return (
+    <div className="flex min-h-[30vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+      <Loader2 className="size-4 animate-spin" /> {label}
+    </div>
+  )
+}
+
+function PanelError({ message }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger"
+    >
+      <AlertCircle className="mt-0.5 size-4 shrink-0" />
+      {message}
+    </div>
+  )
+}
+
 function IntegrationsPanel() {
   const [items, setItems] = useState(null)
   const [error, setError] = useState('')
@@ -939,44 +1284,7 @@ export default function Settings() {
 
         {/* Roles & permissions */}
         <TabsContent value="roles">
-          <Card>
-            <CardHeader>
-              <CardTitle>Roles & permissions</CardTitle>
-              <CardDescription>
-                Capability matrix across workspace roles.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="py-2">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Capability</TableHead>
-                    {ROLE_KEYS.map((r) => (
-                      <TableHead key={r} className="text-center">
-                        {r}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {roleMatrix.map((row) => (
-                    <TableRow key={row.capability}>
-                      <TableCell className="font-medium">{row.capability}</TableCell>
-                      {ROLE_KEYS.map((r) => (
-                        <TableCell key={r} className="text-center">
-                          {row[r] ? (
-                            <Check className="mx-auto size-4 text-success" />
-                          ) : (
-                            <Minus className="mx-auto size-4 text-muted-foreground/50" />
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          <RolesPanel />
         </TabsContent>
 
         {/* Security */}
@@ -986,58 +1294,12 @@ export default function Settings() {
 
         {/* Audit log */}
         <TabsContent value="audit">
-          <Card>
-            <CardHeader>
-              <CardTitle>Audit log</CardTitle>
-              <CardDescription>
-                Immutable record of governed actions, retained for 24 months.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="py-2">
-              <DataTable
-                columns={auditColumns}
-                data={auditLogs}
-                getRowId={(r) => r.id}
-                searchAccessor={(r) => `${r.actor} ${r.action} ${r.resource} ${r.scope}`}
-                searchPlaceholder="Search audit log…"
-                pageSize={8}
-              />
-            </CardContent>
-          </Card>
+          <AuditPanel />
         </TabsContent>
 
         {/* API keys */}
         <TabsContent value="api-keys">
-          <Card>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <div>
-                <CardTitle>API keys</CardTitle>
-                <CardDescription>Scoped keys for ZoikoAvail™.</CardDescription>
-              </div>
-              <Button size="sm">
-                <Plus />
-                Create key
-              </Button>
-            </CardHeader>
-            <CardContent className="py-2">
-              <DataTable
-                columns={apiKeyColumns}
-                data={apiKeys}
-                getRowId={(r) => r.id}
-                searchAccessor={(r) => `${r.label} ${r.scope}`}
-                searchPlaceholder="Search keys…"
-                pageSize={8}
-                rowActions={() =>
-                  actionsMenu([
-                    { label: 'Reveal key' },
-                    { label: 'Rotate key' },
-                    '---',
-                    { label: 'Revoke key', danger: true },
-                  ])
-                }
-              />
-            </CardContent>
-          </Card>
+          <ApiKeysPanel />
         </TabsContent>
 
         {/* Integrations */}

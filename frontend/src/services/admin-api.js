@@ -68,6 +68,22 @@ export const setUserActive = (id, active) =>
 export const deleteUser = (id) =>
   apiFetch(`/admin/users/${id}`, { method: 'DELETE' })
 
+// Derived from the @Roles metadata the guards enforce, by walking the
+// controllers — so the matrix cannot claim access a route refuses.
+export const getRoleMatrix = () => apiFetch('/admin/roles')
+
+// --- ZoikoAvail API keys ---------------------------------------------------
+//
+// There is no "reveal": only the hash is stored, so a key exists in the open
+// exactly once, in the response to createApiKey.
+export const listApiKeys = () => apiFetch('/admin/api-keys')
+
+export const createApiKey = (body) =>
+  apiFetch('/admin/api-keys', { method: 'POST', body })
+
+export const revokeApiKey = (id) =>
+  apiFetch(`/admin/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
 export const listAuditLogs = (params) =>
   apiFetch(`/admin/audit-logs${qs(params)}`)
 
