@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { getHelpResources } from '@/services/admin-api';
+import { useOptionalAuth } from '@/providers/auth-provider';
 import { BookOpen, Keyboard, LifeBuoy, MessagesSquare, PanelLeft, } from 'lucide-react';
 import { Brand } from '@/components/shared/brand';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipTrigger, } from '@/components/ui/toolti
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, } from '@/components/ui/dialog';
 import { navSections } from '@/routes/navigation';
 import { cn } from '@/lib/utils';
+/** Used only when the server cannot be asked; matches the backend default. */
+const FALLBACK_SUPPORT_EMAIL = 'support@zoikomeds.com';
 function useActiveMatcher() {
     const { pathname, search } = useLocation();
     const tab = new URLSearchParams(search).get('tab');
@@ -48,8 +52,71 @@ function NavItem({ link, collapsed, active, onNavigate, }) {
     }
     return content;
 }
+/**
+ * The real keyboard shortcuts, and only those.
+ *
+ * Both are registered in app-layout.jsx. The dialog used to assert the command
+ * palette in a description and offer nothing else; anything more listed here
+ * would be describing shortcuts that do not exist.
+ */
+const SHORTCUTS = [
+    { keys: ['Cmd', 'K'], label: 'Open the command palette', alt: 'Ctrl K' },
+    { keys: ['Cmd', 'Shift', 'L'], label: 'Switch between light and dark', alt: 'Ctrl Shift L' },
+];
+/**
+ * Help & resources (MSA-43).
+ *
+ * The three tiles - Documentation, Keyboard shortcuts, Contact support - were
+ * plain buttons with no onClick at all, so the dialog opened and nothing in it
+ * did anything.
+ *
+ * Two of the three are answerable here: the shortcuts belong to this client, and
+ * support is an address. Documentation is not - whether a deployment publishes an
+ * API reference depends on whether Swagger is mounted, and any docs site is a
+ * deployment fact - so the server is asked, and a tile appears only for what it
+ * says exists. A tile that opens a 404 is no better than one that opens nothing.
+ */
 function HelpCenter({ collapsed }) {
     const [open, setOpen] = useState(false);
+    const [view, setView] = useState('index');
+    const [resources, setResources] = useState(null);
+    // Optional: the sidebar renders in contexts with no session, and the
+    // identity only prefills the support email.
+    const user = useOptionalAuth()?.user;
+    const location = useLocation();
+    // Fetched on first open rather than on mount: this sits in the sidebar of
+    // every admin page, and most visits never open it.
+    useEffect(() => {
+        if (!open || resources)
+            return;
+        let alive = true;
+        getHelpResources()
+            .then((r) => alive && setResources(r))
+            .catch(() => alive && setResources({ supportEmail: FALLBACK_SUPPORT_EMAIL }));
+        return () => { alive = false; };
+    }, [open, resources]);
+    // Reset to the index when it closes, so it does not reopen on whichever
+    // panel was last viewed.
+    useEffect(() => {
+        if (!open)
+            setView('index');
+    }, [open]);
+    const supportEmail = resources?.supportEmail ?? FALLBACK_SUPPORT_EMAIL;
+    // A configured docs site wins over the API reference; when the server
+    // publishes neither, the tile is not rendered at all.
+    const docsUrl = resources?.documentationUrl || resources?.apiReferenceUrl || null;
+    // Prefilled so the first reply does not have to ask who and where.
+    const supportBody = [
+        '',
+        '',
+        '---',
+        'Signed in as: ' + (user?.email ?? 'unknown'),
+        'Role: ' + (user?.role ?? 'unknown'),
+        'Page: ' + location.pathname + location.search,
+    ].join('\n');
+    const supportHref = 'mailto:' + supportEmail
+        + '?subject=' + encodeURIComponent('ZoikoMeds support request')
+        + '&body=' + encodeURIComponent(supportBody);
     return (<Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="ghost" className={cn('w-full justify-start gap-3 text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground', collapsed && 'justify-center px-0')}>
@@ -59,26 +126,70 @@ function HelpCenter({ collapsed }) {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Help & resources</DialogTitle>
+          <DialogTitle>
+            {view === 'shortcuts' ? 'Keyboard shortcuts' : 'Help & resources'}
+          </DialogTitle>
           <DialogDescription>
-            Documentation, onboarding, and support for the intelligence platform.
+            {view === 'shortcuts'
+            ? 'Every shortcut this console registers.'
+            : 'Documentation, shortcuts, and support for this deployment.'}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-2">
-          {[
-            { icon: BookOpen, title: 'Documentation', desc: 'Guides, API reference, and governance model.' },
-            { icon: Keyboard, title: 'Keyboard shortcuts', desc: 'Press ⌘K to open the command palette.' },
-            { icon: MessagesSquare, title: 'Contact support', desc: 'Enterprise support with a 1h SLA.' },
-        ].map((item) => (<button key={item.title} className="flex items-start gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:bg-accent">
+
+        {view === 'shortcuts' ? (<div className="flex flex-col gap-2">
+            {SHORTCUTS.map((shortcut) => (<div key={shortcut.label} className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
+                <span className="flex flex-col">
+                  <span className="text-sm font-medium">{shortcut.label}</span>
+                  <span className="text-xs text-muted-foreground">{shortcut.alt} on Windows and Linux</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {shortcut.keys.map((key) => (<kbd key={key} className="rounded-md border border-border bg-muted px-2 py-1 font-mono text-xs">
+                      {key}
+                    </kbd>))}
+                </span>
+              </div>))}
+            <Button variant="outline" size="sm" className="mt-1 w-fit" onClick={() => setView('index')}>
+              Back
+            </Button>
+          </div>) : (<div className="grid gap-2">
+            {docsUrl && (<a href={docsUrl} target="_blank" rel="noreferrer" className="flex items-start gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:bg-accent">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <BookOpen className="size-4.5"/>
+                </span>
+                <span className="flex flex-col">
+                  <span className="text-sm font-medium">Documentation</span>
+                  <span className="text-xs text-muted-foreground">
+                    {resources?.documentationUrl
+                ? 'Guides and governance model.'
+                : 'API reference for this deployment.'}
+                  </span>
+                </span>
+              </a>)}
+
+            <button type="button" onClick={() => setView('shortcuts')} className="flex items-start gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:bg-accent">
               <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <item.icon className="size-4.5"/>
+                <Keyboard className="size-4.5"/>
               </span>
               <span className="flex flex-col">
-                <span className="text-sm font-medium">{item.title}</span>
-                <span className="text-xs text-muted-foreground">{item.desc}</span>
+                <span className="text-sm font-medium">Keyboard shortcuts</span>
+                <span className="text-xs text-muted-foreground">
+                  Including Cmd K for the command palette.
+                </span>
               </span>
-            </button>))}
-        </div>
+            </button>
+
+            <a href={supportHref} className="flex items-start gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:bg-accent">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <MessagesSquare className="size-4.5"/>
+              </span>
+              <span className="flex flex-col">
+                <span className="text-sm font-medium">Contact support</span>
+                {/* No SLA claimed: the old copy promised enterprise support with
+                    a 1h response, which nothing here backs. */}
+                <span className="text-xs text-muted-foreground">{supportEmail}</span>
+              </span>
+            </a>
+          </div>)}
       </DialogContent>
     </Dialog>);
 }

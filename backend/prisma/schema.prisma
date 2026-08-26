@@ -52,6 +52,7 @@ model User {
   signalNotificationPreference SignalNotificationPreference?
   capabilityGrants             CapabilityGrant[]             @relation("CapabilityGrantUser")
   capabilityGrantsIssued       CapabilityGrant[]             @relation("CapabilityGrantIssuer")
+  organizationsUpdated         Organization[]                @relation("OrganizationUpdatedBy")
 
   @@index([role])
 }
@@ -469,7 +470,7 @@ model SignalAggregate {
   // datamodel never said so. Declaring what the database already has costs
   // nothing and needs no DDL; the alternative was altering a production table
   // to erase a default that @updatedAt makes unreachable anyway.
-  updatedAt         DateTime        @updatedAt @default(now())
+  updatedAt         DateTime        @default(now()) @updatedAt
 
   // The map is the name Postgres actually gave this index, not the one the
   // migration asked for. 0_init's successor wrote
@@ -531,6 +532,33 @@ enum AuditSeverity {
   INFO
   WARNING
   SECURITY_ALERT
+}
+
+/// The workspace's own profile: the single organization this deployment is run by.
+///
+/// The settings page showed "Meridian Health Network / org-meridian / North
+/// America (us-east)" to every super admin and its Save button had no handler,
+/// because there was nothing anywhere in the schema for it to write to (MSA-40).
+///
+/// One row, pinned by `id`. A settings table with no key invites a second row
+/// that nothing reads, and then the question of which one is live.
+model Organization {
+  /// Always SINGLETON_ID. The check constraint lives in the migration.
+  id               String  @id
+  name             String
+  /// Stable external handle. Not the primary key: an operator renaming the
+  /// workspace must not change what the row is.
+  slug             String  @unique
+  /// Where this deployment's data is held. Free text because it describes a
+  /// hosting decision made outside the application, not something it enforces.
+  dataResidency    String?
+  organizationType String?
+
+  updatedAt   DateTime @updatedAt
+  /// Who last saved it, for the settings page to show and the audit log to match.
+  updatedById String?
+  updatedBy   User?    @relation("OrganizationUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
 }
 
 model AuditLog {
