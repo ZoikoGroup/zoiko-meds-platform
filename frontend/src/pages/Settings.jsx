@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -55,10 +55,17 @@ import {
   getOrganization,
   updateOrganization,
   getSecurityPosture,
+  updateSecurityPolicy,
   listUsers,
 } from '@/services/admin-api'
 import { apiKeys, auditLogs, roleMatrix } from '@/services/ops-data'
 import { useFlash } from '@/components/shared/flash'
+import {
+  getMfaStatus,
+  beginMfaSetup,
+  confirmMfaSetup,
+  disableMfa,
+} from '@/services/auth-api'
 import { useAuth } from '@/providers/auth-provider'
 import { initials, formatRelative } from '@/utils/format'
 
@@ -451,30 +458,250 @@ function MembersPanel() {
 }
 
 /**
- * What the platform actually enforces about sign-in (MSA-42).
+ * Enrol this account in two-factor authentication (MSA-42).
  *
- * This was three switches — enforce MFA, SSO (SAML 2.0), IP allowlist — bound to
- * useState and nothing else, two of them on by default. None of the three exists
- * anywhere in this platform. Persisting them would have been the worse of the
- * two available fixes: a stored "MFA enforced" that no code reads is a control
- * an operator reports to an auditor and leans on during an incident.
+ * Two steps, because that is what the API does: setup mints a secret and hands
+ * back the URI to scan, confirm proves a code against it. Nothing is required of
+ * the account until a code has been confirmed, so opening this panel and closing
+ * the tab changes nothing.
+ */
+function MfaCard() {
+  const [status, setStatus] = useState(null)
+  const [setup, setSetup] = useState(null)
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [flashMsg, flash] = useFlash()
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await getMfaStatus())
+    } catch (err) {
+      setError(err?.message || 'Could not read two-factor status.')
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const begin = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      setSetup(await beginMfaSetup())
+    } catch (err) {
+      setError(err?.message || 'Could not start setup.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirm = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await confirmMfaSetup(code)
+      setSetup(null)
+      setCode('')
+      await load()
+      flash('Two-factor authentication is on for your account')
+    } catch (err) {
+      setError(err?.message || 'That code was not accepted.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const turnOff = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await disableMfa(code)
+      setCode('')
+      await load()
+      flash('Two-factor authentication is off for your account')
+    } catch (err) {
+      setError(err?.message || 'Could not turn it off.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Your two-factor authentication</CardTitle>
+        <CardDescription>
+          A code from an authenticator app, asked for after your password.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {flashMsg && <p className="text-xs font-medium text-success">{flashMsg}</p>}
+        {error && (
+          <p role="alert" className="flex items-start gap-2 text-xs font-medium text-danger">
+            <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {error}
+          </p>
+        )}
+
+        {status === null ? (
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Loading…
+          </span>
+        ) : status.enrolled ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <StatusBadge tone="good" size="sm">On</StatusBadge>
+              <span className="text-xs text-muted-foreground">
+                Enrolled {formatRelative(status.enrolledAt) || 'recently'}
+              </span>
+            </div>
+            {status.required ? (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                This workspace requires two-factor authentication, so it cannot be turned
+                off here.
+              </p>
+            ) : (
+              <form onSubmit={turnOff} className="flex flex-wrap items-end gap-2">
+                <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+                  <Label htmlFor="mfa-off-code">Enter a current code to turn it off</Label>
+                  <Input
+                    id="mfa-off-code"
+                    inputMode="numeric"
+                    maxLength={7}
+                    placeholder="123456"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    className="font-mono tracking-widest"
+                  />
+                </div>
+                <Button type="submit" variant="outline" size="sm" disabled={busy || !code}>
+                  Turn off
+                </Button>
+              </form>
+            )}
+          </>
+        ) : setup ? (
+          <form onSubmit={confirm} className="flex flex-col gap-3">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Add this to your authenticator app, then enter the code it shows.
+            </p>
+            {/* The key in text as well as the URI: not every environment can
+                scan, and the secret is the only way in without a camera. */}
+            <code className="break-all rounded-lg bg-muted px-3 py-2 font-mono text-xs">
+              {setup.secret}
+            </code>
+            <a
+              href={setup.otpauthUri}
+              className="w-fit text-xs font-medium text-primary underline underline-offset-2"
+            >
+              Open in your authenticator app
+            </a>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+                <Label htmlFor="mfa-code">Code from the app</Label>
+                <Input
+                  id="mfa-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={7}
+                  placeholder="123456"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="font-mono tracking-widest"
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={busy || !code}>
+                {busy && <Loader2 className="size-4 animate-spin" />}
+                Confirm
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <StatusBadge tone={status.required ? 'critical' : 'serious'} size="sm">
+                Off
+              </StatusBadge>
+              {status.required && (
+                <span className="text-xs text-danger">
+                  This workspace requires it. You will not be able to sign in again until
+                  you set it up.
+                </span>
+              )}
+            </div>
+            <Button size="sm" onClick={begin} disabled={busy}>
+              {busy && <Loader2 className="size-4 animate-spin" />}
+              Set up
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * What the platform enforces about sign-in, and the parts of it this page can
+ * decide (MSA-42).
  *
- * So there are no switches. The server reports the controls that are real, and
- * names the absent ones as absent rather than as switched off.
+ * This was three switches bound to useState and nothing else, two of them on by
+ * default, naming controls the platform did not have. The controls that are real
+ * now have switches that write a policy the auth path reads; the ones that are
+ * still absent are reported as absent, rather than as switched off, because
+ * "off" invites someone to turn it on.
  */
 function SecurityPanel() {
   const [controls, setControls] = useState(null)
+  const [policy, setPolicy] = useState(null)
   const [error, setError] = useState('')
+  const [savingKey, setSavingKey] = useState(null)
+  const [allowlistDraft, setAllowlistDraft] = useState('')
+  const [flashMsg, flash] = useFlash()
+
+  const apply = useCallback((rows, next) => {
+    setControls(rows)
+    if (next) {
+      setPolicy(next)
+      setAllowlistDraft((next.ipAllowlist ?? []).join('\n'))
+    }
+  }, [])
 
   useEffect(() => {
     let alive = true
     getSecurityPosture()
-      .then((rows) => alive && setControls(Array.isArray(rows) ? rows : []))
+      .then((rows) => {
+        if (!alive) return
+        setControls(Array.isArray(rows) ? rows : [])
+        const list = (Array.isArray(rows) ? rows : []).find((c) => c.id === 'ip-allowlist')
+        // The list itself is not in the control rows; it is read back from the
+        // first save. Until then the textarea starts from what the API returns
+        // on the next PATCH, so it is left empty rather than guessed at.
+        setPolicy({ ipAllowlistEnabled: Boolean(list?.enabled) })
+      })
       .catch((err) => alive && setError(err.message || 'Could not load security settings.'))
     return () => { alive = false }
   }, [])
 
-  if (error) {
+  const save = async (key, body) => {
+    setSavingKey(key)
+    setError('')
+    try {
+      const { controls: rows, policy: next } = await updateSecurityPolicy(body)
+      apply(rows, next)
+      flash('Security policy saved')
+    } catch (err) {
+      setError(err?.message || 'Could not save the security policy.')
+      // Re-read, so a refused save does not leave the switch showing a state
+      // the server never accepted.
+      try { setControls(await getSecurityPosture()) } catch { /* keep the error above */ }
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  if (error && !controls) {
     return (
       <div role="alert" className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
         <AlertCircle className="mt-0.5 size-4 shrink-0" />
@@ -497,36 +724,104 @@ function SecurityPanel() {
     'not-implemented': { label: 'Not available', variant: 'outline' },
   }
 
+  const allowlistEnabled = controls.find((c) => c.id === 'ip-allowlist')?.enabled
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Security</CardTitle>
-        <CardDescription>
-          Authentication and access controls for the workspace, as the server reports
-          them. Each is set where it is decided — in configuration or in code — so
-          none of them is switched on from this page.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-1">
-        {controls.map((c, i) => (
-          <div key={c.id}>
-            <div className="flex items-start justify-between gap-4 py-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{c.label}</p>
-                <p className="text-xs leading-relaxed text-muted-foreground">{c.detail}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Set by {c.configuredBy}
-                </p>
+    <div className="flex flex-col gap-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Security</CardTitle>
+          <CardDescription>
+            Authentication and access controls for the workspace. A control with a switch
+            is decided here; the rest are set in server configuration or in code, and are
+            shown so the page cannot disagree with what the platform does.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1">
+          {flashMsg && <p className="pb-2 text-xs font-medium text-success">{flashMsg}</p>}
+          {error && (
+            <p role="alert" className="flex items-start gap-2 pb-2 text-xs font-medium text-danger">
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              {error}
+            </p>
+          )}
+          {controls.map((c, i) => (
+            <div key={c.id}>
+              <div className="flex items-start justify-between gap-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{c.label}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{c.detail}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Set by {c.configuredBy}</p>
+                </div>
+                {c.setting ? (
+                  <Switch
+                    checked={Boolean(c.enabled)}
+                    disabled={savingKey === c.setting}
+                    aria-label={c.label}
+                    onCheckedChange={(next) => save(c.setting, { [c.setting]: next })}
+                  />
+                ) : (
+                  <Badge variant={(TONE[c.state] ?? TONE['not-implemented']).variant} size="sm">
+                    {(TONE[c.state] ?? TONE['not-implemented']).label}
+                  </Badge>
+                )}
               </div>
-              <Badge variant={(TONE[c.state] ?? TONE['not-implemented']).variant} size="sm">
-                {(TONE[c.state] ?? TONE['not-implemented']).label}
-              </Badge>
+              {i < controls.length - 1 && <Separator />}
             </div>
-            {i < controls.length - 1 && <Separator />}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Approved networks</CardTitle>
+          <CardDescription>
+            One address or CIDR range per line. The allowlist above only takes effect once
+            there is something here — switching it on with an empty list would lock every
+            operator out, including whoever would switch it off again.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <textarea
+            aria-label="Approved networks"
+            rows={5}
+            value={allowlistDraft}
+            onChange={(e) => setAllowlistDraft(e.target.value)}
+            placeholder={'203.0.113.0/24\n2001:db8::/32'}
+            className="w-full rounded-lg border border-input bg-card px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+          />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Health checks are always answered, whatever is listed here, so a wrong entry
+            cannot pull this service out of its load balancer.
+          </p>
+        </CardContent>
+        <CardFooter className="justify-end">
+          <Button
+            size="sm"
+            disabled={savingKey === 'ipAllowlist'}
+            onClick={() =>
+              save('ipAllowlist', {
+                ipAllowlist: allowlistDraft
+                  .split('\n')
+                  .map((line) => line.trim())
+                  .filter(Boolean),
+              })
+            }
+          >
+            {savingKey === 'ipAllowlist' && <Loader2 className="size-4 animate-spin" />}
+            Save networks
+          </Button>
+        </CardFooter>
+      </Card>
+
+      {allowlistEnabled && (policy?.ipAllowlist?.length ?? 0) === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Save at least one network above for the allowlist to take effect.
+        </p>
+      )}
+
+      <MfaCard />
+    </div>
   )
 }
 

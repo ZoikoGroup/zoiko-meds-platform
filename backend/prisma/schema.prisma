@@ -41,6 +41,14 @@ model User {
   pharmacy           Pharmacy? @relation(fields: [pharmacyId], references: [id])
   isActive           Boolean   @default(true)
   mustChangePassword Boolean   @default(false) // set when an admin provisions an account
+
+  /// Base32 TOTP secret. Present from the moment enrolment starts, which is not
+  /// the same as being enrolled: a secret with no mfaEnabledAt is a setup that
+  /// was begun and never confirmed, and must not count as a second factor.
+  mfaSecret          String?
+  /// When the first correct code was accepted. This, not mfaSecret, is what
+  /// makes a second factor required at sign-in.
+  mfaEnabledAt       DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -543,7 +551,7 @@ enum AuditSeverity {
 /// One row, pinned by `id`. A settings table with no key invites a second row
 /// that nothing reads, and then the question of which one is live.
 model Organization {
-  /// Always SINGLETON_ID. The check constraint lives in the migration.
+  /// Always SINGLETON_ID. Held by OrganizationService, which addresses no other.
   id               String  @id
   name             String
   /// Stable external handle. Not the primary key: an operator renaming the
@@ -553,6 +561,23 @@ model Organization {
   /// hosting decision made outside the application, not something it enforces.
   dataResidency    String?
   organizationType String?
+
+  /// Require every password sign-in to present a second factor. Enforced in
+  /// AuthService.login: a member who has not enrolled is refused a session and
+  /// told to enrol, rather than being let in on the password alone.
+  requireMfa         Boolean  @default(false)
+
+  /// Restrict the API to a set of networks. Deliberately separate from the list
+  /// being empty: switching it on with nothing in the list would lock every
+  /// operator out, so the guard reads that as "not configured" not "deny all".
+  ipAllowlistEnabled Boolean  @default(false)
+  /// CIDR ranges, or bare addresses.
+  ipAllowlist        String[] @default([])
+
+  /// Whether members may sign in through Google or Microsoft. The providers must
+  /// still be configured on the server; this decides whether the workspace
+  /// accepts them when they are.
+  allowOauthSignIn   Boolean  @default(true)
 
   updatedAt   DateTime @updatedAt
   /// Who last saved it, for the settings page to show and the audit log to match.

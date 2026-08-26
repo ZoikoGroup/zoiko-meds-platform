@@ -31,6 +31,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GoogleOAuthGuard, MicrosoftOAuthGuard } from './guards/oauth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { OAuthProfile } from './oauth-profile';
+import { MfaService } from './mfa/mfa.service';
+import { MfaCodeDto } from './mfa/mfa.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -38,7 +40,73 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
+    private readonly mfa: MfaService,
   ) {}
+
+  // --- Two-factor authentication (MSA-42) ----------------------------------
+  //
+  // Enrolment is two calls. `setup` mints a secret and returns the URI to scan;
+  // `confirm` proves a code against it, and only then does a factor exist. A
+  // setup that is begun and abandoned leaves the account exactly as it was.
+
+  @Get('mfa')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Whether this account has a second factor, and whether the workspace requires one' })
+  mfaStatus(@CurrentUser('id') userId: string) {
+    return this.mfa.status(userId);
+  }
+
+  @Post('mfa/setup')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Begin enrolment',
+    description:
+      'Returns the secret and the otpauth:// URI to scan. Nothing is required of this account until a code is confirmed against it.',
+  })
+  mfaSetup(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('email') email: string,
+  ) {
+    return this.mfa.beginEnrolment(userId, email);
+  }
+
+  @Post('mfa/confirm')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  // Tighter than the sign-in limit: this is a 6-digit secret being guessed
+  // against a known account, with a session already in hand.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Confirm enrolment by proving a code' })
+  mfaConfirm(
+    @CurrentUser('id') userId: string,
+    @Body() dto: MfaCodeDto,
+    @Ip() ipAddress: string,
+  ) {
+    return this.mfa.confirmEnrolment(userId, dto.code, ipAddress);
+  }
+
+  @Post('mfa/disable')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Turn off the second factor',
+    description:
+      'Requires a current code: an unattended browser is the situation a second factor exists for, so removing it must not be the one thing a session can do unchallenged. Refused while the workspace requires MFA.',
+  })
+  mfaDisable(
+    @CurrentUser('id') userId: string,
+    @Body() dto: MfaCodeDto,
+    @Ip() ipAddress: string,
+  ) {
+    return this.mfa.disable(userId, dto.code, ipAddress);
+  }
 
   @Post('register')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

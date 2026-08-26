@@ -8,6 +8,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { MicrosoftStrategy } from './strategies/microsoft.strategy';
 import { AuditWriter } from '../admin/audit.writer';
+import { MfaService } from './mfa/mfa.service';
 
 @Module({
   imports: [
@@ -35,8 +36,9 @@ import { AuditWriter } from '../admin/audit.writer';
     GoogleStrategy,
     MicrosoftStrategy,
     AuditWriter,
+    MfaService,
   ],
-  exports: [AuthService],
+  exports: [AuthService, MfaService],
 })
 export class AuthModule {}
 

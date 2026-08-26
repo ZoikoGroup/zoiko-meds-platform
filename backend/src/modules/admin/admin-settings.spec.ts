@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from './audit.writer';
@@ -134,51 +135,102 @@ describe('MSA-40 · organization profile', () => {
 });
 
 describe('MSA-42 · security posture', () => {
-  const listWith = (values: Record<string, string | undefined>) =>
-    new SecurityPostureService(configFor(values)).list();
+  let prisma: {
+    organization: { findUnique: jest.Mock; upsert: jest.Mock };
+  };
+  let audit: { write: jest.Mock };
 
-  it('offers nothing to toggle, because nothing here is toggleable', () => {
-    const controls = listWith({});
-    // The whole point: the old switches stored a preference that no code read.
-    for (const control of controls) {
-      expect(control).not.toHaveProperty('enabled');
+  const POLICY = {
+    requireMfa: false,
+    ipAllowlistEnabled: false,
+    ipAllowlist: [] as string[],
+    allowOauthSignIn: true,
+  };
+
+  const serviceWith = (
+    env: Record<string, string | undefined> = {},
+    policy: Partial<typeof POLICY> = {},
+  ) => {
+    prisma.organization.findUnique.mockResolvedValue({ ...POLICY, ...policy });
+    return new SecurityPostureService(
+      configFor(env),
+      prisma as unknown as PrismaService,
+      audit as unknown as AuditWriter,
+    );
+  };
+
+  beforeEach(() => {
+    prisma = {
+      organization: { findUnique: jest.fn(), upsert: jest.fn().mockResolvedValue({}) },
+    };
+    audit = { write: jest.fn() };
+  });
+
+  it('marks only the controls this page can decide as settable', async () => {
+    const controls = await serviceWith().list();
+
+    const settable = controls.filter((c) => c.setting);
+    expect(settable.map((c) => c.id).sort()).toEqual([
+      'ip-allowlist',
+      'mfa',
+      'oauth-sign-in',
+    ]);
+    // Everything else is decided in configuration or in code, so the page must
+    // not render a switch that could only misreport it.
+    for (const control of controls.filter((c) => !c.setting)) {
+      expect(control.enabled).toBeUndefined();
       expect(control.configuredBy.length).toBeGreaterThan(0);
     }
   });
 
-  it('does not report MFA as a setting that is merely switched off', () => {
-    const mfa = listWith({}).find((c) => c.id === 'mfa');
+  it('reports MFA as enforced once the workspace requires it', async () => {
+    const off = (await serviceWith({}, { requireMfa: false }).list()).find((c) => c.id === 'mfa');
+    const on = (await serviceWith({}, { requireMfa: true }).list()).find((c) => c.id === 'mfa');
 
-    // "off" invites someone to turn it on. It is absent, which is a different
-    // fact and the one an auditor needs.
-    expect(mfa?.state).toBe('not-implemented');
-    expect(mfa?.detail).toMatch(/not implemented/i);
+    expect(off?.state).toBe('available');
+    expect(off?.enabled).toBe(false);
+    expect(on?.state).toBe('enforced');
+    expect(on?.enabled).toBe(true);
+    expect(on?.detail).toMatch(/refused a session/i);
   });
 
-  it('says the IP allowlist belongs to the network, not the console', () => {
-    const ip = listWith({}).find((c) => c.id === 'ip-allowlist');
+  it('counts the ranges actually in force', async () => {
+    const control = (
+      await serviceWith({}, {
+        ipAllowlistEnabled: true,
+        ipAllowlist: ['203.0.113.0/24', '10.0.0.0/8'],
+      }).list()
+    ).find((c) => c.id === 'ip-allowlist');
 
-    expect(ip?.state).toBe('not-implemented');
-    expect(ip?.detail).toMatch(/load balancer|firewall/i);
+    expect(control?.state).toBe('enforced');
+    expect(control?.detail).toContain('2 approved ranges');
+    // Said on the page, because it is what stops a wrong entry taking the
+    // service out of its load balancer.
+    expect(control?.detail).toMatch(/health probes/i);
   });
 
-  it('reports a sign-in provider as available only with both credentials', () => {
-    const withBoth = listWith({
-      GOOGLE_CLIENT_ID: 'id',
-      GOOGLE_CLIENT_SECRET: 'secret',
-    }).find((c) => c.id === 'sso-google');
-    const withOne = listWith({ GOOGLE_CLIENT_ID: 'id' }).find(
+  it('still names SAML as absent, since sign-on here is OAuth', async () => {
+    const saml = (await serviceWith().list()).find((c) => c.id === 'saml');
+
+    expect(saml?.state).toBe('not-implemented');
+    expect(saml?.detail).toMatch(/OAuth against Google and Microsoft/);
+  });
+
+  it('reports a sign-in provider as available only with both credentials', async () => {
+    const withBoth = (
+      await serviceWith({ GOOGLE_CLIENT_ID: 'id', GOOGLE_CLIENT_SECRET: 'secret' }).list()
+    ).find((c) => c.id === 'sso-google');
+    const withOne = (await serviceWith({ GOOGLE_CLIENT_ID: 'id' }).list()).find(
       (c) => c.id === 'sso-google',
     );
 
     expect(withBoth?.state).toBe('available');
     expect(withOne?.state).toBe('not-implemented');
-    // Which is exactly when the OAuth guard starts answering 503.
     expect(withOne?.detail).toMatch(/503/);
   });
 
-  it('reads the session lifetime from the configuration that sets it', () => {
-    const control = listWith({ JWT_EXPIRES_IN: '900s' }).find(
+  it('reads the session lifetime from the configuration that sets it', async () => {
+    const control = (await serviceWith({ JWT_EXPIRES_IN: '900s' }).list()).find(
       (c) => c.id === 'session-lifetime',
     );
 
@@ -186,12 +238,77 @@ describe('MSA-42 · security posture', () => {
     expect(control?.state).toBe('enforced');
   });
 
-  it('describes SSO as the OAuth this platform has, not the SAML it does not', () => {
-    const labels = listWith({}).map((c) => c.label).join(' ');
+  describe('saving a policy', () => {
+    it('writes only what was sent', async () => {
+      const service = serviceWith();
 
-    expect(labels).toMatch(/Google/);
-    expect(labels).toMatch(/Microsoft/);
-    expect(labels).not.toMatch(/SAML/);
+      await service.update('u1', { requireMfa: true }, '10.0.0.1');
+
+      const { update } = prisma.organization.upsert.mock.calls[0][0];
+      expect(update.requireMfa).toBe(true);
+      expect(update).not.toHaveProperty('allowOauthSignIn');
+    });
+
+    it('records who changed it', async () => {
+      await serviceWith().update('u1', { requireMfa: true }, '10.0.0.1');
+
+      expect(audit.write).toHaveBeenCalledWith(
+        'u1',
+        'admin.security.update',
+        'Organization',
+        'singleton',
+        expect.objectContaining({ module: 'Settings' }),
+        '10.0.0.1',
+      );
+    });
+
+    // The page would read "restricted" while the guard, correctly, let
+    // everything through. The two must not disagree.
+    it('refuses an allowlist switched on with nothing in it', async () => {
+      await expect(
+        serviceWith().update('u1', { ipAllowlistEnabled: true }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.organization.upsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts it when entries are supplied in the same save', async () => {
+      await expect(
+        serviceWith().update('u1', {
+          ipAllowlistEnabled: true,
+          ipAllowlist: ['203.0.113.0/24'],
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('names the entry it could not parse', async () => {
+      await expect(
+        serviceWith().update('u1', { ipAllowlist: ['203.0.113.0/24', 'example.com'] }),
+      ).rejects.toThrow(/example\.com/);
+    });
+
+    it('trims stored entries, so a pasted line still matches', async () => {
+      await serviceWith().update('u1', { ipAllowlist: ['  203.0.113.0/24  '] });
+
+      const { update } = prisma.organization.upsert.mock.calls[0][0];
+      expect(update.ipAllowlist).toEqual(['203.0.113.0/24']);
+    });
+
+    it('can switch the allowlist off without restating the entries', async () => {
+      prisma.organization.findUnique.mockResolvedValue({
+        ...POLICY,
+        ipAllowlistEnabled: true,
+        ipAllowlist: ['203.0.113.0/24'],
+      });
+      const service = new SecurityPostureService(
+        configFor({}),
+        prisma as unknown as PrismaService,
+        audit as unknown as AuditWriter,
+      );
+
+      await expect(
+        service.update('u1', { ipAllowlistEnabled: false }),
+      ).resolves.toBeDefined();
+    });
   });
 });
 

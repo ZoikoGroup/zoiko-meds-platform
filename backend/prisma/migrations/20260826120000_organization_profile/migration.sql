@@ -4,9 +4,10 @@
 -- America (us-east)" to every super admin, and its Save button had no handler,
 -- because nothing in the schema could hold the answer. This is that table.
 --
--- One row. The check constraint is what makes it one row rather than a
--- convention someone has to remember: a settings table with no key invites a
--- second row that nothing reads, and then the question of which one is live.
+-- One row, addressed by a fixed primary key. A CHECK constraint would say so in
+-- the database too, but Prisma cannot express one, so `migrate diff` would read
+-- it as drift on every run of the schema-reproduction check. The single row is
+-- held by OrganizationService, which addresses no other id.
 CREATE TABLE "Organization" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -17,8 +18,7 @@ CREATE TABLE "Organization" (
     "updatedById" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "Organization_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "Organization_singleton" CHECK ("id" = 'singleton')
+    CONSTRAINT "Organization_pkey" PRIMARY KEY ("id")
 );
 
 CREATE UNIQUE INDEX "Organization_slug_key" ON "Organization"("slug");

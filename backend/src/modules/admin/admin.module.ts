@@ -16,6 +16,7 @@ import { ReportsService } from './reports/reports.service';
 import { OrganizationService } from './organization/organization.service';
 import { SecurityPostureService } from './security/security-posture.service';
 import { HelpResourcesService } from './help/help-resources.service';
+import { IpAllowlistGuard } from './security/ip-allowlist.guard';
 
 @Module({
   imports: [AuthModule, NearbyPharmacyModule],
@@ -37,7 +38,8 @@ import { HelpResourcesService } from './help/help-resources.service';
     OrganizationService,
     SecurityPostureService,
     HelpResourcesService,
+    IpAllowlistGuard,
   ],
-  exports: [AuditWriter],
+  exports: [AuditWriter, IpAllowlistGuard],
 })
 export class AdminModule {}

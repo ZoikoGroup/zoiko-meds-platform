@@ -11,6 +11,7 @@ import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { AuditWriter } from '../admin/audit.writer';
+import { MfaService } from './mfa/mfa.service';
 import { roleLabel } from './roles';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -36,6 +37,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly mail: MailService,
     private readonly auditWriter: AuditWriter,
+    private readonly mfa: MfaService,
   ) {}
 
   async register(dto: RegisterDto, ipAddress?: string, userAgent?: string) {
@@ -147,6 +149,71 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // The password was right. Everything below decides whether that is enough.
+    const factor = this.mfa.verify(user, dto.mfaCode);
+    if (!factor.ok) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.login_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          userEmail: user.email,
+          userName: user.fullName,
+          userRole: user.role,
+          reason:
+            factor.reason === 'mfa_required'
+              ? 'Second factor not supplied'
+              : 'Invalid second factor',
+          userAgent,
+        },
+        ipAddress,
+      );
+
+      // A missing code is not a rejected credential: the client has to be told
+      // to ask for one, and cannot know to until it has tried. Distinguished by
+      // the mfaRequired flag rather than by the status code, so a client that
+      // ignores it still treats the attempt as unsuccessful.
+      throw new UnauthorizedException({
+        message:
+          factor.reason === 'mfa_required'
+            ? 'Enter the code from your authenticator app.'
+            : 'That code is not right. Try the current one.',
+        mfaRequired: true,
+      });
+    }
+
+    // Workspace policy, checked after the password so it cannot be used to
+    // discover which addresses have accounts. Refused rather than waved
+    // through: letting a member in on the password alone is the exact thing the
+    // policy exists to stop, and a switch that does that is the bug (MSA-42).
+    if (!user.mfaEnabledAt && (await this.mfa.isRequiredByPolicy())) {
+      await this.auditWriter.write(
+        user.id,
+        'auth.login_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          userEmail: user.email,
+          userRole: user.role,
+          reason: 'Workspace requires two-factor authentication; account not enrolled',
+          userAgent,
+        },
+        ipAddress,
+      );
+      throw new UnauthorizedException({
+        message:
+          'This workspace requires two-factor authentication. Ask an administrator to help you set it up.',
+        mfaEnrolmentRequired: true,
+      });
+    }
+
     await this.auditWriter.write(
       user.id,
       'auth.login',
@@ -160,6 +227,7 @@ export class AuthService {
         userEmail: user.email,
         userName: user.fullName,
         userRole: user.role,
+        mfa: user.mfaEnabledAt ? 'totp' : 'none',
         userAgent,
       },
       ipAddress,
@@ -182,6 +250,34 @@ export class AuthService {
     if (!profile.email) {
       throw new UnauthorizedException(
         'Your identity provider did not share an email address, which is required to sign in.',
+      );
+    }
+
+    // Workspace policy (MSA-42). Checked before any account is provisioned, so a
+    // workspace with single sign-on switched off does not quietly accumulate
+    // accounts it will never let in.
+    const org = await this.prisma.organization.findUnique({
+      where: { id: 'singleton' },
+      select: { allowOauthSignIn: true },
+    });
+    if (org && !org.allowOauthSignIn) {
+      await this.auditWriter.write(
+        null,
+        'auth.login_failed',
+        'User',
+        null,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          attemptedEmail: this.normalizeEmail(profile.email),
+          reason: 'Single sign-on is switched off for this workspace',
+          userAgent,
+        },
+        ipAddress,
+      );
+      throw new UnauthorizedException(
+        'Single sign-on is switched off for this workspace. Sign in with your email and password.',
       );
     }
     const email = this.normalizeEmail(profile.email);

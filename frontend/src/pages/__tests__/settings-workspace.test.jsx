@@ -19,6 +19,11 @@ import { MemoryRouter } from 'react-router-dom'
 const getOrganizationMock = vi.fn()
 const updateOrganizationMock = vi.fn()
 const getSecurityPostureMock = vi.fn()
+const updateSecurityPolicyMock = vi.fn()
+const getMfaStatusMock = vi.fn()
+const beginMfaSetupMock = vi.fn()
+const confirmMfaSetupMock = vi.fn()
+const disableMfaMock = vi.fn()
 const listUsersMock = vi.fn()
 const listIntegrationsMock = vi.fn()
 
@@ -26,8 +31,16 @@ vi.mock('@/services/admin-api', () => ({
   getOrganization: () => getOrganizationMock(),
   updateOrganization: (body) => updateOrganizationMock(body),
   getSecurityPosture: () => getSecurityPostureMock(),
+  updateSecurityPolicy: (body) => updateSecurityPolicyMock(body),
   listUsers: (params) => listUsersMock(params),
   listIntegrations: () => listIntegrationsMock(),
+}))
+
+vi.mock('@/services/auth-api', () => ({
+  getMfaStatus: () => getMfaStatusMock(),
+  beginMfaSetup: () => beginMfaSetupMock(),
+  confirmMfaSetup: (code) => confirmMfaSetupMock(code),
+  disableMfa: (code) => disableMfaMock(code),
 }))
 
 vi.mock('@/providers/auth-provider', () => ({
@@ -74,12 +87,38 @@ const CONTROLS = [
   },
   {
     id: 'mfa',
-    label: 'Multi-factor authentication',
-    detail: 'Not implemented. There is no second factor anywhere in the sign-in path.',
+    label: 'Require two-factor authentication',
+    detail: 'Members may enrol an authenticator app, but sign-in does not require one.',
+    state: 'available',
+    configuredBy: 'This page',
+    setting: 'requireMfa',
+    enabled: false,
+  },
+  {
+    id: 'ip-allowlist',
+    label: 'IP allowlist',
+    detail: 'The API accepts requests from any address that reaches it.',
+    state: 'available',
+    configuredBy: 'This page',
+    setting: 'ipAllowlistEnabled',
+    enabled: false,
+  },
+  {
+    id: 'saml',
+    label: 'SAML 2.0',
+    detail:
+      'Not implemented. Single sign-on here is OAuth against Google and Microsoft.',
     state: 'not-implemented',
     configuredBy: 'Not available in this release',
   },
 ]
+
+const POLICY = {
+  requireMfa: false,
+  ipAllowlistEnabled: false,
+  ipAllowlist: [],
+  allowOauthSignIn: true,
+}
 
 function renderTab(tab) {
   return render(
@@ -94,6 +133,13 @@ beforeEach(() => {
   getOrganizationMock.mockResolvedValue(ORG)
   updateOrganizationMock.mockResolvedValue({ ...ORG, name: 'Zoiko Health' })
   getSecurityPostureMock.mockResolvedValue(CONTROLS)
+  updateSecurityPolicyMock.mockResolvedValue({ controls: CONTROLS, policy: POLICY })
+  getMfaStatusMock.mockResolvedValue({
+    enrolled: false,
+    pending: false,
+    enrolledAt: null,
+    required: false,
+  })
   listUsersMock.mockResolvedValue({ items: MEMBERS, total: MEMBERS.length })
   listIntegrationsMock.mockResolvedValue([])
 })
@@ -211,20 +257,67 @@ describe('MSA-41 · members', () => {
 })
 
 describe('MSA-42 · security', () => {
-  it('offers no switches at all', async () => {
+  it('offers a switch only for the controls this page can decide', async () => {
     renderTab('security')
 
-    await waitFor(() => expect(screen.getByText('Multi-factor authentication')).toBeDefined())
-    // The three that were there stored a preference nothing read.
-    expect(screen.queryAllByRole('switch')).toHaveLength(0)
+    await waitFor(() => expect(screen.getByText('SAML 2.0')).toBeDefined())
+    // MFA and the IP allowlist are settable; password policy and SAML are not.
+    expect(screen.getAllByRole('switch')).toHaveLength(2)
+  })
+
+  it('writes the policy, which is the whole of the bug', async () => {
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /require two-factor/i })).toBeDefined(),
+    )
+    await user.click(screen.getByRole('switch', { name: /require two-factor/i }))
+
+    // The old switch changed a variable that a reload discarded.
+    await waitFor(() =>
+      expect(updateSecurityPolicyMock).toHaveBeenCalledWith({ requireMfa: true }),
+    )
+  })
+
+  it('saves the approved networks as separate entries', async () => {
+    const user = userEvent.setup()
+    renderTab('security')
+
+    const box = await screen.findByLabelText(/approved networks/i)
+    await user.type(box, '203.0.113.0/24\n10.0.0.0/8')
+    await user.click(screen.getByRole('button', { name: /save networks/i }))
+
+    await waitFor(() =>
+      expect(updateSecurityPolicyMock).toHaveBeenCalledWith({
+        ipAllowlist: ['203.0.113.0/24', '10.0.0.0/8'],
+      }),
+    )
+  })
+
+  it('reports a refused policy rather than leaving the switch showing it', async () => {
+    updateSecurityPolicyMock.mockRejectedValue(
+      new Error('Add at least one address or range before switching the allowlist on.'),
+    )
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /ip allowlist/i })).toBeDefined(),
+    )
+    await user.click(screen.getByRole('switch', { name: /ip allowlist/i }))
+
+    expect(await screen.findByRole('alert')).toBeDefined()
+    expect(screen.getByText(/add at least one address/i)).toBeDefined()
   })
 
   it('says an unimplemented control is unavailable, not switched off', async () => {
     renderTab('security')
 
-    await waitFor(() => expect(screen.getByText('Multi-factor authentication')).toBeDefined())
-    expect(screen.getByText(/no second factor/i)).toBeDefined()
+    await waitFor(() => expect(screen.getByText('SAML 2.0')).toBeDefined())
+    // "Off" would invite someone to turn it on.
     expect(screen.getByText('Not available')).toBeDefined()
+    expect(screen.queryByRole('switch', { name: /SAML/i })).toBeNull()
   })
 
   it('names where each control is actually decided', async () => {
@@ -233,11 +326,89 @@ describe('MSA-42 · security', () => {
     await waitFor(() => expect(screen.getByText(/Password minimum length/i)).toBeDefined())
     expect(screen.getByText(/Validation on the auth DTOs/)).toBeDefined()
   })
+})
 
-  it('no longer claims SAML, which this platform does not have', async () => {
-    const { container } = renderTab('security')
+describe('MSA-42 · enrolling this account', () => {
+  it('shows the secret to scan once setup begins', async () => {
+    beginMfaSetupMock.mockResolvedValue({
+      secret: 'JBSWY3DPEHPK3PXP',
+      otpauthUri: 'otpauth://totp/ZoikoMeds:root@zoikomeds.test?secret=JBSWY3DPEHPK3PXP',
+    })
+    const user = userEvent.setup()
+    renderTab('security')
 
-    await waitFor(() => expect(screen.getByText('Multi-factor authentication')).toBeDefined())
-    expect(container.textContent).not.toMatch(/SAML/)
+    await user.click(await screen.findByRole('button', { name: /set up/i }))
+
+    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeDefined()
+  })
+
+  it('turns the factor on only once a code is confirmed', async () => {
+    beginMfaSetupMock.mockResolvedValue({ secret: 'JBSWY3DPEHPK3PXP', otpauthUri: 'otpauth://x' })
+    confirmMfaSetupMock.mockResolvedValue({ enrolled: true })
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await user.click(await screen.findByRole('button', { name: /set up/i }))
+    await user.type(await screen.findByLabelText(/code from the app/i), '123456')
+    await user.click(screen.getByRole('button', { name: /confirm/i }))
+
+    await waitFor(() => expect(confirmMfaSetupMock).toHaveBeenCalledWith('123456'))
+  })
+
+  it('reports a rejected code', async () => {
+    beginMfaSetupMock.mockResolvedValue({ secret: 'JBSWY3DPEHPK3PXP', otpauthUri: 'otpauth://x' })
+    confirmMfaSetupMock.mockRejectedValue(new Error('That code is not right. Try the current one.'))
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await user.click(await screen.findByRole('button', { name: /set up/i }))
+    await user.type(await screen.findByLabelText(/code from the app/i), '000000')
+    await user.click(screen.getByRole('button', { name: /confirm/i }))
+
+    expect(await screen.findByRole('alert')).toBeDefined()
+  })
+
+  it('will not offer to turn it off while the workspace requires it', async () => {
+    getMfaStatusMock.mockResolvedValue({
+      enrolled: true,
+      pending: false,
+      enrolledAt: new Date().toISOString(),
+      required: true,
+    })
+    renderTab('security')
+
+    await waitFor(() => expect(screen.getByText('On')).toBeDefined())
+    // That is the policy's whole point.
+    expect(screen.queryByRole('button', { name: /turn off/i })).toBeNull()
+    expect(screen.getByText(/cannot be turned off here/i)).toBeDefined()
+  })
+
+  it('requires a current code to turn it off', async () => {
+    getMfaStatusMock.mockResolvedValue({
+      enrolled: true,
+      pending: false,
+      enrolledAt: new Date().toISOString(),
+      required: false,
+    })
+    disableMfaMock.mockResolvedValue({ enrolled: false })
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await user.type(await screen.findByLabelText(/current code/i), '123456')
+    await user.click(screen.getByRole('button', { name: /turn off/i }))
+
+    await waitFor(() => expect(disableMfaMock).toHaveBeenCalledWith('123456'))
+  })
+
+  it('warns an unenrolled member when the workspace already requires it', async () => {
+    getMfaStatusMock.mockResolvedValue({
+      enrolled: false,
+      pending: false,
+      enrolledAt: null,
+      required: true,
+    })
+    renderTab('security')
+
+    expect(await screen.findByText(/will not be able to sign in again/i)).toBeDefined()
   })
 })

@@ -32,6 +32,12 @@ export const updateOrganization = (body) =>
 // than no flag at all (MSA-42).
 export const getSecurityPosture = () => apiFetch('/admin/security')
 
+// Set the controls this page can actually decide. Refuses an allowlist switched
+// on with nothing in it, because the page would then read "restricted" while the
+// guard, correctly, lets everything through.
+export const updateSecurityPolicy = (body) =>
+  apiFetch('/admin/security', { method: 'PATCH', body })
+
 // What help this deployment actually publishes. The API reference is mounted
 // only outside production, so the console is told when there is nothing to open
 // rather than offering a link to a 404 (MSA-43).

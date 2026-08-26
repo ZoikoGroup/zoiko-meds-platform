@@ -17,6 +17,7 @@ import { DashboardOverviewService } from './dashboard-overview.service';
 import { OrganizationService } from './organization/organization.service';
 import { UpdateOrganizationDto } from './organization/update-organization.dto';
 import { SecurityPostureService } from './security/security-posture.service';
+import { UpdateSecurityPolicyDto } from './security/update-security-policy.dto';
 import { HelpResourcesService } from './help/help-resources.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -81,6 +82,20 @@ export class AdminController {
   })
   getSecurityPosture() {
     return this.security.list();
+  }
+
+  @Patch('security')
+  @ApiOperation({
+    summary: 'Set the workspace security policy',
+    description:
+      'Only the controls this page can actually decide. Refuses an allowlist switched on with nothing in it, because the page would then read "restricted" while the guard, correctly, lets everything through.',
+  })
+  updateSecurityPosture(
+    @CurrentUser('id') actorId: string,
+    @Ip() ipAddress: string,
+    @Body() dto: UpdateSecurityPolicyDto,
+  ) {
+    return this.security.update(actorId, dto, ipAddress);
   }
 
   @Get('help')
