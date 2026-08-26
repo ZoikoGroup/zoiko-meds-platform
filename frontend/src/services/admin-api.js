@@ -18,6 +18,31 @@ export const getOverview = () => apiFetch('/admin/overview')
 // to list enterprise systems the platform has never connected to (MSA-39).
 export const listIntegrations = () => apiFetch('/admin/integrations')
 
+// This workspace's own profile. The settings page used to render a fixture —
+// "Meridian Health Network", "org-meridian", "North America (us-east)" — for
+// every deployment, over a Save button with no handler (MSA-40).
+export const getOrganization = () => apiFetch('/admin/organization')
+
+export const updateOrganization = (body) =>
+  apiFetch('/admin/organization', { method: 'PATCH', body })
+
+// Authentication controls as they actually stand. Read-only by design: every one
+// of them is decided by server configuration or by code, so there is nothing here
+// for the console to toggle, and a stored flag that nothing enforces is worse
+// than no flag at all (MSA-42).
+export const getSecurityPosture = () => apiFetch('/admin/security')
+
+// Set the controls this page can actually decide. Refuses an allowlist switched
+// on with nothing in it, because the page would then read "restricted" while the
+// guard, correctly, lets everything through.
+export const updateSecurityPolicy = (body) =>
+  apiFetch('/admin/security', { method: 'PATCH', body })
+
+// What help this deployment actually publishes. The API reference is mounted
+// only outside production, so the console is told when there is nothing to open
+// rather than offering a link to a 404 (MSA-43).
+export const getHelpResources = () => apiFetch('/admin/help')
+
 export const listUsers = (params) => apiFetch(`/admin/users${qs(params)}`)
 
 export const createUser = (body) =>

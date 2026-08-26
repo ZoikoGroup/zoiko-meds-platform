@@ -78,8 +78,8 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const login = useCallback(async (email, password) => {
-    const { accessToken, user: apiUser } = await loginRequest(email, password)
+  const login = useCallback(async (email, password, mfaCode) => {
+    const { accessToken, user: apiUser } = await loginRequest(email, password, mfaCode)
     setToken(accessToken)
     const clientUser = toClientUser(apiUser)
     setUser(clientUser)
@@ -177,4 +177,17 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider')
   }
   return ctx
+}
+
+/**
+ * The session when there is one, or null outside a provider.
+ *
+ * For components that are better off with the signed-in user but must not
+ * require one. useAuth throws, which is right where the session is the point of
+ * the component and wrong where it only sharpens something — the Help Center
+ * prefills a support email with who is reporting, and should still open for
+ * anyone rendering the sidebar without an AuthProvider.
+ */
+export function useOptionalAuth() {
+  return useContext(AuthContext)
 }

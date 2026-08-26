@@ -9,6 +9,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { IpAllowlistGuard } from './modules/admin/security/ip-allowlist.guard';
 import { MeModule } from './modules/me/me.module';
 import { HealthModule } from './modules/health/health.module';
 import { MedibaseModule } from './modules/medibase/medibase.module';
@@ -53,6 +54,12 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
     // ThrottlerModule config above is inert. Public read/search routes opt out
     // with @SkipThrottle; sensitive auth routes tighten it with @Throttle.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // The workspace IP allowlist (MSA-42). Global, because a restriction that
+    // covers only the routes someone remembered to decorate is not one. It is
+    // inert until an allowlist is switched on with entries in it, and always
+    // answers the health probes so a wrong entry cannot take the instance out
+    // of its load balancer.
+    { provide: APP_GUARD, useClass: IpAllowlistGuard },
   ],
 })
 export class AppModule implements NestModule {

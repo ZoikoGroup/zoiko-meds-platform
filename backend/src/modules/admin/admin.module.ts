@@ -13,6 +13,10 @@ import { NotificationController } from './notification/notification.controller';
 import { NotificationService } from './notification/notification.service';
 import { ReportsController } from './reports/reports.controller';
 import { ReportsService } from './reports/reports.service';
+import { OrganizationService } from './organization/organization.service';
+import { SecurityPostureService } from './security/security-posture.service';
+import { HelpResourcesService } from './help/help-resources.service';
+import { IpAllowlistGuard } from './security/ip-allowlist.guard';
 
 @Module({
   imports: [AuthModule, NearbyPharmacyModule],
@@ -31,7 +35,11 @@ import { ReportsService } from './reports/reports.service';
     VerificationService,
     NotificationService,
     ReportsService,
+    OrganizationService,
+    SecurityPostureService,
+    HelpResourcesService,
+    IpAllowlistGuard,
   ],
-  exports: [AuditWriter],
+  exports: [AuditWriter, IpAllowlistGuard],
 })
 export class AdminModule {}

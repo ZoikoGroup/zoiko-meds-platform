@@ -121,7 +121,14 @@ export async function apiFetch(
     }
     // Nest validation errors arrive as { message: string[] }.
     const raw = (data && data.message) || res.statusText || 'Request failed'
-    throw new Error(Array.isArray(raw) ? raw.join(', ') : raw)
+    const error = new Error(Array.isArray(raw) ? raw.join(', ') : raw)
+    // The envelope, kept alongside the message. Some failures carry a fact the
+    // caller has to act on rather than only display: a sign-in refused for want
+    // of a second factor is not a wrong password, and the login form cannot
+    // know to ask for a code unless it can read why it was refused (MSA-42).
+    error.status = res.status
+    error.body = data
+    throw error
   }
 
   return data

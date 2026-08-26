@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   Patch,
   Post,
@@ -13,6 +14,11 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { AdminService } from './admin.service';
 import { DashboardOverviewService } from './dashboard-overview.service';
+import { OrganizationService } from './organization/organization.service';
+import { UpdateOrganizationDto } from './organization/update-organization.dto';
+import { SecurityPostureService } from './security/security-posture.service';
+import { UpdateSecurityPolicyDto } from './security/update-security-policy.dto';
+import { HelpResourcesService } from './help/help-resources.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -37,7 +43,70 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService,
     private readonly dashboard: DashboardOverviewService,
+    private readonly organization: OrganizationService,
+    private readonly security: SecurityPostureService,
+    private readonly help: HelpResourcesService,
   ) {}
+
+  // --- Workspace settings --------------------------------------------------
+
+  @Get('organization')
+  @ApiOperation({
+    summary: "This workspace's own profile",
+    description:
+      'What the settings page shows. Seeded by migration, so a fresh deployment answers with its real defaults rather than an invented organization.',
+  })
+  getOrganization() {
+    return this.organization.get();
+  }
+
+  @Patch('organization')
+  @ApiOperation({
+    summary: 'Save the workspace profile',
+    description:
+      'Every field is optional so the form can save one without blanking the rest. The slug is not writable: it is the stable external handle, and renaming the workspace must not change what it is.',
+  })
+  updateOrganization(
+    @CurrentUser('id') actorId: string,
+    @Ip() ipAddress: string,
+    @Body() dto: UpdateOrganizationDto,
+  ) {
+    return this.organization.update(actorId, dto, ipAddress);
+  }
+
+  @Get('security')
+  @ApiOperation({
+    summary: 'Authentication controls, as they actually stand',
+    description:
+      'Read-only. Every control here is decided by server configuration or by code, so there is nothing for the console to toggle — and a stored flag that nothing enforces is worse than no flag (MSA-42).',
+  })
+  getSecurityPosture() {
+    return this.security.list();
+  }
+
+  @Patch('security')
+  @ApiOperation({
+    summary: 'Set the workspace security policy',
+    description:
+      'Only the controls this page can actually decide. Refuses an allowlist switched on with nothing in it, because the page would then read "restricted" while the guard, correctly, lets everything through.',
+  })
+  updateSecurityPosture(
+    @CurrentUser('id') actorId: string,
+    @Ip() ipAddress: string,
+    @Body() dto: UpdateSecurityPolicyDto,
+  ) {
+    return this.security.update(actorId, dto, ipAddress);
+  }
+
+  @Get('help')
+  @ApiOperation({
+    summary: 'Help resources this deployment actually publishes',
+    description:
+      'The API reference is mounted only outside production, so on a live deployment there is nothing to link to and the console is told so rather than offering a link to a 404.',
+  })
+  getHelpResources() {
+    return this.help.get();
+  }
 
   @Get('overview')
   @ApiOperation({ summary: 'Platform-wide counts & health for the admin console' })

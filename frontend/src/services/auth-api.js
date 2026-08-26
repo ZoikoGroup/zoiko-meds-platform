@@ -14,10 +14,12 @@ export function oauthUrl(provider) {
   return `${apiBaseUrl()}/auth/${provider}`
 }
 
-export function loginRequest(email, password) {
+export function loginRequest(email, password, mfaCode) {
   return apiFetch('/auth/login', {
     method: 'POST',
-    body: { email, password },
+    // Omitted rather than sent empty: the field is optional on the API, and an
+    // empty string would fail its format check instead of reading as absent.
+    body: { email, password, ...(mfaCode ? { mfaCode } : {}) },
     auth: false,
   })
 }
@@ -76,3 +78,19 @@ export function logoutRequest() {
 }
 
 
+
+// --- Two-factor authentication (MSA-42) ------------------------------------
+//
+// Enrolment is two calls: setup mints a secret and returns the otpauth:// URI to
+// scan, confirm proves a code against it. Nothing is required of the account
+// until a code has been confirmed, so an abandoned setup changes nothing.
+
+export const getMfaStatus = () => apiFetch('/auth/mfa')
+
+export const beginMfaSetup = () => apiFetch('/auth/mfa/setup', { method: 'POST' })
+
+export const confirmMfaSetup = (code) =>
+  apiFetch('/auth/mfa/confirm', { method: 'POST', body: { code } })
+
+export const disableMfa = (code) =>
+  apiFetch('/auth/mfa/disable', { method: 'POST', body: { code } })

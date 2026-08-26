@@ -32,6 +32,11 @@ export default function Login() {
   // Form states
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  // Shown only once the API has said this account has a second factor. The
+  // client cannot know before it has tried, so the first attempt is made
+  // without one and the same call is repeated with the code (MSA-42).
+  const [mfaCode, setMfaCode] = useState('')
+  const [mfaRequired, setMfaRequired] = useState(false)
   const [trustDevice, setTrustDevice] = useState(false)
   const [trustError, setTrustError] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -65,11 +70,20 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const authedUser = await login(email, password)
+      const authedUser = await login(email, password, mfaCode)
       // Route to the correct portal based on the resolved role
       // (Super Admin → /admin, Pharmacy → /pharmacy, Patient → /dashboard).
       navigate(portalHome(authedUser?.role))
     } catch (err) {
+      // The envelope carries why, not just that: a sign-in refused for want of a
+      // second factor is not a wrong password, and reporting it as one would
+      // send someone to reset a password that was correct.
+      if (err?.body?.mfaRequired) {
+        setMfaRequired(true)
+        // Cleared so a rejected code is not resubmitted unchanged; the password
+        // stays, because retyping it to correct a 6-digit typo is punishment.
+        setMfaCode('')
+      }
       setError(err.message || 'Authentication failed. Please verify credentials.')
     } finally {
       setLoading(false)
@@ -208,6 +222,32 @@ export default function Login() {
                 </p>
               )}
             </div>
+
+            {/* Second factor — only once the API has asked for one. */}
+            {mfaRequired && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mfa-code" className="text-xs font-semibold text-foreground">
+                  Authenticator code
+                </Label>
+                <Input
+                  id="mfa-code"
+                  name="mfaCode"
+                  // inputMode over type=number: a numeric keypad on a phone,
+                  // without the spinner and scroll-to-change of a number input.
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={7}
+                  placeholder="123456"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  className="font-mono tracking-widest"
+                />
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Open your authenticator app and enter the 6-digit code for ZoikoMeds.
+                </p>
+              </div>
+            )}
 
             {/* Continue Button */}
             <Button
