@@ -8,11 +8,23 @@ import { MailService } from '../mail/mail.service';
 import { VisionService } from '../scan/vision.service';
 
 /**
+ * Prefix every admin console route sits behind.
+ *
+ * The console is mounted at /admin — /admin/commercial, /admin/notifications —
+ * and the paths below were emitted without it. React Router matched neither the
+ * admin subtree nor the patient portal, so every Manage button on the
+ * integrations page landed on the catch-all NotFound (MSA-39).
+ */
+const ADMIN_CONSOLE = '/admin';
+
+/**
  * Health of one external service this platform depends on.
  *
  * `manage` is a route in the admin console, or null when there is nothing to
  * manage there: several of these are configured by environment variable on the
  * server, and offering a button that opens nothing is what MSA-39 reported.
+ * When it is set it must be a path that actually resolves — a button that opens
+ * a 404 is the same broken promise as one that opens nothing.
  */
 export interface IntegrationStatus {
   id: string;
@@ -74,7 +86,7 @@ export class IntegrationsService {
         status: 'disabled',
         detail: 'No API key is set, so no purchase or invoice can be processed.',
         configured: false,
-        manage: '/commercial',
+        manage: `${ADMIN_CONSOLE}/commercial`,
         configuredBy: 'STRIPE_SECRET_KEY',
       };
     }
@@ -91,7 +103,7 @@ export class IntegrationsService {
         ? `Connected in ${mode} mode, but charging is blocked: ${blocked}`
         : `Connected in ${mode} mode and authorised to charge.`,
       configured: true,
-      manage: '/commercial',
+      manage: `${ADMIN_CONSOLE}/commercial`,
     };
   }
 
@@ -110,7 +122,7 @@ export class IntegrationsService {
         detail:
           'No SMTP host is set. Password resets and notifications are written to the server log instead of being sent.',
         configured: false,
-        manage: '/notifications',
+        manage: `${ADMIN_CONSOLE}/notifications`,
         configuredBy: 'SMTP_HOST',
       };
     }
@@ -136,7 +148,7 @@ export class IntegrationsService {
           ? 'Configured. Nothing has been sent in the last seven days.'
           : `${sent} delivered and ${failed} failed in the last seven days.`,
       configured: true,
-      manage: '/notifications',
+      manage: `${ADMIN_CONSOLE}/notifications`,
     };
   }
 
