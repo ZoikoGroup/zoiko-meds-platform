@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ChevronRight, ClipboardCheck, Loader2, Network } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { SectionHeading } from '@/components/shared/section-heading'
@@ -104,6 +105,8 @@ function Unavailable({ label, className }) {
 }
 
 export default function MediBase() {
+  const navigate = useNavigate()
+
   // Catalog-wide statistics: the graph, donut, mapping row, tiers and tiles.
   const [overview, setOverview] = useState(null)
   const [overviewLoading, setOverviewLoading] = useState(true)
@@ -186,7 +189,7 @@ export default function MediBase() {
           { label: 'MediBase™' },
         ]}
         actions={
-          <Button variant="outline">
+          <Button variant="outline" onClick={() => navigate('/admin/medibase/review')}>
             <ClipboardCheck />
             Review queue
             {/* Identities the catalog has not finished governing. */}

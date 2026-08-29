@@ -23,6 +23,24 @@ export const getCatalogOverview = () => apiFetch('/medibase/admin/catalog/overvi
 export const listIdentities = (params) =>
   apiFetch(`/medibase/admin/catalog/identities${qs(params)}`)
 
+/** Jurisdictions available to assign to a medicine during curation. */
+export const listJurisdictions = () => apiFetch('/medibase/admin/catalog/jurisdictions')
+
+/**
+ * Individual medicine records (not the generic-root rollup `listIdentities`
+ * returns) — the review queue curates one MedicineEntity row at a time.
+ */
+export const listMedicinesForAdmin = (params) =>
+  apiFetch(`/medibase/admin/medicines${qs(params)}`)
+
+/** Patches descriptive fields, including `jurisdictionId` — never `qualityState`. */
+export const updateMedicine = (id, body) =>
+  apiFetch(`/medibase/admin/medicines/${id}`, { method: 'PATCH', body })
+
+/** The only path allowed to change `qualityState` — validated against the transition graph. */
+export const transitionMedicineState = (id, body) =>
+  apiFetch(`/medibase/admin/medicines/${id}/transition`, { method: 'POST', body })
+
 // --- presentation mapping ---------------------------------------------------
 // The API speaks in counts; the UI speaks in labelled, ordered series. These
 // map one onto the other so the page itself holds no numbers.

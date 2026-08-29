@@ -955,6 +955,22 @@ export class PharmacyService {
   }
 
   /**
+   * The reporting pharmacy's jurisdiction, for stamping onto a MediBase
+   * identity created from what it typed (MSA-35). Without this, every
+   * pharmacy-sourced identity carries `jurisdictionId: null` forever — the
+   * catalog has no other moment at which a jurisdiction is ever attached to
+   * one, so the MediBase dashboard's market counts stay at zero regardless of
+   * how large the catalog grows.
+   */
+  private async getPharmacyJurisdictionId(pharmacyId: string): Promise<string | null> {
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id: pharmacyId },
+      select: { jurisdictionId: true },
+    });
+    return pharmacy?.jurisdictionId ?? null;
+  }
+
+  /**
    * Aggregate live database analytics for the authenticated pharmacy:
    * 1. Inventory Overview (Available, Limited, Out of Stock counts)
    * 2. Availability Trend (daily percentage over last 7 days)
@@ -1275,6 +1291,7 @@ export class PharmacyService {
           genericName: generic,
           strength,
           dosageForm,
+          jurisdictionId: await this.getPharmacyJurisdictionId(pharmacyId),
         },
       });
     }
@@ -1561,6 +1578,7 @@ export class PharmacyService {
             genericName: generic || null,
             strength: strength || null,
             dosageForm,
+            jurisdictionId: await this.getPharmacyJurisdictionId(pharmacyId),
           },
         });
         medicineId = created.id;
@@ -1762,6 +1780,11 @@ export class PharmacyService {
     let totalProcessed = 0;
     const processedSignalIds = new Set<string>();
 
+    // Looked up once, not per row: pharmacyId is constant for the whole file,
+    // and a several-hundred-row CSV should not cost a query per row for a
+    // value that never changes within the call.
+    const jurisdictionId = await this.getPharmacyJurisdictionId(pharmacyId);
+
     /**
      * Identities this file reported as in stock, deduplicated.
      *
@@ -1814,6 +1837,7 @@ export class PharmacyService {
               genericName: generic || null,
               strength: strength || null,
               dosageForm,
+              jurisdictionId,
             },
           });
         }

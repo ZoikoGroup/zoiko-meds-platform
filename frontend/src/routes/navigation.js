@@ -47,6 +47,7 @@ export const routeMeta = {
     '/users': { title: 'Users & Roles', section: 'Platform Governance' },
     '/verification': { title: 'Verification Center', section: 'Platform Governance' },
     '/medibase': { title: 'MediBase™', section: 'Medicine Intelligence' },
+    '/medibase/review': { title: 'MediBase™ Review Queue', section: 'Medicine Intelligence' },
     '/zoikoavail': { title: 'ZoikoAvail™', section: 'Medicine Intelligence' },
     '/zoikosignal': { title: 'ZoikoSignal™', section: 'Medicine Intelligence' },
     '/commercial': { title: 'Commercial', section: 'Workspace' },
