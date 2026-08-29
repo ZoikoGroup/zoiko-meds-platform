@@ -18,8 +18,8 @@ import { cn } from '@/lib/utils';
  * 0-based. `loading` suppresses the empty state so a fetch in flight does not
  * flash "No results".
  */
-export function DataTable({ columns, data, getRowId, searchable = true, searchPlaceholder = 'Search…', searchAccessor, pageSize = 8, toolbar, rowActions, emptyTitle = 'No results', emptyDescription = 'Try adjusting your search or filters.', className, server, }) {
-    const [query, setQuery] = useState('');
+export function DataTable({ columns, data, getRowId, searchable = true, searchPlaceholder = 'Search…', searchAccessor, pageSize = 8, toolbar, rowActions, emptyTitle = 'No results', emptyDescription = 'Try adjusting your search or filters.', className, server, initialQuery = '', }) {
+    const [query, setQuery] = useState(initialQuery);
     const [sortKey, setSortKey] = useState(null);
     const [sortDir, setSortDir] = useState('asc');
     const [page, setPage] = useState(0);

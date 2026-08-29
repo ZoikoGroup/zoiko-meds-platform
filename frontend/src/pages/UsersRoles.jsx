@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -30,6 +31,7 @@ import { BILLING_CAPABILITIES } from '@/lib/commercial'
 import { ROLE_OPTIONS, ROLE_LABELS, ROLE_BADGE, ROLES, isPharmacy } from '@/lib/roles'
 
 export default function UsersRoles() {
+  const [searchParams] = useSearchParams()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -433,6 +435,9 @@ export default function UsersRoles() {
               searchable
               searchPlaceholder="Search by user name or email..."
               searchAccessor={(row) => `${row.fullName} ${row.email}`}
+              // Arriving from the console search bar with a name already
+              // typed there (MSA-31) — the same query, not re-typed here.
+              initialQuery={searchParams.get('q') || ''}
               toolbar={toolbar}
               rowActions={rowActions}
             />

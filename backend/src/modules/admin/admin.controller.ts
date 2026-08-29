@@ -119,6 +119,14 @@ export class AdminController {
     return this.admin.overview();
   }
 
+  @Get('search')
+  @ApiOperation({
+    summary: 'Cross-entity quick search (users, pharmacies, medicines) for the console search bar',
+  })
+  search(@Query('q') q: string) {
+    return this.admin.globalSearch(q);
+  }
+
   @Get('dashboard/overview')
   @ApiOperation({
     summary: 'Super Admin dashboard rollup (KPIs, confidence, freshness, shortage)',

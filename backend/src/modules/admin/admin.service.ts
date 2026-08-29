@@ -98,6 +98,73 @@ export class AdminService {
     };
   }
 
+  /**
+   * Cross-entity quick search for the console's command palette (MSA-31). The
+   * palette advertised "pages, actions, and intelligence" but only ever
+   * matched the static nav labels — a real pharmacy, user, or medicine name
+   * always came back "No results found," regardless of how correctly it was
+   * typed. This is the "intelligence" half: a few of each match, each with
+   * enough on it for the palette to link straight to the record.
+   */
+  async globalSearch(q: string) {
+    const query = (q ?? '').trim();
+    if (query.length < 2) return { users: [], pharmacies: [], medicines: [] };
+
+    const [users, pharmacies, medicines] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          OR: [
+            { fullName: { contains: query, mode: 'insensitive' } },
+            { email: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, fullName: true, email: true, role: true },
+        take: 5,
+      }),
+      this.prisma.pharmacy.findMany({
+        where: {
+          OR: [
+            { name: { contains: query, mode: 'insensitive' } },
+            { licenseNumber: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, name: true, city: true, country: true },
+        take: 5,
+      }),
+      this.prisma.medicineEntity.findMany({
+        where: {
+          isSuppressed: false,
+          OR: [
+            { canonicalName: { contains: query, mode: 'insensitive' } },
+            { genericName: { contains: query, mode: 'insensitive' } },
+            { brandNames: { has: query } },
+          ],
+        },
+        select: { id: true, canonicalName: true, genericName: true, strength: true },
+        take: 5,
+      }),
+    ]);
+
+    return {
+      users: users.map((u) => ({
+        id: u.id,
+        label: u.fullName,
+        sublabel: u.email,
+        role: u.role,
+      })),
+      pharmacies: pharmacies.map((p) => ({
+        id: p.id,
+        label: p.name,
+        sublabel: [p.city, p.country].filter(Boolean).join(', '),
+      })),
+      medicines: medicines.map((m) => ({
+        id: m.id,
+        label: m.canonicalName,
+        sublabel: [m.genericName, m.strength].filter(Boolean).join(' · '),
+      })),
+    };
+  }
+
   // --- User management -----------------------------------------------------
 
   async listUsers(query: ListUsersQuery) {
