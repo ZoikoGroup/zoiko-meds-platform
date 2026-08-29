@@ -135,15 +135,30 @@ export default function PharmacyManagement() {
     [load]
   )
 
-  const countries = useMemo(
-    () => ['All', ...new Set(pharmacies.map((p) => p.country).filter(Boolean))],
-    [pharmacies]
-  )
+  // The jurisdiction a pharmacy's country already resolves to on save, when it
+  // has one — falling back to its raw country text for a pharmacy still
+  // waiting on that (no country set yet, or one that never resolved to a
+  // known jurisdiction). Grouping on this instead of the raw text is what
+  // keeps "India" / "india" / "IN" from listing as three separate locations
+  // (MSA-32).
+  const locationKey = (p) => p.jurisdiction?.code || p.country || null
+
+  const locationOptions = useMemo(() => {
+    const labelByKey = new Map()
+    pharmacies.forEach((p) => {
+      const key = locationKey(p)
+      if (key && !labelByKey.has(key)) labelByKey.set(key, p.jurisdiction?.name || p.country)
+    })
+    return [
+      { value: 'All', label: 'All Locations' },
+      ...[...labelByKey.entries()].map(([value, label]) => ({ value, label })),
+    ]
+  }, [pharmacies])
 
   const filteredPharmacies = useMemo(() => {
     return pharmacies.filter((p) => {
       const matchStatus = statusFilter === 'All' || p.status === statusFilter
-      const matchCountry = countryFilter === 'All' || p.country === countryFilter
+      const matchCountry = countryFilter === 'All' || locationKey(p) === countryFilter
       return matchStatus && matchCountry
     })
   }, [pharmacies, statusFilter, countryFilter])
@@ -212,7 +227,10 @@ export default function PharmacyManagement() {
 
   const handleAddPharmacy = async (e) => {
     e.preventDefault()
-    if (!newForm.name || !newForm.licenseNumber) return
+    // City and country are required (MSA-33): without them geocoding has
+    // nothing to resolve, so the pharmacy would save with no coordinates and
+    // be invisible to every distance-bounded patient search.
+    if (!newForm.name || !newForm.licenseNumber || !newForm.city || !newForm.country) return
     await run(() => admin.createPharmacy(newForm))
     setIsAddOpen(false)
     setNewForm({
@@ -377,9 +395,9 @@ export default function PharmacyManagement() {
         onChange={(e) => setCountryFilter(e.target.value)}
         className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
       >
-        {countries.map((c) => (
-          <option key={c} value={c}>
-            {c === 'All' ? 'All Locations' : c}
+        {locationOptions.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -644,6 +662,7 @@ export default function PharmacyManagement() {
                   value={newForm.city}
                   onChange={(e) => setNewForm({ ...newForm, city: e.target.value })}
                   placeholder="e.g. Chicago"
+                  required
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -670,6 +689,7 @@ export default function PharmacyManagement() {
                   value={newForm.country}
                   onChange={(e) => setNewForm({ ...newForm, country: e.target.value })}
                   placeholder="e.g. United States"
+                  required
                 />
               </div>
             </div>
