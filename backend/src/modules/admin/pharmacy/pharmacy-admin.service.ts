@@ -4,6 +4,8 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { assertLocationIsFree } from '../../pharmacy/location-identity';
+import { resolveCountryAlpha2 } from '../../../common/countries';
+import { resolveJurisdictionId } from '../../../common/jurisdiction';
 import { CreatePharmacyDto } from './dto/create-pharmacy.dto';
 import { UpdatePharmacyDto } from './dto/update-pharmacy.dto';
 import { ListPharmaciesQuery } from './dto/list-pharmacies.query';
@@ -123,6 +125,7 @@ export class PharmacyAdminService {
     }
 
     const pharmacy = await this.prisma.$transaction(async (tx) => {
+      const jurisdictionId = await resolveJurisdictionId(tx, resolveCountryAlpha2(dto.country));
       const created = await tx.pharmacy.create({
         data: {
           name: dto.name,
@@ -133,6 +136,7 @@ export class PharmacyAdminService {
           region: dto.region || null,
           postalCode: dto.postalCode || null,
           country: dto.country || null,
+          jurisdictionId,
           // The branch's own number. Patient search offers it as the one action
           // the governance note asks for — confirm before travelling.
           phone: dto.phone || null,
@@ -211,7 +215,16 @@ export class PharmacyAdminService {
       if (dto.city !== undefined) data.city = dto.city || null;
       if (dto.region !== undefined) data.region = dto.region || null;
       if (dto.postalCode !== undefined) data.postalCode = dto.postalCode || null;
-      if (dto.country !== undefined) data.country = dto.country || null;
+      if (dto.country !== undefined) {
+        data.country = dto.country || null;
+        // Re-resolved only when the country itself is part of this edit — an
+        // edit to, say, the phone number alone must not spend a write
+        // re-deriving a jurisdiction nothing about this save is changing.
+        const jurisdictionId = await resolveJurisdictionId(tx, resolveCountryAlpha2(dto.country));
+        data.jurisdiction = jurisdictionId
+          ? { connect: { id: jurisdictionId } }
+          : { disconnect: true };
+      }
       if (dto.phone !== undefined) data.phone = dto.phone || null;
       if (dto.availabilityScore !== undefined) {
         data.reliabilityScore = dto.availabilityScore / 100;

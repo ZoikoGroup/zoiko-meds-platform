@@ -61,6 +61,9 @@ function buildService(
       update: jest.fn(),
     },
     verificationRequest: { updateMany: jest.fn() },
+    jurisdiction: {
+      upsert: jest.fn().mockResolvedValue({ id: 'jur-us', code: 'US', name: 'United States' }),
+    },
   };
 
   const prisma: any = {

@@ -71,6 +71,9 @@ describe('PharmacyService self-service profile onboarding', () => {
         update: jest.fn(),
         updateMany: jest.fn(),
       },
+      jurisdiction: {
+        upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN', name: 'India' }),
+      },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
     audit = { write: jest.fn() };

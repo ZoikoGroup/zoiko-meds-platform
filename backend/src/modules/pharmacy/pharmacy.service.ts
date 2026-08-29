@@ -15,6 +15,7 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { resolveCountryAlpha2 } from '../../common/countries';
+import { resolveJurisdictionId } from '../../common/jurisdiction';
 import { normalizePhone } from '../../common/phone';
 import { logoUrlFor } from './logo/pharmacy-logo.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -374,6 +375,7 @@ export class PharmacyService {
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
+      const jurisdictionId = await resolveJurisdictionId(tx, submittedCountry);
       const pharmacy = await tx.pharmacy.create({
         data: {
           name,
@@ -384,6 +386,7 @@ export class PharmacyService {
           city: dto.city?.trim() || null,
           region: dto.region?.trim() || null,
           country: submittedCountry,
+          jurisdictionId,
           postalCode: dto.postalCode?.trim() || null,
           // Without these the pharmacy is invisible to the distance-bounded
           // patient search, however complete the rest of the profile is.
@@ -489,6 +492,14 @@ export class PharmacyService {
     const country =
       dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country;
 
+    // Re-resolved only when the country itself is part of this edit — an edit
+    // to, say, the address alone must not spend a write re-deriving a value
+    // nothing about this save is changing.
+    const jurisdictionId =
+      dto.country !== undefined
+        ? await resolveJurisdictionId(this.prisma, country)
+        : existing.jurisdictionId;
+
     // The contact number is what a patient acts on, so it cannot be cleared, and a
     // record that never had one has to supply it on the next save. A save that does
     // not touch the field on a pharmacy that already has a number is unaffected: a
@@ -533,6 +544,7 @@ export class PharmacyService {
         city: dto.city !== undefined ? dto.city.trim() || null : existing.city,
         region: dto.region !== undefined ? dto.region.trim() || null : existing.region,
         country,
+        jurisdictionId,
         postalCode:
           dto.postalCode !== undefined ? dto.postalCode.trim() || null : existing.postalCode,
         latitude: dto.latitude !== undefined ? dto.latitude : existing.latitude,
