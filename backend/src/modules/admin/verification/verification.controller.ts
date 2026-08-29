@@ -5,8 +5,10 @@ import {
   Param,
   Patch,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { VerificationService } from './verification.service';
@@ -29,6 +31,27 @@ export class VerificationController {
   @ApiOperation({ summary: 'List pharmacy verification requests' })
   list() {
     return this.verification.list();
+  }
+
+  @Get(':id/document')
+  @ApiOperation({
+    summary: 'Download the licence document attached to a verification request',
+    description:
+      'Streamed from the database, never a public storage URL. SUPER_ADMIN only, like every route on this controller — a licence document is not something to hand out by link.',
+  })
+  async document(@Param('id') id: string, @Res() res: Response) {
+    const document = await this.verification.getDocument(id);
+    res.setHeader('Content-Type', document.mimeType);
+    res.setHeader('Content-Length', String(document.data.length));
+    // `inline` so a reviewer can read it in the browser; the filename is the
+    // sanitised one stored at upload, quoted so it cannot break the header.
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${document.filename.replace(/"/g, '')}"`,
+    );
+    // A licence document must not sit in a shared cache.
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(document.data);
   }
 
   @Post()

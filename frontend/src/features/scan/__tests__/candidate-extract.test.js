@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractCandidateLines,
+  hasBareDose,
   isMeaningfulText,
   isPlausibleMedicineName,
   parseCandidate,
@@ -161,5 +162,103 @@ describe('isMeaningfulText', () => {
     expect(isMeaningfulText('1\n2\n3')).toBe(false)
     expect(isMeaningfulText('   \n\n  ')).toBe(false)
     expect(isMeaningfulText('')).toBe(false)
+  })
+})
+
+describe('a short medicine line is not swallowed by the one above it', () => {
+  const PRESCRIPTION = ['Paracetamol 650 mg', 'Pan 40', 'Cetirizine 10 mg'].join('\n')
+
+  it('keeps all three medicines separate', () => {
+    const candidates = extractCandidateLines(PRESCRIPTION)
+
+    // "Pan 40" leaves only three letters once the number is stripped, so it read
+    // as a wrapped continuation and was appended to the paracetamol line above.
+    expect(candidates).toHaveLength(3)
+    expect(candidates.map((c) => c.text)).toEqual([
+      'Paracetamol 650 mg',
+      'Pan 40',
+      'Cetirizine 10 mg',
+    ])
+  })
+
+  it('does not append the short line to the previous candidate', () => {
+    const [first] = extractCandidateLines(PRESCRIPTION)
+    expect(first.text).not.toMatch(/pan/i)
+  })
+
+  it('parses each one into its own medicine', () => {
+    const parsed = extractCandidateLines(PRESCRIPTION).map(parseCandidate)
+
+    expect(parsed[0].name).toBe('Paracetamol')
+    expect(parsed[0].strength).toBe('650 mg')
+    expect(parsed[2].name).toBe('Cetirizine')
+    expect(parsed[2].strength).toBe('10 mg')
+  })
+
+  it('keeps the dose in the displayed name of a bare-dose line', () => {
+    // "Pan 40" is how the product is written and how the catalog holds it;
+    // the stripped "Pan" is neither.
+    const [, pan] = extractCandidateLines(PRESCRIPTION).map(parseCandidate)
+    expect(pan.displayName).toBe('Pan 40')
+    expect(pan.evidence.bareDose).toBe(true)
+  })
+
+  it('still merges a genuine dosage-only continuation', () => {
+    // The case the merge exists for: OCR breaking one medicine across lines.
+    const candidates = extractCandidateLines('Tab. Amoxicillin\n500mg BD x 5 days')
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0].text).toBe('Tab. Amoxicillin 500mg BD x 5 days')
+  })
+})
+
+describe('bare-dose lines', () => {
+  it('accepts a brand followed by a dose', () => {
+    expect(hasBareDose('Pan 40')).toBe(true)
+    expect(hasBareDose('Zifi 200')).toBe(true)
+    expect(hasBareDose('Shelcal 500')).toBe(true)
+  })
+
+  it('rejects page furniture that happens to end in a number', () => {
+    expect(hasBareDose('Page 2')).toBe(false)   // single digit
+    expect(hasBareDose('Room 401')).toBe(false) // stop-listed head word
+    expect(hasBareDose('Bed 12')).toBe(false)
+    expect(hasBareDose('Age 45')).toBe(false)
+  })
+
+  it('rejects anything that is not exactly one word and one number', () => {
+    expect(hasBareDose('Tab Pan 40 BD')).toBe(false)
+    expect(hasBareDose('40')).toBe(false)
+    expect(hasBareDose('Pan')).toBe(false)
+  })
+})
+
+describe('strength read through OCR damage', () => {
+  it('parses a strength whose zero was read as a letter O', () => {
+    const [candidate] = extractCandidateLines('Tab Paracetamol 65O mg BD')
+    const parsed = parseCandidate(candidate)
+
+    expect(parsed.strength).toBe('650 mg')
+    // The name must not keep the mangled leftovers.
+    expect(parsed.name).toBe('Paracetamol')
+    // …and the original line is preserved for the user to check against.
+    expect(parsed.raw).toBe('Tab Paracetamol 65O mg BD')
+  })
+
+  it('parses a strength whose m was read as rn', () => {
+    const [candidate] = extractCandidateLines('Tab Paracetamol 650 rng BD')
+    const parsed = parseCandidate(candidate)
+
+    expect(parsed.strength).toBe('650 mg')
+    expect(parsed.name).toBe('Paracetamol')
+    expect(parsed.raw).toContain('rng')
+  })
+
+  it('counts a repaired strength as structural evidence', () => {
+    expect(scoreLine('Paracetamol 65O mg').evidence.strength).toBe(true)
+  })
+
+  it('does not invent a strength where there is none', () => {
+    const parsed = parseCandidate({ text: 'Tab Amoxicillin BD', evidence: {} })
+    expect(parsed.strength).toBe('')
   })
 })

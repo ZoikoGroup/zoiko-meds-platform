@@ -7,6 +7,7 @@ import { PharmacyLogoService } from './logo/pharmacy-logo.service';
 import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyIntegrationService } from './integration/pharmacy-integration.service';
 import { PharmacyIntegrationScheduler } from './integration/pharmacy-integration.scheduler';
+import { NotificationPreferencesService } from './notification-preferences.service';
 
 @Module({
   imports: [AdminModule, SavedMedicineLinkModule],
@@ -15,6 +16,7 @@ import { PharmacyIntegrationScheduler } from './integration/pharmacy-integration
     PharmacyService,
     PharmacyLogoService,
     PharmacyNotificationService,
+    NotificationPreferencesService,
     PharmacyIntegrationService,
     // Not exported: nothing outside this module should be starting feed runs,
     // and the timer it owns must exist once.
@@ -24,6 +26,9 @@ import { PharmacyIntegrationScheduler } from './integration/pharmacy-integration
     PharmacyService,
     PharmacyLogoService,
     PharmacyNotificationService,
+    // Exported so notification producers outside this module (verification
+    // review, for one) can ask before they notify.
+    NotificationPreferencesService,
     PharmacyIntegrationService,
   ],
 })

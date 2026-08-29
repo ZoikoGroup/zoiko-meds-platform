@@ -8,7 +8,12 @@ import { Switch } from '@/components/ui/switch'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { CopyButton } from '@/components/shared/copy-button'
 import { useAuth } from '@/providers/auth-provider'
-import { getIntegration, issueIntegrationKey } from '@/services/pharmacy-api'
+import {
+  getIntegration,
+  issueIntegrationKey,
+  getNotificationPreferences,
+  updateNotificationPreferences,
+} from '@/services/pharmacy-api'
 import { formatRelative } from '@/utils/format'
 // KeySquare rather than Terminal for API credentials: the terminal glyph is a
 // prompt caret and an underscore, which at 16px reads as stray punctuation
@@ -17,17 +22,22 @@ import {
   User, KeyRound, KeySquare, Bell, RefreshCw, Eye, EyeOff, Loader2, TriangleAlert,
 } from 'lucide-react'
 
+// `key` is the field the API stores this switch under. The labels and the order
+// are unchanged — only where the value lives has moved.
 const NOTIF_PREFS = [
-  { key: 'inventory', label: 'Inventory alerts', desc: 'When a medicine drops to out of stock.' },
-  { key: 'verification', label: 'Verification updates', desc: 'Licence and verification status changes.' },
-  { key: 'uploads', label: 'Upload results', desc: 'CSV import success or failures.' },
-  { key: 'system', label: 'System messages', desc: 'Maintenance and platform announcements.' },
+  { key: 'inventoryAlerts', label: 'Inventory alerts', desc: 'When a medicine drops to out of stock.' },
+  { key: 'verificationUpdates', label: 'Verification updates', desc: 'Licence and verification status changes.' },
+  { key: 'uploadResults', label: 'Upload results', desc: 'CSV import success or failures.' },
+  { key: 'systemMessages', label: 'System messages', desc: 'Maintenance and platform announcements.' },
 ]
 
 export default function PharmacySettings() {
   const { user, changePassword: doChangePassword } = useAuth()
   const [flashMsg, flash] = useFlash()
-  const [prefs, setPrefs] = useState({ inventory: true, verification: true, uploads: true, system: false })
+  // Null until the API answers. Rendering an assumed set first would show
+  // switches that reflect nothing stored — the exact bug this replaces, where
+  // every value was invented by the component.
+  const [prefs, setPrefs] = useState(null)
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
   const [showPwd, setShowPwd] = useState({ current: false, next: false, confirm: false })
   // The integration is where the push key lives; settings reads the same record
@@ -87,9 +97,44 @@ export default function PharmacySettings() {
   const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
   const isPasswordFormInvalid = !pwd.current || !pwd.next || !pwd.confirm || pwd.next !== pwd.confirm || pwd.next.length < 8
 
-  const toggle = (key) => {
-    setPrefs((p) => ({ ...p, [key]: !p[key] }))
-    flash('Notification preferences updated')
+  useEffect(() => {
+    let alive = true
+    getNotificationPreferences()
+      .then((saved) => alive && setPrefs(saved))
+      .catch(() => {
+        if (!alive) return
+        setPrefs(null)
+        flash('Could not load your notification preferences. Reload the page to try again.')
+      })
+    return () => {
+      alive = false
+    }
+    // `flash` is stable for the life of the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Flip one switch and save it.
+   *
+   * Optimistic, then reconciled with what the server actually stored: the
+   * switch moves immediately, and if the save fails it moves back. It must
+   * never rest in a state the backend did not accept — an operator who sees
+   * "off" is entitled to believe they will not be notified.
+   */
+  const toggle = async (key) => {
+    if (!prefs) return
+    const previous = prefs
+    const next = { ...prefs, [key]: !prefs[key] }
+    setPrefs(next)
+    try {
+      const saved = await updateNotificationPreferences({ [key]: next[key] })
+      // Render what was stored, not what was clicked.
+      setPrefs(saved && typeof saved === 'object' ? saved : next)
+      flash('Notification preferences updated')
+    } catch (err) {
+      setPrefs(previous)
+      flash(err?.message || 'Could not save that preference. Please try again.')
+    }
   }
 
   const [pwdError, setPwdError] = useState('')
@@ -241,7 +286,12 @@ export default function PharmacySettings() {
                   <span className="text-sm font-semibold text-foreground">{opt.label}</span>
                   <span className="text-xs text-muted-foreground">{opt.desc}</span>
                 </div>
-                <Switch checked={prefs[opt.key]} onCheckedChange={() => toggle(opt.key)} aria-label={opt.label} />
+                <Switch
+                  checked={Boolean(prefs?.[opt.key])}
+                  disabled={!prefs}
+                  onCheckedChange={() => toggle(opt.key)}
+                  aria-label={opt.label}
+                />
               </div>
             ))}
           </CardContent>

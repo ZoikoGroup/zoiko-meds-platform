@@ -232,31 +232,180 @@ describe('PharmacyIntegrationService.saveIntegration', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  // Re-saving the form must not silently wipe a credential the page could not
-  // show back to the operator in the first place.
-  it('keeps the stored credential when the value is omitted', async () => {
+  it('accepts a new integration with both auth header fields blank and stores no auth header', async () => {
     const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
 
     await service.saveIntegration('ph_1', {
       provider: 'Marg ERP',
       feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: '',
+      authHeaderValue: '',
     } as never);
 
-    const { update } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
-    expect(open(update.authHeaderSecret)).toBe('Bearer feed-secret');
+    const { create } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
+    expect(create.authHeaderName).toBeNull();
+    expect(create.authHeaderSecret).toBeNull();
   });
 
-  it('clears the credential when an empty value is sent', async () => {
+  it('treats whitespace-only auth header name and value as absent', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
+
+    await service.saveIntegration('ph_1', {
+      provider: 'Marg ERP',
+      feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: '   ',
+      authHeaderValue: '   ',
+    } as never);
+
+    const { create } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
+    expect(create.authHeaderName).toBeNull();
+    expect(create.authHeaderSecret).toBeNull();
+  });
+
+  it('accepts Authorization header and Bearer token', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
+
+    await service.saveIntegration('ph_1', {
+      provider: 'Marg ERP',
+      feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: 'Authorization',
+      authHeaderValue: 'Bearer abc123',
+    } as never);
+
+    const { create } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
+    expect(create.authHeaderName).toBe('Authorization');
+    expect(open(create.authHeaderSecret)).toBe('Bearer abc123');
+  });
+
+  it('accepts custom X-API-Key header and value', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
+
+    await service.saveIntegration('ph_1', {
+      provider: 'Marg ERP',
+      feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: 'X-API-Key',
+      authHeaderValue: 'abc123',
+    } as never);
+
+    const { create } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
+    expect(create.authHeaderName).toBe('X-API-Key');
+    expect(open(create.authHeaderSecret)).toBe('abc123');
+  });
+
+  it('preserves exact secret value without trimming non-empty secret', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
+    const untrimmedSecret = 'Bearer  tokenWithSpaces ';
+
+    await service.saveIntegration('ph_1', {
+      provider: 'Marg ERP',
+      feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: 'Authorization',
+      authHeaderValue: untrimmedSecret,
+    } as never);
+
+    const { create } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
+    expect(open(create.authHeaderSecret)).toBe(untrimmedSecret);
+  });
+
+  it('refuses a new integration with header name but missing value', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.saveIntegration('ph_1', {
+        provider: 'Marg ERP',
+        feedUrl: 'https://feeds.example.com/stock.csv',
+        authHeaderName: 'Authorization',
+        authHeaderValue: '',
+      } as never),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'Auth header value is required when an auth header name is provided.',
+      ),
+    );
+  });
+
+  it('refuses a request with header value but missing name', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.saveIntegration('ph_1', {
+        provider: 'Marg ERP',
+        feedUrl: 'https://feeds.example.com/stock.csv',
+        authHeaderName: '',
+        authHeaderValue: 'Bearer abc123',
+      } as never),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'Auth header name is required when an auth header value is provided.',
+      ),
+    );
+  });
+
+  // Re-saving the form must retain the stored credential when the value is left blank.
+  it('retains the stored credential when editing with the same header name and blank value', async () => {
     const { service, prisma } = build();
 
     await service.saveIntegration('ph_1', {
       provider: 'Marg ERP',
       feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: 'Authorization',
       authHeaderValue: '',
     } as never);
 
     const { update } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
-    expect(update.authHeaderSecret).toBeNull();
+    expect(update.authHeaderName).toBe('Authorization');
+    expect(open(update.authHeaderSecret)).toBe('Bearer feed-secret');
+  });
+
+  it('refuses editing when header name changes but value is left blank', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(
+      integrationRow({
+        authHeaderName: 'Authorization',
+        authHeaderSecret: seal('Bearer feed-secret'),
+      }),
+    );
+
+    await expect(
+      service.saveIntegration('ph_1', {
+        provider: 'Marg ERP',
+        feedUrl: 'https://feeds.example.com/stock.csv',
+        authHeaderName: 'X-API-Key',
+        authHeaderValue: '',
+      } as never),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'Auth header value is required when changing the auth header name.',
+      ),
+    );
+  });
+
+  it('replaces auth header and secret when changing header name and supplying new value', async () => {
+    const { service, prisma } = build();
+    prisma.pharmacyIntegration.findUnique.mockResolvedValue(
+      integrationRow({
+        authHeaderName: 'Authorization',
+        authHeaderSecret: seal('Bearer feed-secret'),
+      }),
+    );
+
+    await service.saveIntegration('ph_1', {
+      provider: 'Marg ERP',
+      feedUrl: 'https://feeds.example.com/stock.csv',
+      authHeaderName: 'X-API-Key',
+      authHeaderValue: 'new-key-123',
+    } as never);
+
+    const { update } = prisma.pharmacyIntegration.upsert.mock.calls[0][0];
+    expect(update.authHeaderName).toBe('X-API-Key');
+    expect(open(update.authHeaderSecret)).toBe('new-key-123');
   });
 
   // Shortening a daily feed to every 15 minutes and then waiting a day for the

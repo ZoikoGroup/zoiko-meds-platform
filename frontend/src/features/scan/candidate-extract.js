@@ -15,7 +15,7 @@
 // Timing words ("morning", "after food") are STRIP signals — they appear on
 // genuine medicine lines — so using them to reject dropped real medicines.
 
-import { normalize, toAscii } from './text-normalize'
+import { normalize, repairStrengthText, toAscii } from './text-normalize'
 
 // --- Structural signals a medicine line carries -----------------------------
 
@@ -50,6 +50,33 @@ export const DURATION_RE =
 
 /** Route of administration. */
 const ROUTE_RE = /\b(po|per\s?oral|oral|iv|im|sc|sl|pr|pv|topical|inhaled|nasal|ophthalmic|otic)\b/i
+
+/**
+ * A brand written with a bare dose — "Pan 40", "Zifi 200", "Shelcal 500".
+ *
+ * A very common way to write a prescription, and one the structural rules
+ * missed entirely: no unit means no strength match, and the name left after the
+ * number is stripped is too short to read as a medicine name. The line scored
+ * zero and was dropped, or was folded into the medicine above it.
+ *
+ * Kept narrow on purpose. Two or more digits, because page furniture counts in
+ * ones ("Page 2"); a head word of three letters or more; and a short stop-list
+ * of the words that actually precede a number on a prescription form.
+ */
+const BARE_DOSE_RE = /^\s*([a-z][a-z+-]{2,})\s+(\d{2,4})\s*$/i
+
+const NON_MEDICINE_HEADS = new Set([
+  'page', 'room', 'bed', 'ward', 'floor', 'ref', 'age', 'sex', 'opd', 'ipd',
+  'bill', 'phone', 'mobile', 'tel', 'reg', 'lic', 'uhid', 'mrn', 'wt', 'ht',
+  'bp', 'temp', 'pulse', 'date', 'time', 'qty', 'no', 'sr', 'sl',
+])
+
+/** Does this line read as a medicine name followed by a bare dose number? */
+export function hasBareDose(line) {
+  const match = BARE_DOSE_RE.exec(toAscii(line ?? '').trim())
+  if (!match) return false
+  return !NON_MEDICINE_HEADS.has(match[1].toLowerCase())
+}
 
 /** Numbered or bulleted list item — prescriptions enumerate medicines. */
 const LIST_ITEM_RE = /^\s*(?:\(?\d{1,2}[).\]]|[-*•·—]|[ivx]{1,4}[).])\s+/i
@@ -154,6 +181,7 @@ export function scoreLine(line, { inMedicineSection = false } = {}) {
     duration: false,
     route: false,
     listItem: false,
+    bareDose: false,
     inMedicineSection,
   }
   if (!text) return { score: -10, evidence }
@@ -168,7 +196,7 @@ export function scoreLine(line, { inMedicineSection = false } = {}) {
     evidence.form = true
     score += 2
   }
-  if (STRENGTH_RE.test(text)) {
+  if (STRENGTH_RE.test(text) || STRENGTH_RE.test(repairStrengthText(text))) {
     evidence.strength = true
     score += 2
   }
@@ -186,6 +214,10 @@ export function scoreLine(line, { inMedicineSection = false } = {}) {
   }
   if (LIST_ITEM_RE.test(text)) {
     evidence.listItem = true
+    score += 2
+  }
+  if (hasBareDose(text)) {
+    evidence.bareDose = true
     score += 2
   }
   if (inMedicineSection) score += 2
@@ -361,12 +393,36 @@ function splitListItems(text) {
  * A fragment carrying only dosage signal and no name-shaped token belongs to
  * the previous candidate, not to a medicine of its own.
  */
+/**
+ * Does this candidate stand on its own, whatever its name looks like?
+ *
+ * A wrapped continuation carries dosage and nothing else — "500mg BD x 5 days"
+ * on the line below its medicine. A short medicine line carries the markers of
+ * an entry in its own right: its own strength, its own dosage form, a list
+ * marker that numbered it, or a bare dose after the brand. Reading only the
+ * name meant "Pan 40" — three letters after the number is stripped — was
+ * indistinguishable from a continuation, and disappeared into the medicine
+ * above it.
+ */
+function startsNewEntry(evidence = {}) {
+  // Deliberately NOT `strength` or a form appearing anywhere: a wrapped tail —
+  // "500mg BD x 5 days" — carries both, and it belongs to the medicine above.
+  // What marks a new entry is the way the line opens (a list number, a leading
+  // "Tab."), or a shape only a medicine has (brand + bare dose, a name).
+  return Boolean(
+    evidence.listItem || evidence.formPrefix || evidence.bareDose || evidence.nameLike,
+  )
+}
+
 function mergeContinuations(candidates) {
   const merged = []
   for (const candidate of candidates) {
     const namePart = stripDosageNoise(candidate.text)
-    const hasOwnName = /[a-z]{4,}/i.test(namePart)
-    if (!hasOwnName && merged.length > 0) {
+    // Three letters, not four. A dosage tail strips to nothing at all, so the
+    // shorter threshold costs nothing there — and it is the difference between
+    // keeping "Pan 40" and folding it into the medicine above.
+    const hasOwnName = /[a-z]{3,}/i.test(namePart)
+    if (!hasOwnName && !startsNewEntry(candidate.evidence) && merged.length > 0) {
       const previous = merged[merged.length - 1]
       previous.text = `${previous.text} ${candidate.text}`.trim()
       previous.evidence = { ...previous.evidence, ...pickTrue(candidate.evidence) }
@@ -391,7 +447,11 @@ function pickTrue(evidence) {
  * in "Amoxicillin 500mg TDS" but part of the brand in "Nurokind OD".
  */
 function stripDosageNoise(text, { keepFrequency = false } = {}) {
-  let out = text
+  // Strip from the repaired copy when the raw text hides its strength behind an
+  // OCR slip, so "Amoxicillin 65O rng" leaves "Amoxicillin" rather than
+  // "Amoxicillin O rng".
+  const source = STRENGTH_RE.test(text) ? text : repairStrengthText(text)
+  let out = source
     .replace(LIST_ITEM_RE, ' ')
     .replace(new RegExp(FORM_RE.source, 'gi'), ' ')
     .replace(new RegExp(STRENGTH_RE.source, 'gi'), ' ')
@@ -420,7 +480,11 @@ export function parseCandidate(candidate) {
   const evidence = candidate.evidence ?? {}
 
   const formMatch = text.match(FORM_RE)
-  const strengthMatch = text.match(STRENGTH_RE)
+  // Strength is read from a repaired copy — "65O mg" and "650 rng" are the same
+  // dose as "650 mg" and the raw regex sees neither. `raw` below still carries
+  // the original line, so what the user is shown and asked to confirm is what
+  // the page actually said.
+  const strengthMatch = text.match(STRENGTH_RE) ?? repairStrengthText(text).match(STRENGTH_RE)
   const frequencyMatch = text.match(FREQUENCY_RE)
   const durationMatch = text.match(DURATION_RE)
 
@@ -433,9 +497,14 @@ export function parseCandidate(candidate) {
   // "Metformin SR" are product names. Keep it for display; the MediBase query
   // still uses the stripped form so the catalog lookup is unaffected.
   const frequencyIsOnlySignal = Boolean(frequencyMatch) && !strengthMatch && !durationMatch && !formMatch
-  const displayName = frequencyIsOnlySignal
-    ? stripDosageNoise(text, { keepFrequency: true }).replace(/^[\s+-]+|[\s+-]+$/g, '')
-    : name.replace(/^[\s+-]+|[\s+-]+$/g, '')
+  // "Pan 40" is how the product is named — on the page and in the catalog. The
+  // stripped name drops the number, so the display (and the catalog query built
+  // from it) keeps the line as written.
+  const displayName = evidence.bareDose
+    ? text.trim()
+    : frequencyIsOnlySignal
+      ? stripDosageNoise(text, { keepFrequency: true }).replace(/^[\s+-]+|[\s+-]+$/g, '')
+      : name.replace(/^[\s+-]+|[\s+-]+$/g, '')
 
   return {
     raw: text,

@@ -3,6 +3,7 @@ import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
+import { NotificationPreferencesService } from './notification-preferences.service';
 import { PharmacyService } from './pharmacy.service';
 
 /**
@@ -80,6 +81,7 @@ function build() {
     audit as unknown as AuditWriter,
     savedLink as unknown as SavedMedicineLinkService,
     portalNotifications as unknown as PharmacyNotificationService,
+    {} as unknown as NotificationPreferencesService,
   );
   return { service, prisma, audit, savedLink, portalNotifications, catalog };
 }

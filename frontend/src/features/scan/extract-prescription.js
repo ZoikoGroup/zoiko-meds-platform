@@ -66,6 +66,26 @@ const MATCH_CONCURRENCY = 4
  */
 const MEDIBASE_MATCH_FLOOR = 0.72
 
+/**
+ * Containment floor for a candidate whose strength matches the catalog entry's.
+ *
+ * Three characters is enough for "Pan 40" against a "Pan 40 mg" identity when
+ * the page also said 40 mg — the number is the corroboration. Without it the
+ * default floor in text-normalize applies.
+ */
+const CORROBORATED_CONTAINMENT_CHARS = 3
+
+/** Same strength, allowing for spacing and case ("40mg" vs "40 mg"). */
+function strengthCorroborates(parsedStrength, catalogStrength) {
+  const a = normalizeStrengthKey(parsedStrength)
+  const b = normalizeStrengthKey(catalogStrength)
+  return Boolean(a) && a === b
+}
+
+function normalizeStrengthKey(value) {
+  return (value ?? '').toLowerCase().replace(/\s+/g, '')
+}
+
 function isHeic(file) {
   return HEIC_RE.test(file.name ?? '') || /image\/hei[cf]/i.test(file.type ?? '')
 }
@@ -94,7 +114,13 @@ async function mapWithConcurrency(items, limit, task) {
  * structural fallback that is always flagged for confirmation.
  */
 async function resolveCandidate(parsed, { ocrConfidence, catalogReachable }) {
-  const { name, evidence } = parsed
+  const { evidence } = parsed
+  // A line written as brand + bare dose ("Pan 40") names the product with the
+  // number: the catalog holds "Pan 40", not "Pan". Querying and scoring on the
+  // stripped name alone left a three-letter fragment to be rescued by the
+  // containment shortcut, which is exactly the promotion that made an uncertain
+  // reading confident. The fuller text is both a better query and a safer score.
+  const name = evidence.bareDose && parsed.displayName ? parsed.displayName : parsed.name
 
   if (catalogReachable.value) {
     try {
@@ -104,7 +130,16 @@ async function resolveCandidate(parsed, { ocrConfidence, catalogReachable }) {
           // `brands` is the mapped field name from toMedicineIdentity().
           const references = [match.name, match.generic, ...(match.brands ?? [])].filter(Boolean)
           const { score } = bestSimilarity(name, references)
-          const contained = references.some((reference) => containsName(name, reference))
+          // Containment is worth near-certainty only when the shared run is
+          // substantial. A short name may still earn it, but only with
+          // corroboration the page itself supplied: a strength that matches the
+          // catalog entry's own. Evidence, not a shorter yardstick.
+          const minChars = strengthCorroborates(parsed.strength, match.strength)
+            ? CORROBORATED_CONTAINMENT_CHARS
+            : undefined
+          const contained = references.some((reference) =>
+            containsName(name, reference, minChars ? { minChars } : undefined),
+          )
           return { match, score: contained ? Math.max(score, 0.95) : score }
         })
         .sort((a, b) => b.score - a.score)
@@ -158,7 +193,10 @@ async function resolveCandidate(parsed, { ocrConfidence, catalogReachable }) {
   // Take 1 capsule by mouth every 8 hours for 10 days" has a dosage form and a
   // duration, and accepting it on that basis turned an instruction into a
   // medicine called "SI Take BY Mouth Avery Hours For Oays".
-  if (!evidence.nameLike || name.length < 4) return null
+  // A brand written with a bare dose ("Pan 40") is a medicine line even though
+  // the name alone is too short to read as one — the dose is what makes it a
+  // prescription entry rather than a stray word.
+  if (!(evidence.nameLike || evidence.bareDose) || name.length < 4) return null
 
   return {
     // Display what was written. With no catalog identity we have no authority

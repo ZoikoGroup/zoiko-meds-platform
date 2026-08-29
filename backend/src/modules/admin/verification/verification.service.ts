@@ -10,6 +10,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
+import { allowsCategory } from '../../pharmacy/notification-preferences.service';
 import { CreateVerificationDto } from './dto/create-verification.dto';
 import { UpdateVerificationDto } from './dto/update-verification.dto';
 
@@ -19,6 +20,24 @@ export class VerificationService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditWriter,
   ) {}
+
+  /**
+   * The licence document attached to a request.
+   *
+   * Read straight out of the row and handed to the caller — the controller that
+   * exposes it is SUPER_ADMIN-only, so there is no public URL, nothing signed to
+   * expire, and nothing that outlives the reviewer's session.
+   */
+  async getDocument(requestId: string) {
+    const document = await this.prisma.verificationDocument.findUnique({
+      where: { verificationRequestId: requestId },
+      select: { filename: true, mimeType: true, data: true },
+    });
+    if (!document) {
+      throw new NotFoundException('No document has been uploaded for this verification request.');
+    }
+    return document;
+  }
 
   async list() {
     // NOTE: pharmacy records are no longer fabricated for unlinked pharmacy
@@ -106,6 +125,14 @@ export class VerificationService {
 
       let pharmacyId = existing.pharmacyId;
 
+      // Does this member still want to hear about verification changes? Asked
+      // once, inside the transaction, and before any of the branches below
+      // create a notification — a switch that is only honoured on the way out
+      // is not honoured at all.
+      const wantsVerificationUpdates = targetUser
+        ? await allowsCategory(tx, targetUser.id, 'verification')
+        : false;
+
       if (!pharmacyId && targetUser?.pharmacyId) {
         pharmacyId = targetUser.pharmacyId;
       }
@@ -160,7 +187,7 @@ export class VerificationService {
           },
         });
 
-        if (targetUser) {
+        if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
             data: {
               userId: targetUser.id,
@@ -183,7 +210,7 @@ export class VerificationService {
           },
         });
 
-        if (targetUser) {
+        if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
             data: {
               userId: targetUser.id,
@@ -206,7 +233,7 @@ export class VerificationService {
           },
         });
 
-        if (targetUser) {
+        if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
             data: {
               userId: targetUser.id,

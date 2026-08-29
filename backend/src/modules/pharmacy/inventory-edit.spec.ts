@@ -5,6 +5,25 @@ import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
+import { NotificationPreferencesService } from './notification-preferences.service';
+
+/**
+ * Notification preferences default to everything on, which is what every
+ * account without a saved row gets. These specs are about other behaviour, so
+ * they take the permissive stub.
+ */
+const allowAllPreferences = () =>
+  ({
+    get: async () => ({
+      inventoryAlerts: true,
+      verificationUpdates: true,
+      uploadResults: true,
+      systemMessages: true,
+    }),
+    allows: async () => true,
+    allowedCategories: async () => new Set(['inventory', 'verification', 'upload', 'system']),
+  }) as unknown as NotificationPreferencesService;
+
 
 /**
  * Editing an inventory item.
@@ -110,6 +129,7 @@ function buildService() {
     audit as unknown as AuditWriter,
     savedLink as unknown as SavedMedicineLinkService,
     portalNotifications as unknown as PharmacyNotificationService,
+    allowAllPreferences(),
   );
   return { service, prisma, audit, savedLink, portalNotifications, state };
 }

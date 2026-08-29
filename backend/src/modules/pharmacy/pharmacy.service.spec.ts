@@ -5,6 +5,25 @@ import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
+import { NotificationPreferencesService } from './notification-preferences.service';
+
+/**
+ * Notification preferences default to everything on, which is what every
+ * account without a saved row gets. These specs are about other behaviour, so
+ * they take the permissive stub.
+ */
+const allowAllPreferences = () =>
+  ({
+    get: async () => ({
+      inventoryAlerts: true,
+      verificationUpdates: true,
+      uploadResults: true,
+      systemMessages: true,
+    }),
+    allows: async () => true,
+    allowedCategories: async () => new Set(['inventory', 'verification', 'upload', 'system']),
+  }) as unknown as NotificationPreferencesService;
+
 
 /** Linking saved medicines is exercised in saved-medicine-link.spec.ts. */
 const savedLinkStub = () =>
@@ -29,6 +48,7 @@ describe('PharmacyService.resolvePharmacyId', () => {
       {} as unknown as AuditWriter,
       savedLinkStub(),
       portalNotificationStub(),
+      allowAllPreferences(),
     );
   });
 
@@ -65,6 +85,10 @@ describe('PharmacyService self-service profile onboarding', () => {
       pharmacy: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
       user: { findUnique: jest.fn(), update: jest.fn() },
       signalNotification: { findMany: jest.fn().mockResolvedValue([]) },
+      // The bell reads two sources: this account's own rows, and the
+      // administrator broadcasts. These tests are about categorising the former,
+      // so the broadcast side stays empty.
+      notification: { findMany: jest.fn().mockResolvedValue([]) },
       verificationRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
@@ -82,6 +106,7 @@ describe('PharmacyService self-service profile onboarding', () => {
       audit as unknown as AuditWriter,
       savedLinkStub(),
       portalNotificationStub(),
+      allowAllPreferences(),
     );
   });
 

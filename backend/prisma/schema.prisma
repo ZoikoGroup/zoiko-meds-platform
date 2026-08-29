@@ -58,6 +58,7 @@ model User {
   passwordResets               PasswordResetToken[]
   signalNotifications          SignalNotification[]
   signalNotificationPreference SignalNotificationPreference?
+  pharmacyNotificationPreference PharmacyNotificationPreference?
   capabilityGrants             CapabilityGrant[]             @relation("CapabilityGrantUser")
   capabilityGrantsIssued       CapabilityGrant[]             @relation("CapabilityGrantIssuer")
   organizationsUpdated         Organization[]                @relation("OrganizationUpdatedBy")
@@ -313,6 +314,7 @@ model Pharmacy {
   inventorySignals     InventorySignal[]
   availabilitySignals  AvailabilitySignal[]
   verificationRequests VerificationRequest[]
+  verificationDocuments VerificationDocument[]
 
   /// The logo image itself lives in its own table so it is never loaded by the
   /// queries that matter: patient search reads this row, and Prisma selects every
@@ -655,13 +657,52 @@ model VerificationRequest {
   submittedBy   String
   status        VerificationRequestStatus @default(PENDING)
   reviewer      String?
+  /// Display name of the supporting document, and the authenticated path the
+  /// reviewer fetches it from. Both were already here and never populated: the
+  /// pharmacy had no way to send a document, so every self-submitted request
+  /// left them null and the Verification Center showed "No document".
   docName       String?
   docUrl        String?
+  document      VerificationDocument?
   notes         String?
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
 
   @@index([status])
+}
+
+/// The licence document behind a verification request.
+///
+/// Held in the database rather than on disk or in a bucket. The API runs from a
+/// container in some environments, so a file written to the filesystem does not
+/// survive a redeploy — and object storage would mean a new SDK, a bucket and
+/// credentials this deployment does not have. A licence PDF is small and read
+/// rarely, by one reviewer, so the row is the simplest thing that actually
+/// persists.
+///
+/// Separate table, not a column on the request: the bytes must not be dragged
+/// into every list query the Verification Center makes.
+model VerificationDocument {
+  id                    String              @id @default(cuid())
+  verificationRequestId String              @unique
+  verificationRequest   VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
+
+  /// Who it belongs to, checked before anyone is allowed to replace it.
+  pharmacyId String?
+  pharmacy   Pharmacy? @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+
+  /// Sanitised original filename — shown to the reviewer, never used as a path.
+  filename  String
+  /// Decided by inspecting the bytes, never by trusting the upload.
+  mimeType  String
+  sizeBytes Int
+  data      Bytes
+
+  uploadedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([pharmacyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -752,6 +793,35 @@ model SignalNotification {
 // Patient notification-channel + category preferences. Mirrors the toggles on
 // the ZoikoSignal settings card. Distinct from AlertPreference (the availability
 // Alerts screen) so each surface owns its own vocabulary.
+/// Which pharmacy-portal notifications this account wants to receive.
+///
+/// Separate from SignalNotificationPreference on purpose: that one is the
+/// patient's ZoikoSignal settings (running low, back in stock, recalls), and
+/// these are the four categories the Pharmacy Portal settings page offers.
+/// Folding them into one row would put pharmacy columns on every patient's
+/// preferences and vice versa.
+///
+/// One row per user, created on first read. Absent means "everything on",
+/// which is what every existing account gets and what the portal has always
+/// shown — a missing row must never read as "notify nobody".
+model PharmacyNotificationPreference {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// A medicine dropping to out of stock.
+  inventoryAlerts     Boolean @default(true)
+  /// Licence and verification status changes.
+  verificationUpdates Boolean @default(true)
+  /// CSV import success or failure.
+  uploadResults       Boolean @default(true)
+  /// Maintenance and platform announcements broadcast by an administrator.
+  systemMessages      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model SignalNotificationPreference {
   id            String   @id @default(cuid())
   userId        String   @unique

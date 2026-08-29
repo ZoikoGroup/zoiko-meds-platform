@@ -9,6 +9,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IntegrationDirection } from '@prisma/client';
 
@@ -53,6 +54,11 @@ export class SaveIntegrationDto {
   @ApiPropertyOptional({
     description: 'Header the feed expects for auth, e.g. "Authorization".',
   })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })
   @IsOptional()
   @IsString()
   @MaxLength(64)
@@ -65,7 +71,11 @@ export class SaveIntegrationDto {
 
   @ApiPropertyOptional({
     description:
-      'Value for that header. Encrypted at rest and never returned. Omit to keep the stored value; send "" to clear it.',
+      'Value for that header. Encrypted at rest and never returned. Omit to keep the stored value.',
+  })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    return value.trim().length > 0 ? value : undefined;
   })
   @IsOptional()
   @IsString()

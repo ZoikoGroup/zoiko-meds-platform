@@ -8,7 +8,11 @@ import {
 import {
   AvailabilityConfidence,
   CommercialClassification,
+  Notification,
+  NotificationStatus,
+  NotificationTarget,
   QualityState,
+  SignalEventType,
   SignalNotificationType,
   UserRole,
   VerificationRequestStatus,
@@ -26,12 +30,25 @@ import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { assertLocationIsFree } from './location-identity';
+import {
+  NotificationCategory,
+  NotificationPreferencesService,
+} from './notification-preferences.service';
 import { resolveMapLink } from './map-link';
 import {
   PHARMACY_INVENTORY_KEY_PREFIX,
   PHARMACY_UPLOAD_KEY_PREFIX,
   PharmacyNotificationService,
 } from './notifications/pharmacy-notification.service';
+import { AcceptedDocument, readVerificationDocument } from './verification-document';
+
+/** Is this broadcast addressed to pharmacy staff at all? */
+function reachesPharmacyStaff(target: NotificationTarget): boolean {
+  return (
+    target === NotificationTarget.ALL_USERS ||
+    target === NotificationTarget.PHARMACY_MANAGERS
+  );
+}
 
 /**
  * Maps the pharmacy-facing status string to the AvailabilityConfidence enum
@@ -42,6 +59,58 @@ const STATUS_TO_CONFIDENCE: Record<string, AvailabilityConfidence> = {
   limited: AvailabilityConfidence.MODERATE,
   'out-of-stock': AvailabilityConfidence.LOW,
 };
+
+/** The three statuses the portal has; the CSV must resolve to one of them. */
+export const INVENTORY_STATUSES = ['available', 'limited', 'out-of-stock'] as const;
+
+/**
+ * How a spreadsheet spells each status.
+ *
+ * A CSV is typed by a person, so "Out of Stock", "OUT OF STOCK" and
+ * "out-of-stock" are all the same answer. The importer only ever recognised the
+ * hyphenated form, and everything else fell through a `|| HIGH` default — so a
+ * pharmacy that uploaded a medicine as out of stock had it published to patients
+ * as available. That is the bug this table exists to close, and the reason it is
+ * a lookup rather than another default.
+ */
+const STATUS_SYNONYMS: Record<string, (typeof INVENTORY_STATUSES)[number]> = {
+  available: 'available',
+  instock: 'available',
+  instocks: 'available',
+  yes: 'available',
+  y: 'available',
+  limited: 'limited',
+  limitedstock: 'limited',
+  low: 'limited',
+  lowstock: 'limited',
+  outofstock: 'out-of-stock',
+  outstock: 'out-of-stock',
+  unavailable: 'out-of-stock',
+  notavailable: 'out-of-stock',
+  nostock: 'out-of-stock',
+  no: 'out-of-stock',
+  n: 'out-of-stock',
+};
+
+/**
+ * Read a CSV status cell.
+ *
+ * Returns the canonical status, or null when the cell says something this
+ * product has no status for. Null is deliberately distinct from "empty": an
+ * unrecognised value is a mistake to report, not a value to default.
+ *
+ * Case, spacing, hyphens and underscores are all ignored, because none of them
+ * change what the pharmacist meant.
+ */
+export function normalizeInventoryStatus(
+  raw: string | null | undefined,
+): (typeof INVENTORY_STATUSES)[number] | null {
+  const key = String(raw ?? '')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+  if (!key) return null;
+  return STATUS_SYNONYMS[key] ?? null;
+}
 
 /** Maps AvailabilityConfidence back to the pharmacy-facing status string. */
 const CONFIDENCE_TO_STATUS: Record<string, string> = {
@@ -170,6 +239,7 @@ export class PharmacyService {
     private readonly auditWriter: AuditWriter,
     private readonly savedLink: SavedMedicineLinkService,
     private readonly portalNotifications: PharmacyNotificationService,
+    private readonly notificationPreferences: NotificationPreferencesService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -224,6 +294,13 @@ export class PharmacyService {
     const latestReq = await this.prisma.verificationRequest.findFirst({
       where: { pharmacyId },
       orderBy: { createdAt: 'desc' },
+      // Metadata only — the bytes are never sent to the portal, which only
+      // needs to show the operator which file is currently attached.
+      include: {
+        document: {
+          select: { filename: true, mimeType: true, sizeBytes: true, updatedAt: true },
+        },
+      },
     });
 
     // Every field below is the stored value or empty — never a fabricated
@@ -258,6 +335,17 @@ export class PharmacyService {
       reviewedBy: latestReq?.reviewer ?? null,
       submittedAt: latestReq?.createdAt ?? null,
       notes: latestReq?.notes || null,
+      // What the reviewer will see attached to this request, so the profile can
+      // say "licence.pdf, uploaded on…" instead of offering an empty control
+      // that hides a document already on file.
+      document: latestReq?.document
+        ? {
+            filename: latestReq.document.filename,
+            mimeType: latestReq.document.mimeType,
+            sizeBytes: latestReq.document.sizeBytes,
+            uploadedAt: latestReq.document.updatedAt,
+          }
+        : null,
     };
   }
 
@@ -313,6 +401,7 @@ export class PharmacyService {
       reviewedBy: pending?.reviewer ?? null,
       submittedAt: pending?.createdAt ?? null,
       notes: pending?.notes ?? null,
+      document: null,
     };
   }
 
@@ -362,6 +451,12 @@ export class PharmacyService {
     // Patients are given this number to confirm before travelling, so a new
     // pharmacy cannot be registered without one.
     const phone = normalizePhoneInput(dto.phone, submittedCountry);
+
+    // Read and checked before anything is written. A file this service cannot
+    // accept must fail the submission outright — filing a pharmacy for review
+    // and then failing to attach its licence would report success for a
+    // submission the reviewer cannot act on.
+    const document = dto.document?.content ? readVerificationDocument(dto.document) : null;
 
     // One physical pharmacy, one record. Checked before the insert, so the
     // second registration of a shop is refused rather than created and merged
@@ -454,6 +549,17 @@ export class PharmacyService {
       return pharmacy;
     });
 
+    // The document is attached to the request the transaction just filed. An
+    // unreadable file has already thrown out of readVerificationDocument before
+    // this point on the update path; here the profile exists first because the
+    // request it attaches to did not exist until a moment ago.
+    if (document) {
+      const requestId = await this.currentRequestId(created.id);
+      if (requestId) {
+        await this.storeVerificationDocument(requestId, created.id, user?.id ?? null, document);
+      }
+    }
+
     await this.auditWriter.write(
       user?.id ?? null,
       'pharmacy.profile.submit',
@@ -475,6 +581,9 @@ export class PharmacyService {
   ) {
     const existing = await this.prisma.pharmacy.findUnique({ where: { id: pharmacyId } });
     if (!existing) throw new NotFoundException('Pharmacy not found');
+
+    // Before any write, for the same reason as on first submit.
+    const document = dto.document?.content ? readVerificationDocument(dto.document) : null;
 
     const name = dto.name !== undefined ? dto.name.trim() : undefined;
     const licenseNumber = dto.licenseNumber !== undefined ? dto.licenseNumber.trim() : undefined;
@@ -582,6 +691,19 @@ export class PharmacyService {
       await this.submitForReview(updated, user, identityChanged);
     }
 
+    // Replaces the document on the open request, so a reviewer looking at a
+    // resubmitted profile sees the file that came with it rather than the one
+    // before the correction.
+    if (document) {
+      const requestId = await this.currentRequestId(pharmacyId);
+      if (!requestId) {
+        throw new BadRequestException(
+          'There is no open verification request to attach this document to. Save your profile first.',
+        );
+      }
+      await this.storeVerificationDocument(requestId, pharmacyId, user?.id ?? null, document);
+    }
+
     await this.auditWriter.write(
       user?.id ?? null,
       'pharmacy.profile.update',
@@ -598,6 +720,67 @@ export class PharmacyService {
     );
 
     return this.getProfile(pharmacyId, user);
+  }
+
+  /**
+   * Store the licence document against the pharmacy's open verification request.
+   *
+   * One document per request, replaced in place: a pharmacy that corrects its
+   * profile and re-uploads must not leave the reviewer choosing between two
+   * files. `docName` and `docUrl` on the request are the fields the Verification
+   * Center already reads — they were simply never written, which is why it
+   * showed "No document" and a dead link.
+   *
+   * `docUrl` is an authenticated API path, not a storage URL. There is nothing
+   * public to leak, and the bytes are only ever served by a route that checks
+   * the caller first.
+   */
+  private async storeVerificationDocument(
+    requestId: string,
+    pharmacyId: string | null,
+    uploadedById: string | null,
+    document: AcceptedDocument,
+  ) {
+    await this.prisma.verificationDocument.upsert({
+      where: { verificationRequestId: requestId },
+      create: {
+        verificationRequestId: requestId,
+        pharmacyId,
+        uploadedById,
+        filename: document.filename,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes,
+        data: document.data,
+      },
+      update: {
+        pharmacyId,
+        uploadedById,
+        filename: document.filename,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes,
+        data: document.data,
+      },
+    });
+
+    await this.prisma.verificationRequest.update({
+      where: { id: requestId },
+      data: {
+        docName: document.filename,
+        docUrl: `/admin/verification-requests/${requestId}/document`,
+      },
+    });
+
+    return document;
+  }
+
+  /** The open (or most recent) verification request for this pharmacy. */
+  private async currentRequestId(pharmacyId: string): Promise<string | null> {
+    const request = await this.prisma.verificationRequest.findFirst({
+      where: { pharmacyId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    return request?.id ?? null;
   }
 
   /**
@@ -761,20 +944,75 @@ export class PharmacyService {
     };
   }
 
+  /**
+   * Everything the portal's notification bell should show this account.
+   *
+   * Two sources, one list: the notifications addressed to this user, and the
+   * announcements an administrator broadcast to everybody. The broadcasts used
+   * to be fetched by the client from /admin/notifications — a SUPER_ADMIN route,
+   * so every pharmacy account silently got a 403 and saw none of them, while an
+   * admin browsing the portal saw all of them regardless of any preference.
+   *
+   * Both are filtered here, by the categories this account still wants. Doing it
+   * server-side is the point: a switch the client honours is a switch anyone can
+   * turn back on with devtools, and the unread count has to agree with the list.
+   */
   async getUserNotifications(userId: string) {
-    const list = await this.prisma.signalNotification.findMany({
-      where: { userId, dismissed: false, archived: false },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
-    return list.map((n) => ({
-      id: n.id,
-      type: notificationCategory(n),
-      title: n.title,
-      message: n.description,
-      when: this.timeAgo(n.createdAt),
-      unread: !n.read,
-    }));
+    const allowed = await this.notificationPreferences.allowedCategories(userId);
+
+    const [own, broadcasts] = await Promise.all([
+      this.prisma.signalNotification.findMany({
+        // Dismissed and archived rows stay out of the bell, as they already did:
+        // a preference decides what may arrive, not what the user has dealt with.
+        where: { userId, dismissed: false, archived: false },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+      // Only when the account still wants them — an announcement nobody may see
+      // is not worth reading out of the database.
+      allowed.has('system')
+        ? this.prisma.notification.findMany({
+            where: { status: NotificationStatus.DISPATCHED },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+          })
+        : Promise.resolve<Notification[]>([]),
+    ]);
+
+    const mine = own
+      .map((n) => ({
+        id: n.id,
+        category: notificationCategory(n),
+        title: n.title,
+        message: n.description,
+        createdAt: n.createdAt,
+        unread: !n.read,
+      }))
+      .filter((n) => allowed.has(n.category));
+
+    const announcements = broadcasts
+      .filter((n) => reachesPharmacyStaff(n.target))
+      .map((n) => ({
+        id: `broadcast-${n.id}`,
+        category: 'system' as NotificationCategory,
+        title: n.title,
+        message: n.message,
+        createdAt: n.createdAt,
+        // Broadcasts carry no per-user read state, so they read as unread. That
+        // is the behaviour the portal already had for them.
+        unread: true,
+      }));
+
+    return [...mine, ...announcements]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((n) => ({
+        id: n.id,
+        type: n.category,
+        title: n.title,
+        message: n.message,
+        when: this.timeAgo(n.createdAt),
+        unread: n.unread,
+      }));
   }
 
   // ---------------------------------------------------------------------------
@@ -1081,7 +1319,7 @@ export class PharmacyService {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [availabilitySignals, inventorySignals, auditLogs, savedMedsGroup] =
+    const [availabilitySignals, inventorySignals, auditLogs] =
       await Promise.all([
         this.prisma.availabilitySignal.findMany({
           where: { pharmacyId },
@@ -1114,10 +1352,6 @@ export class PharmacyService {
             ],
           },
           select: { createdAt: true, metadata: true },
-        }),
-        this.prisma.savedMedicine.groupBy({
-          by: ['medicineId'],
-          _count: { medicineId: true },
         }),
       ]);
 
@@ -1210,25 +1444,58 @@ export class PharmacyService {
     }));
 
     // 3. Frequently Requested Medicines
-    const savedMap = new Map<string, number>();
-    for (const item of savedMedsGroup) {
-      // Saves for medicines not yet in the catalog have no id to attribute
-      // demand to; they are counted once a pharmacy brings the medicine in.
-      if (!item.medicineId) continue;
-      savedMap.set(item.medicineId, item._count.medicineId);
-    }
+    //
+    // Demand is what patients actually searched for: SignalEvent SEARCH rows,
+    // which MeService and SearchService write with the MediBase identity the
+    // query resolved to. Matching is on that identity id, so "Dolo 650",
+    // "Dolo-650" and "dolo 650" are the same medicine here because they were
+    // the same medicine when the search resolved — no name-string comparison is
+    // involved at any point.
+    //
+    // This card used to rank the pharmacy's inventory by how many patients had
+    // SAVED each medicine — a different action, counted across the whole
+    // platform — and then showed the top five whatever the counts were. Since
+    // almost nothing is ever saved, every count was 0 and the five names were
+    // just the first five rows of the pharmacy's own inventory: real medicines,
+    // but nothing to do with demand.
+    //
+    // Scoped to identities this pharmacy currently stocks, so the report is
+    // isolated per pharmacy and a medicine removed from inventory drops out of
+    // it. Counts come from retained events (ZoikoSignal prunes raw events after
+    // its retention window), which makes this recent demand rather than
+    // all-time.
+    const stockedMedicineIds = availabilitySignals.map((signal) => signal.medicineId);
 
-    const requestedMeds = availabilitySignals.map((sig) => {
-      const savedCount = savedMap.get(sig.medicineId) || 0;
-      return {
-        id: sig.medicineId,
-        name: sig.medicine.canonicalName,
-        requests: savedCount,
-      };
-    });
+    const demand = stockedMedicineIds.length
+      ? await this.prisma.signalEvent.groupBy({
+          by: ['medicineId'],
+          where: {
+            type: SignalEventType.SEARCH,
+            medicineId: { in: stockedMedicineIds },
+          },
+          _count: { _all: true },
+        })
+      : [];
 
-    requestedMeds.sort((a, b) => b.requests - a.requests);
-    const frequentlyRequested = requestedMeds.slice(0, 5);
+    const stockedNameById = new Map(
+      availabilitySignals.map((signal) => [signal.medicineId, signal.medicine.canonicalName]),
+    );
+
+    const frequentlyRequested = demand
+      .map((row) => ({
+        id: row.medicineId as string,
+        name: stockedNameById.get(row.medicineId as string) ?? '',
+        // The field stays `requests` because that is what the card renders. See
+        // the note in the return value below on what it actually measures.
+        requests: row._count._all,
+      }))
+      // A medicine with no searches is not "frequently requested" — the card is
+      // a demand list, and padding it to five with zeros is what made it read
+      // as inventory rather than demand. With none, the page shows its existing
+      // "No medicine requests recorded" state.
+      .filter((entry) => entry.name && entry.requests > 0)
+      .sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name))
+      .slice(0, 5);
 
     // 4. Update Activity
     const updateActivity = days.map((day) => ({
@@ -1239,6 +1506,12 @@ export class PharmacyService {
     return {
       statusBreakdown,
       availabilityTrend: hasTrendHistory ? availabilityTrend : [],
+      // Named "requests" because that is the card's wording, but the number is
+      // a count of patient SEARCHES for the medicine. The platform records no
+      // separate "request this medicine" action — there is no such button and
+      // no such event — so searches are the demand signal that exists. If the
+      // product wants a distinct request action, that is a new event type and a
+      // new control, not a rename of this one.
       frequentlyRequested,
       updateActivity,
       hasTrendData: hasTrendHistory,
@@ -1786,6 +2059,29 @@ export class PharmacyService {
       rawRows = input;
     }
 
+    // Every status is read before anything is written.
+    //
+    // A cell this product has no status for is a mistake in the file, not a
+    // value to default: the importer used to fall back to "available", so a
+    // typo — or the perfectly ordinary "out of stock" it did not recognise —
+    // published a medicine to patients as in stock. Refusing the whole file
+    // rather than skipping the row matters most in replace mode, where a row
+    // dropped from the import is a medicine pruned from the inventory.
+    const badStatuses: string[] = [];
+    rawRows.forEach((row, index) => {
+      const cell = row?.status ?? row?.availability ?? '';
+      if (String(cell).trim() && !normalizeInventoryStatus(cell)) {
+        badStatuses.push(`row ${index + 2}: "${String(cell).trim()}"`);
+      }
+    });
+    if (badStatuses.length > 0) {
+      const shown = badStatuses.slice(0, 5).join(', ');
+      const more = badStatuses.length > 5 ? ` and ${badStatuses.length - 5} more` : '';
+      throw new BadRequestException(
+        `Unrecognised status in the CSV (${shown}${more}). Use available, limited stock, or out of stock. Nothing was imported.`,
+      );
+    }
+
     let imported = 0;
     let updated = 0;
     let skipped = 0;
@@ -1821,9 +2117,12 @@ export class PharmacyService {
       const generic = row.generic || row.genericName || '';
       const strength = row.strength || '';
       const dosageForm = row.dosageform || row.dosageForm || row.form || 'Tablet';
-      const statusRaw = (row.status || row.availability || 'available').toLowerCase();
-      const confidence = STATUS_TO_CONFIDENCE[statusRaw] || AvailabilityConfidence.HIGH;
-      const reportedInStock = statusRaw !== 'out-of-stock';
+      // Validated above, so an unrecognised value never reaches here. An empty
+      // cell still means available — that is the documented default, and the
+      // only case a default is correct.
+      const status = normalizeInventoryStatus(row.status ?? row.availability) ?? 'available';
+      const confidence = STATUS_TO_CONFIDENCE[status];
+      const reportedInStock = status !== 'out-of-stock';
 
       try {
         let medicine = medicineIdColumn

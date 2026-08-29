@@ -25,7 +25,9 @@ export class ScanController {
   @Get('vision-status')
   @ApiOperation({ summary: 'Is the AI/Vision prescription fallback configured?' })
   status() {
-    return { available: this.vision.isEnabled() };
+    // `reason` is present only when unavailable, and describes the configuration
+    // rather than quoting it. The client keys off `available` alone.
+    return this.vision.availability();
   }
 
   @Post('vision-extract')

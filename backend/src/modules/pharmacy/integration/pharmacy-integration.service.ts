@@ -207,21 +207,67 @@ export class PharmacyIntegrationService {
     const enabled = dto.enabled ?? existing?.enabled ?? true;
     const syncMode = dto.syncMode === 'replace' ? 'replace' : 'merge';
 
-    // An omitted header value keeps whatever is stored; an empty string clears
-    // it. Without that distinction the portal could not re-save the form
-    // without either re-typing the credential or silently wiping it.
-    let authHeaderSecret = existing?.authHeaderSecret ?? null;
-    if (dto.authHeaderValue !== undefined) {
-      authHeaderSecret = dto.authHeaderValue ? seal(dto.authHeaderValue) : null;
-    }
-    const authHeaderName =
-      dto.authHeaderName !== undefined
-        ? dto.authHeaderName || null
-        : (existing?.authHeaderName ?? null);
-    if (authHeaderSecret && !authHeaderName) {
-      throw new BadRequestException(
-        'Name the header the feed expects (for example "Authorization") alongside its value.',
-      );
+    // Normalize header name (trimmed) and value (exact string if non-whitespace, else undefined)
+    const normalizedHeaderName =
+      typeof dto.authHeaderName === 'string' &&
+      dto.authHeaderName.trim().length > 0
+        ? dto.authHeaderName.trim()
+        : undefined;
+
+    const normalizedHeaderValue =
+      typeof dto.authHeaderValue === 'string' &&
+      dto.authHeaderValue.trim().length > 0
+        ? dto.authHeaderValue
+        : undefined;
+
+    let authHeaderName: string | null = null;
+    let authHeaderSecret: string | null = null;
+
+    if (direction === IntegrationDirection.PULL) {
+      if (!existing || (!existing.authHeaderName && !existing.authHeaderSecret)) {
+        // New integration or existing without auth header configured
+        if (normalizedHeaderName && normalizedHeaderValue) {
+          authHeaderName = normalizedHeaderName;
+          authHeaderSecret = seal(normalizedHeaderValue);
+        } else if (normalizedHeaderName && !normalizedHeaderValue) {
+          throw new BadRequestException(
+            'Auth header value is required when an auth header name is provided.',
+          );
+        } else if (!normalizedHeaderName && normalizedHeaderValue) {
+          throw new BadRequestException(
+            'Auth header name is required when an auth header value is provided.',
+          );
+        } else {
+          authHeaderName = null;
+          authHeaderSecret = null;
+        }
+      } else {
+        // Existing integration with an active auth header
+        if (normalizedHeaderName) {
+          if (normalizedHeaderValue) {
+            authHeaderName = normalizedHeaderName;
+            authHeaderSecret = seal(normalizedHeaderValue);
+          } else {
+            if (normalizedHeaderName === existing.authHeaderName) {
+              authHeaderName = existing.authHeaderName;
+              authHeaderSecret = existing.authHeaderSecret;
+            } else {
+              throw new BadRequestException(
+                'Auth header value is required when changing the auth header name.',
+              );
+            }
+          }
+        } else {
+          if (normalizedHeaderValue) {
+            throw new BadRequestException(
+              'Auth header name is required when an auth header value is provided.',
+            );
+          } else {
+            authHeaderName = existing.authHeaderName;
+            authHeaderSecret = existing.authHeaderSecret;
+          }
+        }
+      }
     }
 
     const data = {
@@ -229,9 +275,8 @@ export class PharmacyIntegrationService {
       direction,
       enabled,
       feedUrl: direction === IntegrationDirection.PULL ? feedUrl : null,
-      authHeaderName: direction === IntegrationDirection.PULL ? authHeaderName : null,
-      authHeaderSecret:
-        direction === IntegrationDirection.PULL ? authHeaderSecret : null,
+      authHeaderName,
+      authHeaderSecret,
       syncMode,
       intervalMinutes,
       nextSyncAt:

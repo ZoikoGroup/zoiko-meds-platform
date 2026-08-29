@@ -105,3 +105,64 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...base, NODE_ENV: 'staging' })).toThrow(/NODE_ENV/);
   });
 });
+
+// Assisted reading (prescription scan). Optional by design: a deployment
+// without a key is a valid deployment, and the scan surface simply does not
+// offer the fallback. Only a value that is present and malformed is an error,
+// because that is a typo somebody meant to work.
+describe('validateEnv — scan assisted reading', () => {
+  it('accepts a config with no vision settings at all', () => {
+    expect(() => validateEnv({ ...base })).not.toThrow();
+  });
+
+  it('does not require an API key, even in production', () => {
+    // Hard-failing the whole API over an optional fallback would take the
+    // platform down for a feature it can run perfectly well without.
+    expect(() => validateEnv({ ...prodBase })).not.toThrow();
+  });
+
+  it('accepts a fully configured vision setup', () => {
+    expect(() =>
+      validateEnv({
+        ...base,
+        ANTHROPIC_API_KEY: 'sk-ant-test-key',
+        SCAN_VISION_ENABLED: 'true',
+        SCAN_VISION_MODEL: 'claude-opus-5',
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts the feature being switched off explicitly', () => {
+    expect(() => validateEnv({ ...base, SCAN_VISION_ENABLED: 'false' })).not.toThrow();
+  });
+
+  it('rejects a SCAN_VISION_ENABLED that is neither true nor false', () => {
+    expect(() => validateEnv({ ...base, SCAN_VISION_ENABLED: 'yes' })).toThrow(
+      /SCAN_VISION_ENABLED must be "true" or "false"/,
+    );
+  });
+
+  it('rejects a model name that is only whitespace', () => {
+    expect(() => validateEnv({ ...base, SCAN_VISION_MODEL: '   ' })).toThrow(
+      /SCAN_VISION_MODEL must name a model/,
+    );
+  });
+
+  it('rejects an API key that is only whitespace', () => {
+    expect(() => validateEnv({ ...base, ANTHROPIC_API_KEY: '   ' })).toThrow(
+      /ANTHROPIC_API_KEY is set to whitespace/,
+    );
+  });
+
+  it('never echoes the key into the error message', () => {
+    // An invalid value must not be quoted back the way other settings are —
+    // errors reach logs.
+    const secret = 'sk-ant-super-secret-value';
+    try {
+      validateEnv({ ...base, ANTHROPIC_API_KEY: secret, SCAN_VISION_ENABLED: 'nope' });
+      throw new Error('expected validation to fail');
+    } catch (err) {
+      expect((err as Error).message).not.toContain(secret);
+    }
+  });
+});

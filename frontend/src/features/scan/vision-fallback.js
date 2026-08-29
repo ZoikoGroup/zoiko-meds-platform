@@ -16,6 +16,26 @@ import { apiFetch } from '@/lib/api-client'
 export const MAX_FALLBACK_IMAGES = 4
 
 /**
+ * How long to wait for assisted reading before giving up.
+ *
+ * The request crosses a proxy and then a vision model, so it is slow by nature —
+ * but it had no deadline at all, and a stalled one left the scanner sitting on
+ * its spinner with no way out but a reload. Long enough for a genuine four-page
+ * read, short enough that a stuck request is returned to the user as something
+ * they can retry.
+ */
+export const VISION_TIMEOUT_MS = 60_000
+
+/** Raised when assisted reading ran out of time. Retryable, and says so. */
+export class VisionTimeoutError extends Error {
+  constructor() {
+    super('Assisted reading took too long to respond. Please try again.')
+    this.name = 'VisionTimeoutError'
+    this.retryable = true
+  }
+}
+
+/**
  * Is the fallback configured on this deployment? Returns false rather than
  * throwing when the endpoint is missing or the API key is unset, so the UI can
  * simply not offer it.
@@ -36,14 +56,29 @@ export async function isVisionFallbackAvailable() {
  * @returns {Promise<Array<{ name: string, genericName?: string, strength?: string,
  *   form?: string, frequency?: string, confidence: number }>>}
  */
-export async function extractWithVision(images) {
+export async function extractWithVision(images, { timeoutMs = VISION_TIMEOUT_MS } = {}) {
   const payload = (images ?? []).filter(Boolean).slice(0, MAX_FALLBACK_IMAGES)
   if (!payload.length) return []
 
-  const response = await apiFetch('/scan/vision-extract', {
-    method: 'POST',
-    body: { images: payload },
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  let response
+  try {
+    response = await apiFetch('/scan/vision-extract', {
+      method: 'POST',
+      body: { images: payload },
+      signal: controller.signal,
+    })
+  } catch (err) {
+    // Distinguish our own deadline from the API refusing: one is worth
+    // retrying as-is, the other is not.
+    if (err?.name === 'AbortError') throw new VisionTimeoutError()
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+
   return Array.isArray(response?.medicines) ? response.medicines : []
 }
 

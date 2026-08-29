@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { bestSimilarity, foldConfusions, levenshtein, similarity } from '../text-normalize'
+import {
+  bestSimilarity,
+  containsName,
+  foldConfusions,
+  levenshtein,
+  repairStrengthText,
+  similarity,
+} from '../text-normalize'
 
 describe('OCR error correction', () => {
   it('treats capital-I / lowercase-l / digit-1 as the same glyph', () => {
@@ -49,5 +56,85 @@ describe('levenshtein', () => {
     expect(levenshtein('kitten', 'sitting')).toBe(3)
     expect(levenshtein('', 'abc')).toBe(3)
     expect(levenshtein('same', 'same')).toBe(0)
+  })
+})
+
+describe('containsName — the shortcut that must not fire on noise', () => {
+  it('accepts a substantial whole-token containment', () => {
+    // The case the shortcut exists for: a generic inside a combination name.
+    expect(containsName('amoxicillin', 'Amoxicillin Clavulanate')).toBe(true)
+    expect(containsName('Dolo', 'Dolo 650')).toBe(true)
+  })
+
+  it('refuses a three-letter OCR fragment against a longer medicine', () => {
+    // "Pan" satisfied includes() against every catalog entry containing those
+    // letters, and the caller then promoted it to 0.95 — a garbled reading
+    // presented as a confident, and different, medicine.
+    expect(containsName('Pan', 'Pantoprazole')).toBe(false)
+    expect(containsName('Met', 'Metformin')).toBe(false)
+    expect(containsName('Ome', 'Omeprazole')).toBe(false)
+  })
+
+  it('refuses a short fragment even when it IS a whole token of the reference', () => {
+    expect(containsName('Pan', 'Pan 40')).toBe(false)
+  })
+
+  it('refuses a prefix that is not a whole token', () => {
+    // "Amox" is four characters, so length alone would let it through; it is
+    // still only part of a word OCR did not finish reading.
+    expect(containsName('Amox', 'Amoxicillin')).toBe(false)
+  })
+
+  it('guards the candidate as well as the reference', () => {
+    // Previously only the reference was length-checked, so the guard missed
+    // the side that actually came from OCR.
+    expect(containsName('Pan', 'Pan')).toBe(true) // identical is still identical
+    expect(containsName('Pan', 'Panadol Extra')).toBe(false)
+  })
+
+  it('can be lowered by a caller holding corroborating evidence', () => {
+    expect(containsName('Pan 40', 'Pan 40 mg', { minChars: 3 })).toBe(true)
+  })
+
+  it('is symmetric', () => {
+    expect(containsName('Amoxicillin Clavulanate', 'amoxicillin')).toBe(true)
+  })
+})
+
+describe('repairStrengthText — OCR damage inside a dose', () => {
+  it('reads a letter O back as a zero', () => {
+    expect(repairStrengthText('Paracetamol 65O mg')).toBe('Paracetamol 650 mg')
+  })
+
+  it('reads the rn ligature back as an m', () => {
+    expect(repairStrengthText('Paracetamol 650 rng')).toBe('Paracetamol 650 mg')
+  })
+
+  it('handles both at once', () => {
+    expect(repairStrengthText('65O rng')).toBe('650 mg')
+  })
+
+  it('repairs l/I/S inside a number that already has digits', () => {
+    expect(repairStrengthText('Amoxicillin 5OO mg')).toBe('Amoxicillin 500 mg')
+    expect(repairStrengthText('Cetirizine 1O mg')).toBe('Cetirizine 10 mg')
+  })
+
+  it('refuses to invent a number from letters alone', () => {
+    // No digit in the run means no evidence of a number — a guess here would
+    // put a dose on the page that nobody wrote.
+    expect(repairStrengthText('OO mg')).toBe('OO mg')
+    expect(repairStrengthText('SOS ml')).toBe('SOS ml')
+  })
+
+  it('leaves the medicine name alone', () => {
+    // The repair is scoped to a numeric run before a unit; a name that happens
+    // to contain those letters must not be rewritten.
+    expect(repairStrengthText('Losartan 50 mg')).toBe('Losartan 50 mg')
+    expect(repairStrengthText('Iron Folic Acid')).toBe('Iron Folic Acid')
+  })
+
+  it('leaves text with no strength untouched', () => {
+    expect(repairStrengthText('Tab Amoxicillin BD')).toBe('Tab Amoxicillin BD')
+    expect(repairStrengthText('')).toBe('')
   })
 })
