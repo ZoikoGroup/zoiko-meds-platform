@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Ip,
   Param,
   Patch,
   Post,
@@ -59,8 +60,9 @@ export class VerificationController {
   create(
     @CurrentUser('id') actorId: string,
     @Body() dto: CreateVerificationDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.verification.create(actorId, dto);
+    return this.verification.create(actorId, dto, ipAddress);
   }
 
   @Patch(':id')
@@ -69,7 +71,8 @@ export class VerificationController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdateVerificationDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.verification.update(actorId, id, dto);
+    return this.verification.update(actorId, id, dto, ipAddress);
   }
 }

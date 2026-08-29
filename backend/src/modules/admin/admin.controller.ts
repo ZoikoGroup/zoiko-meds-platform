@@ -143,8 +143,12 @@ export class AdminController {
 
   @Post('users')
   @ApiOperation({ summary: 'Create a user with any role' })
-  createUser(@CurrentUser('id') actorId: string, @Body() dto: CreateUserDto) {
-    return this.admin.createUser(actorId, dto);
+  createUser(
+    @CurrentUser('id') actorId: string,
+    @Body() dto: CreateUserDto,
+    @Ip() ipAddress: string,
+  ) {
+    return this.admin.createUser(actorId, dto, ipAddress);
   }
 
   @Get('users/:id')
@@ -159,8 +163,9 @@ export class AdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.admin.updateUser(actorId, id, dto);
+    return this.admin.updateUser(actorId, id, dto, ipAddress);
   }
 
   @Patch('users/:id/role')
@@ -169,8 +174,9 @@ export class AdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdateRoleDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.admin.setRole(actorId, id, dto.role);
+    return this.admin.setRole(actorId, id, dto.role, ipAddress);
   }
 
   @Post('users/:id/password')
@@ -179,26 +185,39 @@ export class AdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: ResetPasswordDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.admin.resetPassword(actorId, id, dto.password);
+    return this.admin.resetPassword(actorId, id, dto.password, ipAddress);
   }
 
   @Post('users/:id/activate')
   @ApiOperation({ summary: 'Reactivate a user' })
-  activate(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.admin.setActive(actorId, id, true);
+  activate(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.admin.setActive(actorId, id, true, ipAddress);
   }
 
   @Post('users/:id/deactivate')
   @ApiOperation({ summary: 'Deactivate (suspend) a user' })
-  deactivate(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.admin.setActive(actorId, id, false);
+  deactivate(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.admin.setActive(actorId, id, false, ipAddress);
   }
 
   @Delete('users/:id')
   @ApiOperation({ summary: 'Permanently delete a user' })
-  deleteUser(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.admin.deleteUser(actorId, id);
+  deleteUser(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.admin.deleteUser(actorId, id, ipAddress);
   }
 
   @Get('roles')

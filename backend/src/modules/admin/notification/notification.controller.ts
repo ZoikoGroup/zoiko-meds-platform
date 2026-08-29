@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   Post,
   UseGuards,
@@ -37,14 +38,19 @@ export class NotificationController {
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateNotificationDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.notifications.create(user.id, user.email, dto);
+    return this.notifications.create(user.id, user.email, dto, ipAddress);
   }
 
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  remove(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.notifications.remove(actorId, id);
+  remove(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.notifications.remove(actorId, id, ipAddress);
   }
 }

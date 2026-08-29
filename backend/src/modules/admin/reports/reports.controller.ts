@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   Post,
   UseGuards,
@@ -36,20 +37,29 @@ export class ReportsController {
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateReportDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.reports.create(user.id, user.email, dto);
+    return this.reports.create(user.id, user.email, dto, ipAddress);
   }
 
   @Post(':id/duplicate')
   @ApiOperation({ summary: 'Duplicate an existing report' })
-  duplicate(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.reports.duplicate(user.id, user.email, id);
+  duplicate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.reports.duplicate(user.id, user.email, id, ipAddress);
   }
 
   @Get(':id/download')
   @ApiOperation({ summary: 'Download a report as a governed export payload' })
-  download(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.reports.download(actorId, id);
+  download(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.reports.download(actorId, id, ipAddress);
   }
 
   @Get(':id')
@@ -60,7 +70,11 @@ export class ReportsController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a report' })
-  remove(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.reports.remove(actorId, id);
+  remove(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.reports.remove(actorId, id, ipAddress);
   }
 }

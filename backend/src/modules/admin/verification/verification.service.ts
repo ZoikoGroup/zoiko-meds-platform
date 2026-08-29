@@ -66,7 +66,7 @@ export class VerificationService {
     return rows.map((r) => this.toDto(r));
   }
 
-  async create(actorId: string, dto: CreateVerificationDto) {
+  async create(actorId: string, dto: CreateVerificationDto, ipAddress?: string) {
     let pharmacyId = dto.pharmacyId || null;
     if (!pharmacyId && dto.licenseNumber) {
       const match = await this.prisma.pharmacy.findFirst({
@@ -91,11 +91,17 @@ export class VerificationService {
       'VerificationRequest',
       req.id,
       { pharmacy: req.pharmacyName },
+      ipAddress,
     );
     return this.toDto(req);
   }
 
-  async update(actorId: string, id: string, dto: UpdateVerificationDto) {
+  async update(
+    actorId: string,
+    id: string,
+    dto: UpdateVerificationDto,
+    ipAddress?: string,
+  ) {
     const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.verificationRequest.findUnique({
         where: { id },
@@ -272,6 +278,7 @@ export class VerificationService {
       'VerificationRequest',
       id,
       { pharmacy: result.pharmacyName, status: result.status },
+      ipAddress,
     );
     return this.toDto(result);
   }

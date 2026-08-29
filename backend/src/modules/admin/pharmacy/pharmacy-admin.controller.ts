@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   Patch,
   Post,
@@ -37,14 +38,22 @@ export class PharmacyAdminController {
 
   @Post()
   @ApiOperation({ summary: 'Register a pharmacy (starts PENDING)' })
-  create(@CurrentUser('id') actorId: string, @Body() dto: CreatePharmacyDto) {
-    return this.pharmacies.create(actorId, dto);
+  create(
+    @CurrentUser('id') actorId: string,
+    @Body() dto: CreatePharmacyDto,
+    @Ip() ipAddress: string,
+  ) {
+    return this.pharmacies.create(actorId, dto, ipAddress);
   }
 
   @Post('bulk-status')
   @ApiOperation({ summary: 'Set verification status on many pharmacies' })
-  bulk(@CurrentUser('id') actorId: string, @Body() dto: BulkStatusDto) {
-    return this.pharmacies.bulkSetStatus(actorId, dto.ids, dto.status);
+  bulk(
+    @CurrentUser('id') actorId: string,
+    @Body() dto: BulkStatusDto,
+    @Ip() ipAddress: string,
+  ) {
+    return this.pharmacies.bulkSetStatus(actorId, dto.ids, dto.status, ipAddress);
   }
 
   @Get(':id')
@@ -57,24 +66,37 @@ export class PharmacyAdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdatePharmacyDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.pharmacies.update(actorId, id, dto);
+    return this.pharmacies.update(actorId, id, dto, ipAddress);
   }
 
   @Post(':id/verify')
   @ApiOperation({ summary: 'Mark a pharmacy VERIFIED' })
-  verify(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.pharmacies.setStatus(actorId, id, VerificationStatus.VERIFIED);
+  verify(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.pharmacies.setStatus(actorId, id, VerificationStatus.VERIFIED, ipAddress);
   }
 
   @Post(':id/suspend')
   @ApiOperation({ summary: 'Mark a pharmacy SUSPENDED' })
-  suspend(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.pharmacies.setStatus(actorId, id, VerificationStatus.SUSPENDED);
+  suspend(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.pharmacies.setStatus(actorId, id, VerificationStatus.SUSPENDED, ipAddress);
   }
 
   @Delete(':id')
-  remove(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.pharmacies.remove(actorId, id);
+  remove(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.pharmacies.remove(actorId, id, ipAddress);
   }
 }
