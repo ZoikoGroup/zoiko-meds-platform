@@ -52,9 +52,10 @@ export default function Governance() {
           <p className="text-base text-muted-foreground">
             Every function below is anchored to published standards in the
             ZoikoMeds{' '}
-            {/* Trust Center is a placeholder route until the trust site ships. */}
             <a
-              href="#trust-center"
+              href="https://zoikomeds.com/trust-center"
+              target="_blank"
+              rel="noopener noreferrer"
               className="font-medium text-teal underline-offset-4 hover:underline"
             >
               Trust Center
@@ -108,7 +109,7 @@ export default function Governance() {
                   </p>
                   <Badge
                     variant="outline"
-                    className="mt-1 border-teal/40 text-teal"
+                    className="mt-1 w-fit max-w-full whitespace-normal text-left border-teal/40 text-teal"
                   >
                     {f.tag}
                   </Badge>
@@ -134,7 +135,7 @@ export default function Governance() {
               </p>
             </div>
           </div>
-          <div className="grid flex-1 grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid flex-1 grid-cols-2 gap-5 sm:grid-cols-3">
             {governanceStandards.map((s) => {
               const Icon = s.icon
               return (
@@ -163,7 +164,7 @@ export default function Governance() {
 
       {/* Governance in detail — CTA band */}
       <Card className="relative overflow-hidden border-primary/15 bg-gradient-to-br from-primary/[0.06] to-teal/[0.07] p-6 sm:p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-6 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
           <div className="flex items-start gap-4 lg:gap-5">
             <span className="hidden size-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-teal text-white shadow-sm sm:flex">
               <ShieldCheck className="size-7" />
@@ -180,15 +181,19 @@ export default function Governance() {
             </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row lg:shrink-0">
-            <Button variant="teal" size="lg">
-              <BookOpen />
-              Visit the Trust Center
-              <ChevronRight />
+            <Button asChild variant="teal" size="lg">
+              <a href="https://zoikomeds.com/trust-center" target="_blank" rel="noopener noreferrer">
+                <BookOpen />
+                Visit the Trust Center
+                <ChevronRight />
+              </a>
             </Button>
-            <Button variant="outline" size="lg">
-              <ScanSearch />
-              Request Security &amp; Procurement Review
-              <ChevronRight />
+            <Button asChild variant="outline" size="lg">
+              <a href="mailto:info@zoikomeds.com?subject=Security%20%26%20Procurement%20Review%20Request">
+                <ScanSearch />
+                Request Security &amp; Procurement Review
+                <ChevronRight />
+              </a>
             </Button>
           </div>
         </div>
