@@ -55,6 +55,32 @@ class HealthController {
   @Get() check() {}
 }
 
+/**
+ * Two controllers sharing the "admin" namespace but not its guard — the
+ * MSA-47 scenario. Grouping by the first path segment alone merged these,
+ * so a broadcast list any signed-in role can reach made the matrix claim
+ * every role could reach AdminOnlyController's SUPER_ADMIN-only routes too.
+ */
+@Controller('admin/notifications')
+@UseGuards(JwtAuthGuard)
+class BroadcastNotificationsController {
+  @Get() list() {}
+}
+
+@Controller('medibase/admin/medicines')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+class MedibaseAdminMedicinesController {
+  @Get() list() {}
+}
+
+@Controller('medibase/admin/catalog')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+class MedibaseAdminCatalogController {
+  @Get('overview') overview() {}
+}
+
 function serviceFor(controllers: Function[]) {
   const discovery = {
     getControllers: () =>
@@ -141,5 +167,36 @@ describe('RoleCapabilitiesService', () => {
 
     const labels = matrix.capabilities.map((c) => c.label);
     expect(labels).toEqual([...labels].sort((a, b) => a.localeCompare(b)));
+  });
+
+  // MSA-47: two controllers sharing a namespace but not a guard were merged
+  // into one row, so a broadcast list any signed-in role can reach made the
+  // matrix claim every role could reach a SUPER_ADMIN-only controller too.
+  it('keeps controllers under a shared namespace as separate rows when their guards differ', () => {
+    const matrix = serviceFor([AdminOnlyController, BroadcastNotificationsController]).matrix();
+
+    const admin = find(matrix, 'admin');
+    const notifications = find(matrix, 'admin/notifications');
+
+    expect(admin?.roles).toEqual(['SUPER_ADMIN']);
+    expect(admin?.routes).toBe(2);
+    // Any signed-in role — but not PUBLIC's unauthenticated cousin: the route
+    // still requires a JWT, just no specific role.
+    expect(notifications?.roles).toHaveLength(7);
+    expect(notifications?.hasPublicRoutes).toBe(false);
+  });
+
+  it('merges an aliased prefix into the capability it is the same as', () => {
+    const matrix = serviceFor([
+      MedibaseAdminMedicinesController,
+      MedibaseAdminCatalogController,
+    ]).matrix();
+
+    const admin = find(matrix, 'medibase/admin/medicines');
+
+    expect(find(matrix, 'medibase/admin/catalog')).toBeUndefined();
+    expect(admin?.routes).toBe(2);
+    expect(admin?.roles).toEqual(['ADMIN', 'SUPER_ADMIN']);
+    expect(admin?.label).toBe('MediBase administration');
   });
 });
