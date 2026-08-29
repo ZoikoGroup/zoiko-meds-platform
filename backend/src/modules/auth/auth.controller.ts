@@ -28,7 +28,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { GoogleOAuthGuard, MicrosoftOAuthGuard } from './guards/oauth.guard';
+import { GoogleOAuthGuard } from './guards/oauth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { OAuthProfile } from './oauth-profile';
 import { MfaService } from './mfa/mfa.service';
@@ -131,7 +131,7 @@ export class AuthController {
     return this.auth.login(dto, ipAddress, userAgent);
   }
 
-  // --- OAuth (Google, Microsoft) ------------------------------------------
+  // --- OAuth (Google) -------------------------------------------------------
   // Full-page browser flow: the SPA navigates the browser to /auth/<provider>,
   // the provider redirects back to /auth/<provider>/callback, and we bounce the
   // browser to the frontend with a short-lived JWT in the query string.
@@ -147,25 +147,6 @@ export class AuthController {
   @UseGuards(GoogleOAuthGuard)
   @ApiExcludeEndpoint()
   async googleCallback(
-    @Req() req: Request,
-    @Res() res: Response,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-  ) {
-    await this.completeOAuth(req, res, ipAddress, userAgent);
-  }
-
-  @Get('microsoft')
-  @UseGuards(MicrosoftOAuthGuard)
-  @ApiOperation({ summary: 'Begin Microsoft OAuth sign-in (browser redirect)' })
-  microsoftAuth() {
-    // The guard redirects to Microsoft; this body never runs.
-  }
-
-  @Get('microsoft/callback')
-  @UseGuards(MicrosoftOAuthGuard)
-  @ApiExcludeEndpoint()
-  async microsoftCallback(
     @Req() req: Request,
     @Res() res: Response,
     @Ip() ipAddress: string,

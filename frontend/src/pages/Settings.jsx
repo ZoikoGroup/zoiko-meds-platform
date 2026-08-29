@@ -66,12 +66,6 @@ import {
   revokeApiKey,
 } from '@/services/admin-api'
 import { useFlash } from '@/components/shared/flash'
-import {
-  getMfaStatus,
-  beginMfaSetup,
-  confirmMfaSetup,
-  disableMfa,
-} from '@/services/auth-api'
 import { useAuth } from '@/providers/auth-provider'
 import { initials, formatRelative } from '@/utils/format'
 
@@ -456,191 +450,6 @@ function MembersPanel() {
 }
 
 /**
- * Enrol this account in two-factor authentication (MSA-42).
- *
- * Two steps, because that is what the API does: setup mints a secret and hands
- * back the URI to scan, confirm proves a code against it. Nothing is required of
- * the account until a code has been confirmed, so opening this panel and closing
- * the tab changes nothing.
- */
-function MfaCard() {
-  const [status, setStatus] = useState(null)
-  const [setup, setSetup] = useState(null)
-  const [code, setCode] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [flashMsg, flash] = useFlash()
-
-  const load = useCallback(async () => {
-    try {
-      setStatus(await getMfaStatus())
-    } catch (err) {
-      setError(err?.message || 'Could not read two-factor status.')
-    }
-  }, [])
-
-  useEffect(() => { void load() }, [load])
-
-  const begin = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      setSetup(await beginMfaSetup())
-    } catch (err) {
-      setError(err?.message || 'Could not start setup.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const confirm = async (e) => {
-    e.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await confirmMfaSetup(code)
-      setSetup(null)
-      setCode('')
-      await load()
-      flash('Two-factor authentication is on for your account')
-    } catch (err) {
-      setError(err?.message || 'That code was not accepted.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const turnOff = async (e) => {
-    e.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await disableMfa(code)
-      setCode('')
-      await load()
-      flash('Two-factor authentication is off for your account')
-    } catch (err) {
-      setError(err?.message || 'Could not turn it off.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Your two-factor authentication</CardTitle>
-        <CardDescription>
-          A code from an authenticator app, asked for after your password.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {flashMsg && <p className="text-xs font-medium text-success">{flashMsg}</p>}
-        {error && (
-          <p role="alert" className="flex items-start gap-2 text-xs font-medium text-danger">
-            <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            {error}
-          </p>
-        )}
-
-        {status === null ? (
-          <span className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading…
-          </span>
-        ) : status.enrolled ? (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <StatusBadge tone="good" size="sm">On</StatusBadge>
-              <span className="text-xs text-muted-foreground">
-                Enrolled {formatRelative(status.enrolledAt) || 'recently'}
-              </span>
-            </div>
-            {status.required ? (
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                This workspace requires two-factor authentication, so it cannot be turned
-                off here.
-              </p>
-            ) : (
-              <form onSubmit={turnOff} className="flex flex-wrap items-end gap-2">
-                <div className="flex min-w-40 flex-1 flex-col gap-1.5">
-                  <Label htmlFor="mfa-off-code">Enter a current code to turn it off</Label>
-                  <Input
-                    id="mfa-off-code"
-                    inputMode="numeric"
-                    maxLength={7}
-                    placeholder="123456"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    className="font-mono tracking-widest"
-                  />
-                </div>
-                <Button type="submit" variant="outline" size="sm" disabled={busy || !code}>
-                  Turn off
-                </Button>
-              </form>
-            )}
-          </>
-        ) : setup ? (
-          <form onSubmit={confirm} className="flex flex-col gap-3">
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Add this to your authenticator app, then enter the code it shows.
-            </p>
-            {/* The key in text as well as the URI: not every environment can
-                scan, and the secret is the only way in without a camera. */}
-            <code className="break-all rounded-lg bg-muted px-3 py-2 font-mono text-xs">
-              {setup.secret}
-            </code>
-            <a
-              href={setup.otpauthUri}
-              className="w-fit text-xs font-medium text-primary underline underline-offset-2"
-            >
-              Open in your authenticator app
-            </a>
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex min-w-40 flex-1 flex-col gap-1.5">
-                <Label htmlFor="mfa-code">Code from the app</Label>
-                <Input
-                  id="mfa-code"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={7}
-                  placeholder="123456"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  className="font-mono tracking-widest"
-                />
-              </div>
-              <Button type="submit" size="sm" disabled={busy || !code}>
-                {busy && <Loader2 className="size-4 animate-spin" />}
-                Confirm
-              </Button>
-            </div>
-          </form>
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-col gap-1">
-              <StatusBadge tone={status.required ? 'critical' : 'serious'} size="sm">
-                Off
-              </StatusBadge>
-              {status.required && (
-                <span className="text-xs text-danger">
-                  This workspace requires it. You will not be able to sign in again until
-                  you set it up.
-                </span>
-              )}
-            </div>
-            <Button size="sm" onClick={begin} disabled={busy}>
-              {busy && <Loader2 className="size-4 animate-spin" />}
-              Set up
-            </Button>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-/**
  * What the platform enforces about sign-in, and the parts of it this page can
  * decide (MSA-42).
  *
@@ -723,6 +532,9 @@ function SecurityPanel() {
   }
 
   const allowlistEnabled = controls.find((c) => c.id === 'ip-allowlist')?.enabled
+  // 2FA is not managed from this console — filtered out rather than rendered
+  // as a switch with no enrollment flow behind it.
+  const visibleControls = controls.filter((c) => c.id !== 'mfa')
 
   return (
     <div className="flex flex-col gap-5">
@@ -743,7 +555,7 @@ function SecurityPanel() {
               {error}
             </p>
           )}
-          {controls.map((c, i) => (
+          {visibleControls.map((c, i) => (
             <div key={c.id}>
               <div className="flex items-start justify-between gap-4 py-3">
                 <div className="min-w-0">
@@ -764,7 +576,7 @@ function SecurityPanel() {
                   </Badge>
                 )}
               </div>
-              {i < controls.length - 1 && <Separator />}
+              {i < visibleControls.length - 1 && <Separator />}
             </div>
           ))}
         </CardContent>
@@ -817,8 +629,6 @@ function SecurityPanel() {
           Save at least one network above for the allowlist to take effect.
         </p>
       )}
-
-      <MfaCard />
     </div>
   )
 }

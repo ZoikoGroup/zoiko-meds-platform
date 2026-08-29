@@ -6,7 +6,6 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
-import { MicrosoftStrategy } from './strategies/microsoft.strategy';
 import { AuditWriter } from '../admin/audit.writer';
 import { MfaService } from './mfa/mfa.service';
 
@@ -34,7 +33,6 @@ import { MfaService } from './mfa/mfa.service';
     // so registering them never crashes boot; the OAuth guards return 503 when
     // a provider is not actually configured.
     GoogleStrategy,
-    MicrosoftStrategy,
     AuditWriter,
     MfaService,
   ],

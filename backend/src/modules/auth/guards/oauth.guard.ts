@@ -11,10 +11,7 @@ import { AuthGuard } from '@nestjs/passport';
  * Used by the OAuth guards to fail fast (503) instead of bouncing the user to a
  * broken provider consent screen built from placeholder credentials.
  */
-export function isOAuthConfigured(
-  config: ConfigService,
-  prefix: 'GOOGLE' | 'MICROSOFT',
-): boolean {
+export function isOAuthConfigured(config: ConfigService, prefix: 'GOOGLE'): boolean {
   return Boolean(
     config.get<string>(`${prefix}_CLIENT_ID`) &&
       config.get<string>(`${prefix}_CLIENT_SECRET`),
@@ -31,22 +28,6 @@ export class GoogleOAuthGuard extends AuthGuard('google') {
     if (!isOAuthConfigured(this.config, 'GOOGLE')) {
       throw new ServiceUnavailableException(
         'Google sign-in is not configured on this server',
-      );
-    }
-    return super.canActivate(context);
-  }
-}
-
-@Injectable()
-export class MicrosoftOAuthGuard extends AuthGuard('microsoft') {
-  constructor(private readonly config: ConfigService) {
-    super();
-  }
-
-  canActivate(context: ExecutionContext) {
-    if (!isOAuthConfigured(this.config, 'MICROSOFT')) {
-      throw new ServiceUnavailableException(
-        'Microsoft sign-in is not configured on this server',
       );
     }
     return super.canActivate(context);

@@ -3,7 +3,7 @@ import { apiFetch, apiBaseUrl } from '@/lib/api-client'
 // Auth endpoints exposed by the NestJS backend (see modules/auth).
 
 // OAuth providers that map to backend /auth/<provider> redirect endpoints.
-export const OAUTH_PROVIDERS = ['google', 'microsoft']
+export const OAUTH_PROVIDERS = ['google']
 
 /**
  * Full backend URL that begins an OAuth flow. This is a full-page browser
@@ -14,12 +14,10 @@ export function oauthUrl(provider) {
   return `${apiBaseUrl()}/auth/${provider}`
 }
 
-export function loginRequest(email, password, mfaCode) {
+export function loginRequest(email, password) {
   return apiFetch('/auth/login', {
     method: 'POST',
-    // Omitted rather than sent empty: the field is optional on the API, and an
-    // empty string would fail its format check instead of reading as absent.
-    body: { email, password, ...(mfaCode ? { mfaCode } : {}) },
+    body: { email, password },
     auth: false,
   })
 }
@@ -76,21 +74,3 @@ export function logoutRequest() {
     method: 'POST',
   })
 }
-
-
-
-// --- Two-factor authentication (MSA-42) ------------------------------------
-//
-// Enrolment is two calls: setup mints a secret and returns the otpauth:// URI to
-// scan, confirm proves a code against it. Nothing is required of the account
-// until a code has been confirmed, so an abandoned setup changes nothing.
-
-export const getMfaStatus = () => apiFetch('/auth/mfa')
-
-export const beginMfaSetup = () => apiFetch('/auth/mfa/setup', { method: 'POST' })
-
-export const confirmMfaSetup = (code) =>
-  apiFetch('/auth/mfa/confirm', { method: 'POST', body: { code } })
-
-export const disableMfa = (code) =>
-  apiFetch('/auth/mfa/disable', { method: 'POST', body: { code } })

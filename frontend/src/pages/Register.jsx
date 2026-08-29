@@ -317,7 +317,7 @@ export default function Register() {
             </Button>
           </form>
 
-          {/* Social sign-in (Google, Microsoft) */}
+          {/* Social sign-in (Google) */}
           <OAuthButtons label="Or sign up with" />
 
           {/* Privacy Disclaimer */}

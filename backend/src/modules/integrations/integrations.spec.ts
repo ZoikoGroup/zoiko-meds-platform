@@ -57,7 +57,7 @@ describe('IntegrationsService — the real dependencies, not a catalogue of name
     // Slack, Okta and Power BI. None of them appear anywhere in the schema.
     const ids = (await serviceFor().list()).map((row) => row.id);
 
-    expect(ids).toEqual(['stripe', 'smtp', 'google', 'microsoft', 'vision']);
+    expect(ids).toEqual(['stripe', 'smtp', 'google', 'vision']);
   });
 
   describe('payments', () => {
@@ -136,10 +136,10 @@ describe('IntegrationsService — the real dependencies, not a catalogue of name
     });
 
     it('offers no Manage link, because the answer is a server credential', async () => {
-      const row = await find({}, 'microsoft');
+      const row = await find({}, 'google');
 
       expect(row.manage).toBeNull();
-      expect(row.configuredBy).toMatch(/MICROSOFT_CLIENT_ID/);
+      expect(row.configuredBy).toMatch(/GOOGLE_CLIENT_ID/);
     });
   });
 

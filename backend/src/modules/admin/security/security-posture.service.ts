@@ -186,14 +186,14 @@ export class SecurityPostureService {
   }
 
   /**
-   * The SSO this platform has is OAuth against Google and Microsoft — not the
-   * SAML 2.0 the old switch named. A provider with no client credentials is off,
-   * and its sign-in button answers 503, so "available" is the honest word.
+   * The SSO this platform has is OAuth against Google — not the SAML 2.0 the
+   * old switch named. A provider with no client credentials is off, and its
+   * sign-in button answers 503, so "available" is the honest word.
    */
   private singleSignOn(): SecurityControl[] {
-    return (['GOOGLE', 'MICROSOFT'] as const).map((prefix) => {
+    return (['GOOGLE'] as const).map((prefix) => {
       const configured = isOAuthConfigured(this.config, prefix);
-      const name = prefix === 'GOOGLE' ? 'Google' : 'Microsoft';
+      const name = 'Google';
       return {
         id: `sso-${prefix.toLowerCase()}`,
         label: `Single sign-on — ${name}`,
@@ -262,7 +262,7 @@ export class SecurityPostureService {
       id: 'saml',
       label: 'SAML 2.0',
       detail:
-        'Not implemented. Single sign-on here is OAuth against Google and Microsoft; there is no SAML service provider, so an IdP that only speaks SAML cannot be connected.',
+        'Not implemented. Single sign-on here is OAuth against Google; there is no SAML service provider, so an IdP that only speaks SAML cannot be connected.',
       state: 'not-implemented',
       configuredBy: 'Not available in this release',
     };

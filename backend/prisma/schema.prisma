@@ -577,9 +577,9 @@ model Organization {
   /// CIDR ranges, or bare addresses.
   ipAllowlist        String[] @default([])
 
-  /// Whether members may sign in through Google or Microsoft. The providers must
-  /// still be configured on the server; this decides whether the workspace
-  /// accepts them when they are.
+  /// Whether members may sign in through Google. The provider must still be
+  /// configured on the server; this decides whether the workspace accepts it
+  /// when it is.
   allowOauthSignIn   Boolean  @default(true)
 
   updatedAt   DateTime @updatedAt

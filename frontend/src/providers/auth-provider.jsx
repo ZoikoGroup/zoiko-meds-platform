@@ -78,8 +78,8 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const login = useCallback(async (email, password, mfaCode) => {
-    const { accessToken, user: apiUser } = await loginRequest(email, password, mfaCode)
+  const login = useCallback(async (email, password) => {
+    const { accessToken, user: apiUser } = await loginRequest(email, password)
     setToken(accessToken)
     const clientUser = toClientUser(apiUser)
     setUser(clientUser)
