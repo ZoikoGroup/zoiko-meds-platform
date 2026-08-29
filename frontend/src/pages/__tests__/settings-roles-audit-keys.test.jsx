@@ -30,13 +30,6 @@ vi.mock('@/services/admin-api', () => ({
   revokeApiKey: (id) => revokeApiKeyMock(id),
 }))
 
-vi.mock('@/services/auth-api', () => ({
-  getMfaStatus: vi.fn().mockResolvedValue({ enrolled: false, pending: false, required: false }),
-  beginMfaSetup: vi.fn(),
-  confirmMfaSetup: vi.fn(),
-  disableMfa: vi.fn(),
-}))
-
 vi.mock('@/providers/auth-provider', () => ({
   useAuth: () => ({ user: { name: 'Root', email: 'root@zoikomeds.test', role: 'SUPER_ADMIN' } }),
 }))

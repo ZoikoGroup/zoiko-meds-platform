@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Sun, Moon, ArrowRight, ShieldCheck } from 'lucide-react'
+import { Sun, Moon, ArrowRight } from 'lucide-react'
 import { useTheme } from '@/providers/theme-provider'
 import { Brand } from '@/components/shared/brand'
 import { Button } from '@/components/ui/button'
@@ -44,10 +44,6 @@ export function AuthLayout({
               <div className="flex flex-wrap items-center gap-2.5">
                 <span className="rounded-full bg-teal/10 px-3.5 py-1 text-xs font-semibold uppercase tracking-wider text-teal">
                   Secure ZoikoMeds Access
-                </span>
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <ShieldCheck className="size-3.5 text-teal" />
-                  MFA Protected
                 </span>
               </div>
 

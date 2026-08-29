@@ -69,7 +69,6 @@ export class IntegrationsService {
       this.payments(),
       await this.email(),
       this.oauth('GOOGLE', 'Google sign-in'),
-      this.oauth('MICROSOFT', 'Microsoft sign-in'),
       this.prescriptionScan(),
     ];
   }
@@ -153,7 +152,7 @@ export class IntegrationsService {
   }
 
   /** A provider with no client id and secret is off, and its button returns 503. */
-  private oauth(prefix: 'GOOGLE' | 'MICROSOFT', name: string): IntegrationStatus {
+  private oauth(prefix: 'GOOGLE', name: string): IntegrationStatus {
     const configured = isOAuthConfigured(this.config, prefix);
     return {
       id: prefix.toLowerCase(),

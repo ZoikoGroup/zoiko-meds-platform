@@ -213,7 +213,7 @@ describe('MSA-42 · security posture', () => {
     const saml = (await serviceWith().list()).find((c) => c.id === 'saml');
 
     expect(saml?.state).toBe('not-implemented');
-    expect(saml?.detail).toMatch(/OAuth against Google and Microsoft/);
+    expect(saml?.detail).toMatch(/OAuth against Google/);
   });
 
   it('reports a sign-in provider as available only with both credentials', async () => {
