@@ -12,6 +12,9 @@ import { ListPharmaciesQuery } from './dto/list-pharmacies.query';
 
 const DEFAULT_PAGE_SIZE = 50;
 
+/** The canonical location every pharmacy DTO carries alongside its raw `country` text. */
+const JURISDICTION_INCLUDE = { jurisdiction: { select: { code: true, name: true } } } as const;
+
 @Injectable()
 export class PharmacyAdminService {
   private readonly logger = new Logger(PharmacyAdminService.name);
@@ -86,6 +89,7 @@ export class PharmacyAdminService {
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
+        include: JURISDICTION_INCLUDE,
       }),
       this.prisma.pharmacy.count({ where }),
     ]);
@@ -145,6 +149,7 @@ export class PharmacyAdminService {
           reliabilityScore: (dto.availabilityScore ?? 100) / 100,
           verificationStatus: VerificationStatus.PENDING,
         },
+        include: JURISDICTION_INCLUDE,
       });
 
       if (dto.licenseNumber) {
@@ -234,7 +239,7 @@ export class PharmacyAdminService {
         data.isParticipating = dto.verificationStatus === VerificationStatus.VERIFIED;
       }
 
-      const updated = await tx.pharmacy.update({ where: { id }, data });
+      const updated = await tx.pharmacy.update({ where: { id }, data, include: JURISDICTION_INCLUDE });
 
       if (dto.verificationStatus !== undefined) {
         await this.syncVerificationRequests(tx, [id], dto.verificationStatus);
@@ -261,6 +266,7 @@ export class PharmacyAdminService {
           isParticipating: status === VerificationStatus.VERIFIED,
           updatedAt: new Date(),
         },
+        include: JURISDICTION_INCLUDE,
       });
 
       await this.syncVerificationRequests(tx, [id], status);
@@ -352,13 +358,16 @@ export class PharmacyAdminService {
     }
   }
 
-  private async require(id: string): Promise<Pharmacy> {
-    const pharmacy = await this.prisma.pharmacy.findUnique({ where: { id } });
+  private async require(id: string) {
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id },
+      include: JURISDICTION_INCLUDE,
+    });
     if (!pharmacy) throw new NotFoundException('Pharmacy not found');
     return pharmacy;
   }
 
-  private toDto(p: Pharmacy) {
+  private toDto(p: Pharmacy & { jurisdiction?: { code: string; name: string } | null }) {
     return {
       id: p.id,
       name: p.name,
@@ -369,6 +378,13 @@ export class PharmacyAdminService {
       region: p.region,
       postalCode: p.postalCode,
       country: p.country,
+      // The canonical location (MSA-32): `country` is free text a person typed
+      // ("India" / "india" / "IN" all describe the same one), so a filter or
+      // grouping built from it directly shows every spelling as its own
+      // location. This is the same Jurisdiction a pharmacy's country already
+      // resolves to on save — one entry per real place, however its country
+      // field happens to be spelled.
+      jurisdiction: p.jurisdiction ? { code: p.jurisdiction.code, name: p.jurisdiction.name } : null,
       phone: p.phone,
       status: p.verificationStatus,
       // Commercial standing is a separate axis from verification: a pharmacy can

@@ -2,6 +2,7 @@ import {
   IsInt,
   IsLatitude,
   IsLongitude,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -9,7 +10,17 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+
+/**
+ * Trim before validating, so whitespace cannot pass for an answer — IsNotEmpty
+ * rejects "" but accepts "   ", which would otherwise satisfy every rule below
+ * and be stored as a blank city or country.
+ */
+const Trimmed = () =>
+  Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  );
 
 export class CreatePharmacyDto {
   @IsString()
@@ -35,10 +46,15 @@ export class CreatePharmacyDto {
   @MaxLength(200)
   addressLine2?: string;
 
-  @IsOptional()
+  // City and country are required (MSA-33): without them geocoding has
+  // nothing to resolve, so the pharmacy is created with no coordinates and is
+  // invisible to every distance-bounded patient search — a silently broken
+  // record rather than a rejected submission.
+  @Trimmed()
   @IsString()
+  @IsNotEmpty({ message: 'City is required: without it the pharmacy cannot be located on the map.' })
   @MaxLength(120)
-  city?: string;
+  city!: string;
 
   @IsOptional()
   @IsString()
@@ -50,10 +66,11 @@ export class CreatePharmacyDto {
   @MaxLength(32)
   postalCode?: string;
 
-  @IsOptional()
+  @Trimmed()
   @IsString()
+  @IsNotEmpty({ message: 'Country is required: without it the pharmacy cannot be located on the map.' })
   @MaxLength(120)
-  country?: string;
+  country!: string;
 
   // This branch's own contact number, shown on its patient-search card.
   @IsOptional()
