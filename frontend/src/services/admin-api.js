@@ -87,6 +87,11 @@ export const createApiKey = (body) =>
 export const revokeApiKey = (id) =>
   apiFetch(`/admin/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
+// Real uptime/latency/throughput/endpoint-status off GatewayRequestLog — the
+// ZoikoAvail console used to render fixed fixtures with nothing behind them
+// (MSA-36).
+export const getZoikoAvailTelemetry = () => apiFetch('/admin/zoikoavail/telemetry')
+
 export const listAuditLogs = (params) =>
   apiFetch(`/admin/audit-logs${qs(params)}`)
 

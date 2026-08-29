@@ -1,14 +1,16 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { MedibaseService } from './medibase.service';
 import { MatchQueryDto } from './dto/match-query.dto';
 import { LookupIdentifierQuery } from './dto/lookup-identifier.query';
+import { GatewayTelemetryInterceptor } from '../admin/telemetry/gateway-telemetry.interceptor';
 
 /**
  * MediBase™ public read surface. Returns governed medicine identities only —
  * suppressed entities and internal governance fields are never exposed here.
  */
 @ApiTags('medibase')
+@UseInterceptors(GatewayTelemetryInterceptor)
 @Controller('medibase')
 export class MedibaseController {
   constructor(private readonly medibase: MedibaseService) {}
