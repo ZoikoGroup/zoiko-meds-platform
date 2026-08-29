@@ -45,21 +45,46 @@ const ROLE_ORDER: UserRole[] = [
  */
 const NOT_A_CAPABILITY = new Set(['health', 'auth']);
 
-/** Reads better than the raw prefix, and only where the prefix is not obvious. */
+/**
+ * Prefixes that are the same capability under two different controllers, so
+ * they share one row instead of reporting the same access twice under
+ * near-identical labels.
+ */
+const PREFIX_ALIASES: Record<string, string> = {
+  'medibase/admin/catalog': 'medibase/admin/medicines',
+};
+
+/**
+ * Reads better than the raw prefix, and only where the prefix is not obvious.
+ *
+ * Keyed by the controller's FULL declared path, not just its first segment
+ * (MSA-47): grouping on the first segment alone merged controllers that share
+ * a namespace but not a guard — e.g. AdminController (SUPER_ADMIN only) with
+ * NotificationController's broadcast listing (any signed-in role) both landed
+ * under "admin", so the row reported every role able to reach a broadcast
+ * list as if it could reach all 66 admin routes.
+ */
 const LABELS: Record<string, string> = {
   admin: 'Platform administration',
+  'admin/notifications': 'Broadcast notifications',
+  'admin/pharmacies': 'Pharmacy administration',
+  'admin/reports': 'Reports & analytics',
+  'admin/verification-requests': 'Pharmacy verification',
+  'admin/commercial': 'Commercial administration',
+  'admin/integrations': 'Integration management',
   me: 'Patient portal',
+  'me/signal': 'Patient signal alerts',
   pharmacies: 'Pharmacy portal',
+  'pharmacies/me/billing': 'Pharmacy billing',
   medibase: 'MediBase catalogue',
+  'medibase/admin/medicines': 'MediBase administration',
   availability: 'Availability signals',
   signal: 'ZoikoSignal intelligence',
-  commercial: 'Billing and payments',
+  'signal/admin': 'ZoikoSignal administration',
+  'commercial/webhooks': 'Payment webhooks',
   enterprise: 'Enterprise enquiries',
-  nearby: 'Nearby pharmacy search',
   scan: 'Prescription scanning',
   search: 'Medicine search',
-  notifications: 'Notification delivery',
-  integrations: 'Integration status',
 };
 
 /**
@@ -148,13 +173,18 @@ export class RoleCapabilitiesService {
     };
   }
 
-  /** The controller's route prefix, normalised to its first segment. */
+  /**
+   * The controller's full declared route prefix (alias-resolved), not just
+   * its first segment — see the LABELS/PREFIX_ALIASES comment above for why
+   * truncating to one segment was wrong.
+   */
   private prefixOf(metatype: Function): string | null {
     const path = this.reflector.get<string | string[]>(PATH_METADATA, metatype);
     const first = Array.isArray(path) ? path[0] : path;
     if (typeof first !== 'string') return null;
-    const segment = first.replace(/^\/+/, '').split('/')[0];
-    return segment || null;
+    const prefix = first.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (!prefix) return null;
+    return PREFIX_ALIASES[prefix] ?? prefix;
   }
 
   /** Guards attached with @UseGuards, which Nest stores as class metadata. */
@@ -163,12 +193,12 @@ export class RoleCapabilitiesService {
     if (!Array.isArray(guards)) return [];
     // JwtAuthGuard is the one that decides "signed in at all"; the rest layer on
     // top of it and do not, on their own, make a route non-public.
-    return guards.filter((guard) => guard === JwtAuthGuard || guard?.name !== undefined);
+    return guards.filter((guard) => guard === JwtAuthGuard);
   }
 
   private titleCase(value: string): string {
     return value
-      .split('-')
+      .split(/[/-]/)
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
   }
