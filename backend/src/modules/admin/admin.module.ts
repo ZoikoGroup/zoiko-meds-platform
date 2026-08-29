@@ -20,6 +20,10 @@ import { HelpResourcesService } from './help/help-resources.service';
 import { IpAllowlistGuard } from './security/ip-allowlist.guard';
 import { RoleCapabilitiesService } from './roles/role-capabilities.service';
 import { PlatformApiKeyService } from './api-keys/platform-api-key.service';
+import { GatewayTelemetryController } from './telemetry/gateway-telemetry.controller';
+import { GatewayTelemetryService } from './telemetry/gateway-telemetry.service';
+import { GatewayRequestRecorder } from './telemetry/gateway-telemetry.recorder';
+import { GatewayTelemetryInterceptor } from './telemetry/gateway-telemetry.interceptor';
 
 @Module({
   imports: [
@@ -35,6 +39,7 @@ import { PlatformApiKeyService } from './api-keys/platform-api-key.service';
     VerificationController,
     NotificationController,
     ReportsController,
+    GatewayTelemetryController,
   ],
   providers: [
     AuditWriter,
@@ -50,7 +55,16 @@ import { PlatformApiKeyService } from './api-keys/platform-api-key.service';
     IpAllowlistGuard,
     RoleCapabilitiesService,
     PlatformApiKeyService,
+    GatewayTelemetryService,
+    GatewayRequestRecorder,
+    GatewayTelemetryInterceptor,
   ],
-  exports: [AuditWriter, IpAllowlistGuard, PlatformApiKeyService],
+  exports: [
+    AuditWriter,
+    IpAllowlistGuard,
+    PlatformApiKeyService,
+    GatewayRequestRecorder,
+    GatewayTelemetryInterceptor,
+  ],
 })
 export class AdminModule {}

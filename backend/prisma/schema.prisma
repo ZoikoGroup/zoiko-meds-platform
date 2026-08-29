@@ -635,6 +635,27 @@ model AuditLog {
   @@index([severity])
 }
 
+/// One row per request served by the ZoikoAvail™ governed API surface
+/// (availability | medibase | signal). Backs the real uptime/latency/
+/// throughput/per-endpoint numbers on the admin ZoikoAvail console — before
+/// this model existed, that console page rendered fixed fixtures (MSA-36).
+model GatewayRequestLog {
+  id         String   @id @default(cuid())
+  /// One of: availability | medibase | signal — mirrors PlatformApiKey.scope.
+  scope      String
+  /// Display route, e.g. "/medibase/:id" — the handler's route pattern, never
+  /// the raw dynamic path, so requests group correctly regardless of the id.
+  route      String
+  method     String
+  statusCode Int
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@index([scope, createdAt])
+  @@index([route, createdAt])
+  @@index([statusCode])
+}
+
 // ---------------------------------------------------------------------------
 // Verification Center — pharmacy license/verification review queue
 // ---------------------------------------------------------------------------
