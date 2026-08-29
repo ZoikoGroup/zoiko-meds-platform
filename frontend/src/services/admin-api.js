@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api-client'
+import { apiFetch, apiFetchBlob } from '@/lib/api-client'
 
 // SUPER_ADMIN platform administration (backend: modules/admin).
 
@@ -99,6 +99,15 @@ export const createPharmacy = (body) =>
 
 export const updatePharmacy = (id, body) =>
   apiFetch(`/admin/pharmacies/${id}`, { method: 'PATCH', body })
+
+/**
+ * The licence document attached to a verification request.
+ *
+ * Streamed from the API behind the same SUPER_ADMIN guard as the rest of the
+ * Verification Center — there is no public URL for a pharmacy's licence.
+ */
+export const getVerificationDocument = (requestId) =>
+  apiFetchBlob(`/admin/verification-requests/${requestId}/document`)
 
 export const verifyPharmacy = (id) =>
   apiFetch(`/admin/pharmacies/${id}/verify`, { method: 'POST' })

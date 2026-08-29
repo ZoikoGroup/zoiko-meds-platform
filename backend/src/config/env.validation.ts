@@ -73,6 +73,35 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     );
   }
 
+  // --- Prescription scan: assisted reading (optional) ------------------------
+  //
+  // Deliberately never fatal. Assisted reading is a fallback behind on-device
+  // OCR, so a deployment without a key is a valid deployment — the scan surface
+  // simply does not offer it (VisionService.isEnabled reports it unavailable and
+  // GET /scan/vision-status says so). Only a value that is present and
+  // *malformed* is an error, because that is a typo somebody meant to work.
+  //
+  // The key itself is only ever tested for shape. Its value is never echoed into
+  // an error message or a log line.
+  const visionEnabled = String(config.SCAN_VISION_ENABLED ?? '').trim().toLowerCase();
+  if (visionEnabled && !['true', 'false'].includes(visionEnabled)) {
+    errors.push(
+      `SCAN_VISION_ENABLED must be "true" or "false" when set (got "${visionEnabled}").`,
+    );
+  }
+
+  const visionModel = String(config.SCAN_VISION_MODEL ?? '');
+  if (visionModel && !visionModel.trim()) {
+    errors.push('SCAN_VISION_MODEL must name a model when set, or be left unset.');
+  }
+
+  const anthropicKey = String(config.ANTHROPIC_API_KEY ?? '');
+  if (anthropicKey && !anthropicKey.trim()) {
+    errors.push(
+      'ANTHROPIC_API_KEY is set to whitespace. Leave it unset to run without assisted reading.',
+    );
+  }
+
   // --- Production-only guardrails --------------------------------------------
   if (isProd) {
     if (!appBaseUrl) {

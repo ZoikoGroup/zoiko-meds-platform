@@ -638,3 +638,154 @@ describe('mergeVisionResults', () => {
     expect(merged.medicines).toEqual([])
   })
 })
+
+describe('a short OCR fragment must not become a confident medicine', () => {
+  it('does not present "Pan" as Pantoprazole', async () => {
+    // The containment shortcut used to force any reference containing those
+    // three letters to 0.95 — above the auto-accept bar — so a fragment OCR was
+    // unsure of arrived as a different medicine, presented as certain.
+    matchMedicinesMock.mockResolvedValue([
+      { id: 'p1', name: 'Pantoprazole', generic: 'Pantoprazole', brands: [], strength: '40 mg' },
+    ])
+    mockOcrText('Rx\nPan')
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const result = await extractPrescriptionMeds(imageFile())
+
+    expect(result.confident.map((m) => m.name)).not.toContain('Pantoprazole')
+    expect(result.medicines.every((m) => m.name !== 'Pantoprazole' || m.needsConfirmation)).toBe(true)
+  })
+
+  it.each(['Met', 'Ome', 'Ceti'])('leaves the fragment %s unconfirmed', async (fragment) => {
+    mockOcrText(`Rx\n${fragment}`)
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const result = await extractPrescriptionMeds(imageFile())
+
+    expect(result.confident).toHaveLength(0)
+  })
+
+  it('still matches a full name exactly', async () => {
+    // The guard must not cost a legitimate reading.
+    mockOcrText('Rx\nTab. Amoxicillin 500 mg BD x 5 days')
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const result = await extractPrescriptionMeds(imageFile())
+
+    expect(result.confident.map((m) => m.name)).toContain('Amoxicillin')
+  })
+
+  it('still matches a generic inside a combination name', async () => {
+    matchMedicinesMock.mockResolvedValue([
+      {
+        id: 'c1',
+        name: 'Amoxicillin Clavulanate',
+        generic: 'Amoxicillin Clavulanate',
+        brands: ['Augmentin'],
+        strength: '625 mg',
+      },
+    ])
+    mockOcrText('Rx\nTab. Amoxicillin 625 mg BD')
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const result = await extractPrescriptionMeds(imageFile())
+
+    expect(result.medicines.map((m) => m.name)).toContain('Amoxicillin Clavulanate')
+  })
+
+  it('matches a short brand when the page corroborates it with a strength', async () => {
+    // "Pan" alone is not evidence; "Pan 40" beside a catalogued 40 mg Pan is.
+    matchMedicinesMock.mockResolvedValue([
+      { id: 'p2', name: 'Pan 40', generic: 'Pantoprazole', brands: [], strength: '40 mg' },
+    ])
+    mockOcrText('Rx\nTab. Pan 40 mg OD')
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const result = await extractPrescriptionMeds(imageFile())
+
+    expect(result.medicines.map((m) => m.name)).toContain('Pan 40')
+  })
+})
+
+describe('every medicine on a three-line prescription survives', () => {
+  it('returns all three, including the short bare-dose line', async () => {
+    matchMedicinesMock.mockResolvedValue([])
+    mockOcrText(['Rx', 'Paracetamol 650 mg', 'Pan 40', 'Cetirizine 10 mg'].join('\n'))
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const result = await extractPrescriptionMeds(imageFile())
+
+    const names = result.medicines.map((m) => m.name.toLowerCase())
+    expect(names).toHaveLength(3)
+    expect(names).toEqual(expect.arrayContaining(['paracetamol', 'pan 40', 'cetirizine']))
+  })
+})
+
+describe('strength read through OCR damage, end to end', () => {
+  it('reports 650 mg from a page that spelled it 65O rng', async () => {
+    matchMedicinesMock.mockResolvedValue([])
+    mockOcrText('Rx\nParacetamol 65O rng BD')
+    const { extractPrescriptionMeds } = await loadPipeline()
+
+    const [medicine] = (await extractPrescriptionMeds(imageFile())).medicines
+
+    expect(medicine.strength).toBe('650 mg')
+    // The name is not carrying the mangled tokens.
+    expect(medicine.name.toLowerCase()).toBe('paracetamol')
+  })
+})
+
+describe('assisted reading can always get a page image out of a PDF', () => {
+  it('renders pages on demand for a text-layer PDF that yielded nothing', async () => {
+    // A text PDF is never rasterized during extraction — correctly, since the
+    // text read fine. But when it produces no medicines, assisted reading used
+    // to have nothing to send and simply refused: the fallback was unreachable
+    // for exactly the PDFs that needed it.
+    getDocumentMock.mockReturnValue({
+      promise: Promise.resolve(
+        fakePdf([{ textLayer: ['Diagnosis: reviewed', 'No medicines prescribed today'] }]),
+      ),
+    })
+    const { extractPrescriptionMeds } = await loadPipeline()
+    const result = await extractPrescriptionMeds(pdfFile())
+
+    expect(result.medicines).toHaveLength(0)
+    expect(result.pageImages).toHaveLength(0) // nothing kept, as before
+
+    const { renderPdfPageImages } = await import('../pdf-text')
+    const images = await renderPdfPageImages(pdfFile(), { maxPages: 4 })
+
+    expect(images).toHaveLength(1)
+    expect(images[0]).toMatch(/^data:image\/jpeg/)
+  })
+
+  it('renders no more pages than assisted reading will send', async () => {
+    getDocumentMock.mockReturnValue({
+      promise: Promise.resolve(
+        fakePdf(Array.from({ length: 9 }, (_, i) => ({ textLayer: [`Page ${i + 1} content here`] }))),
+      ),
+    })
+    const { renderPdfPageImages } = await import('../pdf-text')
+
+    // A nine-page PDF costs four rasters, not nine.
+    expect(await renderPdfPageImages(pdfFile(), { maxPages: 4 })).toHaveLength(4)
+  })
+
+  it('releases the document even when rendering throws', async () => {
+    const destroy = vi.fn(async () => {})
+    getDocumentMock.mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage: async () => {
+          throw new Error('render failed')
+        },
+        cleanup: async () => {},
+        destroy,
+      }),
+    })
+    const { renderPdfPageImages } = await import('../pdf-text')
+
+    await expect(renderPdfPageImages(pdfFile(), { maxPages: 2 })).rejects.toThrow('render failed')
+    expect(destroy).toHaveBeenCalled()
+  })
+})

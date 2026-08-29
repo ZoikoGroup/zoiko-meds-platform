@@ -5,6 +5,25 @@ import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
+import { NotificationPreferencesService } from './notification-preferences.service';
+
+/**
+ * Notification preferences default to everything on, which is what every
+ * account without a saved row gets. These specs are about other behaviour, so
+ * they take the permissive stub.
+ */
+const allowAllPreferences = () =>
+  ({
+    get: async () => ({
+      inventoryAlerts: true,
+      verificationUpdates: true,
+      uploadResults: true,
+      systemMessages: true,
+    }),
+    allows: async () => true,
+    allowedCategories: async () => new Set(['inventory', 'verification', 'upload', 'system']),
+  }) as unknown as NotificationPreferencesService;
+
 
 /**
  * The MediBase™ identity id as the primary medicine reference.
@@ -92,6 +111,7 @@ function buildService() {
     { write: jest.fn() } as unknown as AuditWriter,
     { linkPendingSaves: jest.fn().mockResolvedValue(0) } as unknown as SavedMedicineLinkService,
     { inventoryBecameAvailable: jest.fn(), inventoryBecameUnavailable: jest.fn(), bulkUploadCompleted: jest.fn() } as unknown as PharmacyNotificationService,
+    allowAllPreferences(),
   );
   return { service, prisma, state };
 }

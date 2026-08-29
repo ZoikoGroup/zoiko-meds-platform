@@ -6,6 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { isPayloadTooLarge } from '../middleware/json-body-limit';
 import { Request, Response } from 'express';
 import { AppLogger } from '../logger/app-logger.service';
 
@@ -72,6 +73,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const isSchemaDrift =
       exception instanceof Prisma.PrismaClientKnownRequestError &&
       SCHEMA_DRIFT_CODES.has(exception.code);
+    // body-parser rejects an oversized body before any controller runs, and it
+    // throws a plain Error rather than an HttpException — so this filter used to
+    // report "500 Internal server error" for a request that was simply too big,
+    // telling the client nothing it could act on.
+    const tooLarge = !isHttp && isPayloadTooLarge(exception);
 
     let status: number;
     if (isHttp) {
@@ -80,15 +86,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       // Unavailable rather than a server fault: the request is well formed and
       // will succeed once the migration is applied, so it is worth retrying.
       status = HttpStatus.SERVICE_UNAVAILABLE;
+    } else if (tooLarge) {
+      status = HttpStatus.PAYLOAD_TOO_LARGE;
     } else {
       status = HttpStatus.INTERNAL_SERVER_ERROR;
     }
 
     // Extract a client-safe message for HttpExceptions; hide everything else.
+    // `error` comes from the status itself, so 413 reads "Payload Too Large"
+    // without a second place naming it.
     let message: string | string[] = 'Internal server error';
     let error = reasonPhrase(status);
     if (isSchemaDrift) {
       message = SCHEMA_DRIFT_MESSAGE;
+    } else if (tooLarge) {
+      message = 'Request body is too large.';
     }
     if (isHttp) {
       const body = exception.getResponse();

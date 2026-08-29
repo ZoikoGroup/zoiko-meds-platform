@@ -334,7 +334,7 @@ export default function UserHome() {
       />
 
       <Dialog open={isListening} onOpenChange={(open) => { if (!open) stopVoice() }}>
-        <DialogContent className="sm:max-w-[420px] p-6">
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[420px] p-6">
           <DialogHeader className="items-center text-center flex flex-col gap-2">
             <div className={cn(
               "mx-auto flex size-14 items-center justify-center rounded-2xl transition-all",
@@ -446,12 +446,14 @@ export default function UserHome() {
             </div>
           )}
 
-          <DialogFooter className="mt-5 flex flex-wrap gap-2 sm:justify-end">
+          {/* The footer stacks (flex-col-reverse) below sm:. The buttons must size
+                themselves on that vertical axis — see the note on each one. */}
+          <DialogFooter className="mt-5 flex flex-wrap gap-2.5 sm:gap-2 sm:justify-end">
             <Button
               variant="outline"
               size="sm"
               onClick={stopVoice}
-              className="rounded-xl text-xs flex-1 sm:flex-none"
+              className="h-11 w-full rounded-xl text-sm sm:h-8 sm:w-auto sm:text-xs"
             >
               Cancel
             </Button>
@@ -462,7 +464,7 @@ export default function UserHome() {
                   variant="outline"
                   size="sm"
                   onClick={triggerVoice}
-                  className="rounded-xl text-xs gap-1.5 flex-1 sm:flex-none"
+                  className="h-11 w-full gap-1.5 rounded-xl text-sm sm:h-8 sm:w-auto sm:text-xs"
                 >
                   <RotateCcw className="size-3.5" />
                   Speak again
@@ -476,7 +478,7 @@ export default function UserHome() {
                     stopVoice()
                     if (term) goSearch(term)
                   }}
-                  className="rounded-xl text-xs font-semibold gap-1.5 flex-1 sm:flex-none"
+                  className="h-11 w-full gap-1.5 rounded-xl text-sm font-semibold sm:h-8 sm:w-auto sm:text-xs"
                 >
                   <Search className="size-3.5" />
                   Search
@@ -488,7 +490,7 @@ export default function UserHome() {
                   variant="ghost"
                   size="sm"
                   disabled
-                  className="rounded-xl text-xs opacity-60 flex-1 sm:flex-none"
+                  className="h-11 w-full rounded-xl text-sm opacity-60 sm:h-8 sm:w-auto sm:text-xs"
                 >
                   Listening...
                 </Button>

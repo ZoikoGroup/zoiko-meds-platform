@@ -25,9 +25,18 @@ import {
   mergeVisionResults,
   UnsupportedFormatError,
 } from './extract-prescription'
-import { extractWithVision, fileToDataUrl, isVisionFallbackAvailable } from './vision-fallback'
+import {
+  MAX_FALLBACK_IMAGES,
+  extractWithVision,
+  fileToDataUrl,
+  isVisionFallbackAvailable,
+} from './vision-fallback'
+import { renderPdfPageImages } from './pdf-text'
 import { terminateOcrWorker } from './ocr-worker'
 import { useLanguage } from '@/providers/language-provider'
+
+const isPdfFile = (file) =>
+  file?.type === 'application/pdf' || /\.pdf$/i.test(file?.name ?? '')
 
 function isAcceptedFile(file) {
   if (file.size > MAX_BYTES) {
@@ -152,8 +161,13 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     setVisionRunning(true)
     try {
       let images = result.pageImages ?? []
-      if (!images.length && lastFile.current && lastFile.current.type !== 'application/pdf') {
-        images = [await fileToDataUrl(lastFile.current)]
+      if (!images.length && lastFile.current) {
+        // A PDF whose text layer read cleanly was never rasterized, so there was
+        // nothing to send and assisted reading simply refused. Render the pages
+        // now — only the ones that will be sent, and only because the user asked.
+        images = isPdfFile(lastFile.current)
+          ? await renderPdfPageImages(lastFile.current, { maxPages: MAX_FALLBACK_IMAGES })
+          : [await fileToDataUrl(lastFile.current)]
       }
       if (!images.length) {
         flash?.('There is no page image available for assisted reading.')

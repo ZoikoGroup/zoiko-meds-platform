@@ -46,6 +46,7 @@ export default function VerificationCenter() {
   const [queueTab, setQueueTab] = useState('PENDING')
   const [reviewNote, setReviewNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [openingDoc, setOpeningDoc] = useState(false)
 
   const counts = useMemo(() => {
     return {
@@ -94,6 +95,29 @@ export default function VerificationCenter() {
   // that actually shows that request, select it, then drop the param. Held in
   // state so the auto-select effect below stands down until it has been applied
   // — otherwise it would immediately pull the selection back to the queue head.
+  /**
+   * Open the licence document the pharmacy uploaded.
+   *
+   * Fetched rather than linked: the route is SUPER_ADMIN-only, and a plain
+   * anchor sends no Authorization header — the reviewer would get a 401 page
+   * instead of the file. The blob URL is revoked once the tab has it.
+   */
+  const openDocument = async (request) => {
+    if (!request?.id || openingDoc) return
+    setOpeningDoc(true)
+    setError('')
+    try {
+      const blob = await admin.getVerificationDocument(request.id)
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener,noreferrer')
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (err) {
+      setError(err?.message || 'That document could not be opened.')
+    } finally {
+      setOpeningDoc(false)
+    }
+  }
+
   const [pendingFocus, setPendingFocus] = useState(
     () => searchParams.get('request') || null
   )
@@ -364,14 +388,22 @@ export default function VerificationCenter() {
                             <span className="font-medium text-xs text-foreground">
                               {activeRequest.docName || 'No document'}
                             </span>
-                            <span className="text-[10px] text-muted-foreground">PDF document · verified upload signature</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {activeRequest.docName
+                                ? 'Uploaded by the pharmacy · type verified from the file itself'
+                                : 'The pharmacy has not attached a document to this request'}
+                            </span>
                           </div>
                         </div>
-                        <Button variant="outline" size="sm" className="h-8 text-xs flex gap-1" asChild>
-                          <a href={activeRequest.docUrl || '#'} download>
-                            <Paperclip className="size-3.5" />
-                            View File
-                          </a>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs flex gap-1"
+                          disabled={!activeRequest.docName || openingDoc}
+                          onClick={() => openDocument(activeRequest)}
+                        >
+                          <Paperclip className="size-3.5" />
+                          View File
                         </Button>
                       </div>
                     </div>

@@ -122,44 +122,18 @@ export const markAllNotificationsRead = () =>
   apiFetch('/me/signal/notifications/read-all', { method: 'POST' })
 
 export const getNotifications = async () => {
-  let userNotifications = []
+  // One source now. Announcements used to be fetched separately from
+  // /admin/notifications — a SUPER_ADMIN route, so a pharmacy account got a 403
+  // on every load and saw none of them, while an admin browsing the portal saw
+  // every one regardless of their preferences. The pharmacy endpoint returns
+  // both, already filtered by what this account asked to receive.
   try {
     const res = await apiFetch('/pharmacies/notifications')
     // Guard against a 200 with an empty body — spreading a null below throws.
-    userNotifications = Array.isArray(res) ? res : []
+    return Array.isArray(res) ? res : []
   } catch {
-    userNotifications = []
+    return []
   }
-
-  // Platform broadcasts. listNotifications() hits /admin/notifications, which is
-  // SUPER_ADMIN-only — a pharmacy account gets 403 here every load, so this only
-  // ever resolves for an admin browsing the pharmacy portal. Reaching real
-  // broadcasts for pharmacy accounts needs a pharmacy-facing endpoint;
-  // TODO(backend): GET /pharmacies/announcements.
-  let announcements = []
-  try {
-    const raw = await listNotifications()
-    announcements = (raw || [])
-      .filter(
-        (n) => n.target === 'ALL_USERS' || n.target === 'PHARMACY_MANAGERS' || !n.target
-      )
-      .map((n) => ({
-        id: `broadcast-${n.id}`,
-        type: n.type === 'MAINTENANCE' ? 'system' : n.type === 'EMERGENCY_ALERT' ? 'verification' : 'system',
-        title: n.title,
-        message: n.message,
-        when: n.date ? new Date(n.date).toLocaleDateString() : 'Just now',
-        unread: true,
-      }))
-  } catch {
-    // Not reachable for pharmacy roles — leave broadcasts empty rather than
-    // substituting samples.
-  }
-
-  // Demo NOTIFICATIONS used to be appended unconditionally, so a fully verified
-  // pharmacy still saw fabricated alerts mixed in with its real ones — including
-  // invented verification messages that contradicted its actual status.
-  return [...userNotifications, ...announcements]
 }
 // Participation metrics, measured server-side from this pharmacy's own rows. This
 // used to resolve a fixture — the same 92% reliability and 87% participation for
@@ -204,6 +178,23 @@ export const triggerSync = () =>
  */
 export const issueIntegrationKey = () =>
   apiFetch('/pharmacies/integration/key', { method: 'POST' })
+
+/**
+ * Notification switches for the signed-in pharmacy account.
+ *
+ * The settings page held these in component state: they flipped, flashed
+ * "saved", and were gone on the next navigation. They are now stored per
+ * account, and the API is the authority — the switch renders what came back,
+ * not what was clicked.
+ *
+ * No demo fallback. A default-shaped object on a failed read would show the
+ * operator switches that reflect nothing stored.
+ */
+export const getNotificationPreferences = () => apiFetch('/pharmacies/notification-preferences')
+
+/** Save one or more switches. Returns the full saved set. */
+export const updateNotificationPreferences = (patch) =>
+  apiFetch('/pharmacies/notification-preferences', { method: 'PATCH', body: patch })
 
 // Shape a raw Pharmacy row (GET /pharmacies/:id) like the /pharmacies/me
 // payload, so the profile page renders identically from either source.
@@ -296,6 +287,10 @@ const EDITABLE_FIELDS = [
   // Set from a Google Maps link in the profile form. Without these the
   // pharmacy cannot appear in the distance-bounded patient search.
   'latitude', 'longitude',
+  // The licence document travels with the save that submits for verification.
+  // Without it in this list the file was silently dropped from the request body
+  // — the whitelist is deliberate, so anything new has to be named here.
+  'document',
 ]
 
 /**

@@ -130,10 +130,13 @@ export default function PharmacyIntegration() {
       }
       if (form.direction === 'PULL') {
         body.feedUrl = form.feedUrl.trim()
-        body.authHeaderName = form.authHeaderName.trim()
-        // Only sent when the operator typed something. Omitting it keeps the
-        // stored credential; sending "" would clear it.
-        if (form.authHeaderValue) body.authHeaderValue = form.authHeaderValue
+        const trimmedHeaderName = form.authHeaderName ? form.authHeaderName.trim() : ''
+        if (trimmedHeaderName) {
+          body.authHeaderName = trimmedHeaderName
+        }
+        if (typeof form.authHeaderValue === 'string' && form.authHeaderValue.trim().length > 0) {
+          body.authHeaderValue = form.authHeaderValue
+        }
       }
       const next = await saveIntegration(body)
       setData(next)

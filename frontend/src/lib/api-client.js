@@ -66,9 +66,53 @@ export function consumeSessionExpired() {
   }
 }
 
+/**
+ * Fetch a binary response (a document, an export) as a Blob.
+ *
+ * Separate from apiFetch, which parses every response as text. A protected file
+ * cannot be reached with a plain <a href>: the link carries no Authorization
+ * header, so the request arrives unauthenticated and the browser shows the 401
+ * instead of the file.
+ */
+export async function apiFetchBlob(path, { headers = {} } = {}) {
+  const finalHeaders = { ...headers }
+  const token = getToken()
+  if (token) finalHeaders['Authorization'] = `Bearer ${token}`
+
+  let res
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { headers: finalHeaders })
+  } catch {
+    throw new Error('Unable to reach the ZoikoMeds API. Please check your connection and try again.')
+  }
+
+  if (!res.ok) {
+    // Error bodies are JSON even here, so the reason can still be shown.
+    let message = res.statusText || 'Request failed'
+    try {
+      const body = await res.json()
+      if (body?.message) message = Array.isArray(body.message) ? body.message.join(', ') : body.message
+    } catch {
+      /* keep the status text */
+    }
+    throw new Error(message)
+  }
+
+  return res.blob()
+}
+
 export async function apiFetch(
   path,
-  { method = 'GET', body, auth = true, headers = {} } = {}
+  {
+    method = 'GET',
+    body,
+    auth = true,
+    headers = {},
+    // Optional AbortSignal. Requests have no deadline of their own — a caller
+    // that needs one (prescription assisted reading, which waits on a model)
+    // supplies it rather than every request in the app inheriting a timeout.
+    signal,
+  } = {}
 ) {
   // FormData carries its own multipart boundary, which only the browser can
   // generate: setting Content-Type by hand here produces a header with no
@@ -86,8 +130,12 @@ export async function apiFetch(
       method,
       headers: finalHeaders,
       body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
+      signal,
     })
-  } catch {
+  } catch (err) {
+    // An aborted request is the caller's own deadline firing, not an unreachable
+    // API — it has a better message for the user than "check your connection".
+    if (err?.name === 'AbortError') throw err
     throw new Error(
       'Unable to reach the ZoikoMeds API. Please check your connection and try again.'
     )

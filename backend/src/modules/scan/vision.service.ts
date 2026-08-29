@@ -83,6 +83,21 @@ const SYSTEM_PROMPT = [
   'prescription is valid.',
 ].join('\n');
 
+/**
+ * A log-safe description of a provider failure.
+ *
+ * Deliberately not `err.message`: SDK errors quote the offending request, which
+ * for this endpoint is a prescription image and whatever text the provider read
+ * out of it. Type and status are what actually help when reading logs anyway.
+ */
+function describeFailure(err: unknown): string {
+  if (!err || typeof err !== 'object') return 'unknown error';
+  const candidate = err as { name?: unknown; status?: unknown };
+  const name = typeof candidate.name === 'string' ? candidate.name : 'Error';
+  const status = typeof candidate.status === 'number' ? ` (HTTP ${candidate.status})` : '';
+  return `${name}${status}`;
+}
+
 @Injectable()
 export class VisionService {
   private readonly logger = new Logger(VisionService.name);
@@ -92,9 +107,27 @@ export class VisionService {
 
   /** Configured and usable? Drives the UI's decision to offer the fallback. */
   isEnabled(): boolean {
+    return this.availability().available;
+  }
+
+  /**
+   * Why the fallback is or is not on offer.
+   *
+   * The reason is a fixed phrase describing the configuration, never the value
+   * of any setting — an API key must not reach a response body or a log line
+   * even in part.
+   */
+  availability(): { available: boolean; reason?: string } {
     const key = this.config.get<string>('ANTHROPIC_API_KEY', '').trim();
     const enabled = this.config.get<string>('SCAN_VISION_ENABLED', 'true').trim().toLowerCase();
-    return key.length > 0 && enabled !== 'false';
+
+    if (enabled === 'false') {
+      return { available: false, reason: 'Assisted reading is switched off on this deployment.' };
+    }
+    if (!key) {
+      return { available: false, reason: 'Assisted reading is not configured on this deployment.' };
+    }
+    return { available: true };
   }
 
   private getClient(): Anthropic {
@@ -171,10 +204,11 @@ export class VisionService {
       return this.parseMedicines(text.text);
     } catch (err) {
       if (err instanceof ServiceUnavailableException) throw err;
-      // Never leak the upstream error body — it can echo request content.
-      this.logger.error(
-        `Vision extraction failed: ${err instanceof Error ? err.message : 'unknown error'}`,
-      );
+      // Never leak the upstream error body — it can echo request content, and a
+      // provider that quotes the request back is quoting a prescription. Only
+      // the error's type and HTTP status are recorded: enough to tell a bad key
+      // from a rate limit from an outage, with nothing of the page in it.
+      this.logger.error(`Vision extraction failed: ${describeFailure(err)}`);
       throw new ServiceUnavailableException(
         'Assisted reading is temporarily unavailable. Please try again or enter the medicine name manually.',
       );

@@ -64,6 +64,47 @@ async function renderPageToCanvas(page, scale = OCR_RENDER_SCALE) {
 }
 
 /**
+ * Rasterize the first `maxPages` pages of a PDF, on demand.
+ *
+ * Extraction keeps a raster only for pages it had to OCR, which is the right
+ * trade for the common case — rasterizing a text PDF that read perfectly is
+ * memory and time spent for nothing. But it left assisted reading with nothing
+ * to send when a text layer parsed cleanly and still yielded no medicines: the
+ * page images were never made, and the fallback refused PDFs outright.
+ *
+ * So they are made here instead, when the user actually asks for assisted
+ * reading. The document is re-opened from the original file, only the pages
+ * that will be sent are rendered, and the document is released immediately —
+ * so a 20-page PDF costs four rasters, not twenty, and only if asked.
+ */
+export async function renderPdfPageImages(file, { maxPages = 4, scale = OCR_RENDER_SCALE } = {}) {
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
+  const images = []
+
+  try {
+    const limit = Math.min(maxPages, pdf.numPages)
+    for (let pageNumber = 1; pageNumber <= limit; pageNumber++) {
+      const page = await pdf.getPage(pageNumber)
+      const canvas = await renderPageToCanvas(page, scale)
+      images.push(canvas.toDataURL('image/jpeg', 0.85))
+      // Drop the page's own resources as we go; the whole point is not holding
+      // a document's worth of rendered pages in memory at once.
+      page.cleanup?.()
+    }
+  } finally {
+    try {
+      await pdf.cleanup?.()
+      await pdf.destroy?.()
+    } catch {
+      /* nothing to release */
+    }
+  }
+
+  return images
+}
+
+/**
  * Extract text from every page of a PDF.
  *
  * @returns {Promise<{

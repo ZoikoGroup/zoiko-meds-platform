@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Flash, useFlash } from '@/components/shared/flash'
+import { DOC_ACCEPT, formatBytes, readDocumentFile } from './verification-document'
 import { ErrorState } from '@/components/shared/states'
 import {
   getProfile,
@@ -321,6 +322,11 @@ export default function PharmacyProfile() {
   const [loadError, setLoadError] = useState(null)
   const [saveError, setSaveError] = useState(null)
   const [saving, setSaving] = useState(false)
+  // The licence document chosen but not yet saved. It travels with the next
+  // save; nothing is uploaded on selection, so a file picked and abandoned
+  // never reaches the reviewer.
+  const [pendingDoc, setPendingDoc] = useState(null)
+  const docInputRef = useRef(null)
   const [flashMsg, flash] = useFlash()
 
   // Which country a local number is read against. Follows the pharmacy's own
@@ -483,9 +489,17 @@ export default function PharmacyProfile() {
     setSaving(true)
     setSaveError(null)
     try {
-      const updated = await updateProfile(profile)
+      // One request: the profile and the licence document are saved together,
+      // so a file the API refuses fails the whole submission rather than
+      // reporting a submission the reviewer has nothing to review.
+      const updated = await updateProfile(
+        pendingDoc ? { ...profile, document: pendingDoc.document } : profile,
+      )
       if (updated) {
         setProfile(updated)
+        // Stored — the "currently attached" line now comes from the server.
+        setPendingDoc(null)
+        if (docInputRef.current) docInputRef.current.value = ''
         // Echo what the server actually stored, not what was typed.
         setSavedCoords({
           latitude: updated.latitude ?? null,
@@ -670,6 +684,64 @@ export default function PharmacyProfile() {
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field id="p-name" label="Pharmacy name" required value={profile.name} onChange={set('name')} placeholder="e.g. Apollo Pharmacy, Kompally" />
               <Field id="p-license" label="Licence number" required value={profile.licenseNumber} onChange={set('licenseNumber')} placeholder="e.g. LIC-HYD-01" />
+            </div>
+
+            {/* Verification document. The reviewer's Verification Center has
+                always had an "Uploaded Documents" panel; this is the control
+                that fills it. Saved with the form, not on selection. */}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="p-doc">Verification document</Label>
+              <input
+                ref={docInputRef}
+                id="p-doc"
+                type="file"
+                accept={DOC_ACCEPT}
+                className="sr-only"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  const result = await readDocumentFile(file).catch((err) => ({ error: err.message }))
+                  if (result.error) {
+                    setPendingDoc(null)
+                    setSaveError(result.error)
+                    e.target.value = ''
+                    return
+                  }
+                  setSaveError(null)
+                  setPendingDoc({ name: file.name, size: file.size, document: result.document })
+                  markDirty()
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => docInputRef.current?.click()}
+                >
+                  {profile.document || pendingDoc ? 'Replace document' : 'Upload document'}
+                </Button>
+                {pendingDoc ? (
+                  <span className="text-xs text-muted-foreground">
+                    Selected: <span className="font-medium text-foreground">{pendingDoc.name}</span>
+                    {' · saved when you submit'}
+                  </span>
+                ) : profile.document ? (
+                  <span className="text-xs text-muted-foreground">
+                    Attached:{' '}
+                    <span className="font-medium text-foreground">{profile.document.filename}</span>
+                    {profile.document.sizeBytes ? ` · ${formatBytes(profile.document.sizeBytes)}` : ''}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    No document uploaded yet — PDF, JPG or PNG, up to 5 MB.
+                  </span>
+                )}
+              </div>
+              <span className="text-xs text-muted-foreground">
+                Your pharmacy licence or registration certificate. Reviewers see this with your
+                verification request.
+              </span>
             </div>
           </CardContent>
         </Card>

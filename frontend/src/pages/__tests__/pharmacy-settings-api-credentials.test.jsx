@@ -15,9 +15,20 @@ import userEvent from '@testing-library/user-event'
 const getIntegrationMock = vi.fn()
 const issueIntegrationKeyMock = vi.fn()
 
+// The page also loads its notification switches on mount. They are not what
+// these tests are about, so they answer with everything on and save cleanly.
+const ALL_PREFS_ON = {
+  inventoryAlerts: true,
+  verificationUpdates: true,
+  uploadResults: true,
+  systemMessages: true,
+}
+
 vi.mock('@/services/pharmacy-api', () => ({
   getIntegration: () => getIntegrationMock(),
   issueIntegrationKey: () => issueIntegrationKeyMock(),
+  getNotificationPreferences: () => Promise.resolve({ ...ALL_PREFS_ON }),
+  updateNotificationPreferences: (patch) => Promise.resolve({ ...ALL_PREFS_ON, ...patch }),
 }))
 
 let currentUser = { name: 'Asha', email: 'asha@apollo.test', role: 'PHARMACY_ADMIN' }

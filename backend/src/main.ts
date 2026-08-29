@@ -4,12 +4,32 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { jsonBodyLimit } from './common/middleware/json-body-limit';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppLogger } from './common/logger/app-logger.service';
 import { StripeConfig } from './modules/commercial/stripe/stripe.config';
 import { appBaseUrl, appBaseUrlWarning } from './config/app-urls';
 import { MigrationStatusService } from './modules/health/migration-status.service';
+
+/**
+ * Ceiling for the prescription-scan vision endpoint.
+ *
+ * Sized from what the client actually sends: up to 4 page images, each capped
+ * by VisionExtractDto at ~2.8 M base64 characters. Generous enough for a
+ * four-page scan, still a hard stop — an unbounded parser here would let one
+ * request exhaust the instance's memory.
+ */
+const SCAN_VISION_BODY_LIMIT = '12mb';
+
+/**
+ * Ceiling for a pharmacy profile save.
+ *
+ * The profile itself is a few hundred bytes; the allowance is for the licence
+ * document that accompanies a verification submission, which the service caps
+ * at 5 MB of actual file. Base64 inflates that by a third.
+ */
+const PHARMACY_PROFILE_BODY_LIMIT = '8mb';
 
 async function bootstrap() {
   // rawBody keeps the exact bytes of each request available. Stripe signs the raw
@@ -42,6 +62,31 @@ async function bootstrap() {
     // can read it and surface a trace id for each request.
     exposedHeaders: ['X-Request-Id'],
   });
+
+  // Prescription page images are base64 data URLs of a few MB each, so the one
+  // endpoint that receives them needs a bigger ceiling than the rest of the API.
+  // Scoped to that path deliberately: mounted here it runs before Nest's own
+  // parser (registered during listen()), so every other route — /auth/login
+  // included — keeps Express's 100 kb default. The DTO still caps each image
+  // and the array length; this only decides what may reach the validator.
+  app.use(
+    `/${apiPrefix}/scan/vision-extract`,
+    jsonBodyLimit(
+      SCAN_VISION_BODY_LIMIT,
+      'The prescription images are too large to send. Try fewer pages, or a lower-resolution photo.',
+    ),
+  );
+
+  // The pharmacy profile save carries the licence document with it, so this
+  // route needs the same treatment for the same reason. Capped well below the
+  // scan endpoint: one document of a few MB, not four page images.
+  app.use(
+    `/${apiPrefix}/pharmacies/me`,
+    jsonBodyLimit(
+      PHARMACY_PROFILE_BODY_LIMIT,
+      'That licence document is too large to send. Use a file under 5 MB.',
+    ),
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({

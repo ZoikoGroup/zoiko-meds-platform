@@ -64,6 +64,62 @@ export function foldConfusions(value) {
     .join('')
 }
 
+/**
+ * Letters OCR substitutes for digits, and the digits they were.
+ *
+ * Only the unambiguous shapes. `g` is left out because it is a unit (gram), and
+ * `z`/`b` are left out because they cost more in false repairs than they save.
+ */
+const DIGIT_LOOKALIKES = { o: '0', l: '1', i: '1', '|': '1', s: '5' }
+
+/** Unit spellings OCR produces from the real ones. `rn` is the classic m. */
+const UNIT_REPAIRS = [
+  [/\brn(g|l|cg)\b/gi, 'm$1'],
+  [/\bm9\b/gi, 'mg'],
+  [/\bmq\b/gi, 'mg'],
+]
+
+/**
+ * Repair OCR damage inside numeric strengths, on a copy used for parsing only.
+ *
+ * "65O mg" and "650 rng" are the same prescription as "650 mg"; the regex that
+ * finds strengths sees neither, so the strength was dropped and the stray token
+ * left glued to the medicine name. Reading it back is a small, bounded repair.
+ *
+ * Deliberately conservative, because a wrong strength is worse than none:
+ *
+ *  - a letter becomes a digit only inside a token that already holds a digit,
+ *    so "OO mg" stays as it is while "65O mg" is repaired — the surrounding
+ *    digits are what make the reading safe;
+ *  - only the numeric run is touched, never the whole line, so a medicine name
+ *    is never rewritten by this;
+ *  - the result is a comparison copy. Callers keep the original text for
+ *    display and for the confirmation the user is asked for.
+ */
+export function repairStrengthText(value) {
+  const text = toAscii(value ?? '')
+  if (!text) return ''
+
+  const withUnits = UNIT_REPAIRS.reduce(
+    (acc, [pattern, replacement]) => acc.replace(pattern, replacement),
+    text,
+  )
+
+  // A run of digits and digit-lookalikes, immediately before a unit.
+  return withUnits.replace(
+    /\b([0-9a-z|]{1,6})(\s*)(mg|mcg|ug|g|gm|kg|ml|l|iu|u|%)\b/gi,
+    (match, numeric, gap, unit) => {
+      if (!/[0-9]/.test(numeric)) return match
+      const repaired = Array.from(numeric)
+        .map((ch) => DIGIT_LOOKALIKES[ch.toLowerCase()] ?? ch)
+        .join('')
+      // Only accept a repair that produced a clean number — anything else is a
+      // guess, and a guessed dose is not worth having.
+      return /^[0-9]+(\.[0-9]+)?$/.test(repaired) ? `${repaired}${gap}${unit}` : match
+    },
+  )
+}
+
 /** Levenshtein edit distance. Iterative, two-row — O(min(a,b)) memory. */
 export function levenshtein(a, b) {
   const s1 = a ?? ''
@@ -127,13 +183,57 @@ export function bestSimilarity(candidate, references) {
 }
 
 /**
- * True when one name contains the other as a whole-token run — "amoxicillin"
- * inside "amoxicillin clavulanate". Guards against the substring trap where
- * two-letter fragments match everything.
+ * Shortest side of a containment check that still counts as evidence.
+ *
+ * Four alphanumerics. "Dolo" inside "Dolo 650" is a real reading; "Pan" inside
+ * "Pantoprazole" is three characters of a word that could have been anything.
  */
-export function containsName(haystack, needle) {
+export const MIN_CONTAINMENT_CHARS = 4
+
+/** Whole-token containment: are `needle`'s tokens a consecutive run in `hay`'s? */
+function tokenRunIncludes(hayTokens, needleTokens) {
+  if (needleTokens.length === 0 || needleTokens.length > hayTokens.length) return false
+  for (let start = 0; start + needleTokens.length <= hayTokens.length; start++) {
+    let matched = true
+    for (let offset = 0; offset < needleTokens.length; offset++) {
+      if (hayTokens[start + offset] !== needleTokens[offset]) {
+        matched = false
+        break
+      }
+    }
+    if (matched) return true
+  }
+  return false
+}
+
+/**
+ * True when one name contains the other as a whole-token run — "amoxicillin"
+ * inside "amoxicillin clavulanate".
+ *
+ * Both sides are length-guarded, not just the reference. Guarding only one of
+ * them was the substring trap in a different disguise: a three-character OCR
+ * fragment ("Pan", "Met", "Ome") satisfied `includes` against every catalog
+ * entry that happened to contain those letters, and the caller then promoted it
+ * to near-certainty. A fragment that short is not evidence of anything.
+ *
+ * Containment is token-aligned for the same reason — "Amox" is a prefix of
+ * "Amoxicillin", not a reading of it, and a prefix match on a garbled word is
+ * how OCR noise becomes a confident diagnosis of the wrong medicine.
+ *
+ * `minChars` may be lowered by a caller that holds corroborating evidence of
+ * its own (a strength that matches the catalog entry, say) — see
+ * resolveCandidate in extract-prescription.js.
+ */
+export function containsName(haystack, needle, { minChars = MIN_CONTAINMENT_CHARS } = {}) {
   const h = normalize(haystack)
   const n = normalize(needle)
-  if (!h || !n || n.length < 4) return false
-  return h === n || h.includes(n) || n.includes(h)
+  if (!h || !n) return false
+  if (h === n) return true
+
+  const shorter = h.length <= n.length ? h : n
+  if (shorter.replace(/[^a-z0-9]/g, '').length < minChars) return false
+
+  const hTokens = h.split(/\s+/).filter(Boolean)
+  const nTokens = n.split(/\s+/).filter(Boolean)
+  return tokenRunIncludes(hTokens, nTokens) || tokenRunIncludes(nTokens, hTokens)
 }

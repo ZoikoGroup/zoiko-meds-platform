@@ -1,6 +1,39 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsLatitude, IsLongitude, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsLatitude,
+  IsLongitude,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { MAX_DOCUMENT_BASE64_CHARS } from '../verification-document';
+
+/**
+ * The licence document sent with a verification submission.
+ *
+ * Base64 rather than multipart, matching how the prescription scan endpoint
+ * already accepts a file — one transport for uploads, and no second body
+ * parser to configure. The length cap here only bounds what reaches the
+ * validator; the bytes are checked properly in readVerificationDocument.
+ */
+export class VerificationDocumentDto {
+  @ApiPropertyOptional({ example: 'pharmacy-licence.pdf' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  filename?: string;
+
+  @ApiPropertyOptional({ description: 'Base64, or a data: URL of the file.' })
+  @IsString()
+  @IsNotEmpty({ message: 'Select a licence document to upload.' })
+  @MaxLength(MAX_DOCUMENT_BASE64_CHARS, {
+    message: 'That file is too large. Licence documents must be under 5 MB.',
+  })
+  content!: string;
+}
 
 export class UpdatePharmacyProfileDto {
   @ApiPropertyOptional({ example: 'Apollo Pharmacy' })
@@ -82,4 +115,17 @@ export class UpdatePharmacyProfileDto {
   @Type(() => Number)
   @IsLongitude()
   longitude?: number;
+
+  /**
+   * The licence document, sent with the same save that submits for review.
+   *
+   * One request, so an unreadable file fails the whole submission rather than
+   * leaving a profile filed for verification with nothing attached to it.
+   * Omitted on a save that is not changing the document — the stored one stays.
+   */
+  @ApiPropertyOptional({ type: VerificationDocumentDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VerificationDocumentDto)
+  document?: VerificationDocumentDto;
 }

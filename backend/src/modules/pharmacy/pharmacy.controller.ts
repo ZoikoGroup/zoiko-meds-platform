@@ -40,6 +40,8 @@ import { ResolveMapLinkDto } from './dto/resolve-map-link.dto';
 import { SaveIntegrationDto } from './dto/save-integration.dto';
 import { PushInventoryDto } from './dto/push-inventory.dto';
 import { PharmacyIntegrationService } from './integration/pharmacy-integration.service';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import { NotificationPreferencesService } from './notification-preferences.service';
 
 @ApiTags('pharmacy')
 @Controller('pharmacies')
@@ -48,6 +50,7 @@ export class PharmacyController {
     private readonly pharmacy: PharmacyService,
     private readonly logos: PharmacyLogoService,
     private readonly integrations: PharmacyIntegrationService,
+    private readonly notificationPreferences: NotificationPreferencesService,
   ) {}
 
   // --- Authenticated inventory & dashboard routes (MUST be declared before :id) ---------
@@ -128,6 +131,35 @@ export class PharmacyController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.pharmacy.getUserNotifications(user.id);
+  }
+
+  @Get('notification-preferences')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Notification switches for the logged-in pharmacy account',
+    description:
+      'Scoped to the caller. An account that has never changed them gets the defaults (everything on) rather than an empty body, so the settings page has a real value to render.',
+  })
+  async getNotificationPreferences(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificationPreferences.get(user.id);
+  }
+
+  @Patch('notification-preferences')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Change notification switches for the logged-in pharmacy account',
+    description:
+      'A patch: only the switches sent are changed. Returns the full saved set, so the client renders what was stored rather than what it hoped was stored.',
+  })
+  async updateNotificationPreferences(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateNotificationPreferencesDto,
+  ) {
+    return this.notificationPreferences.update(user.id, dto);
   }
 
   @Get('dashboard')
