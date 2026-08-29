@@ -82,7 +82,9 @@ function buildService() {
         },
       })),
     },
-    pharmacy: { findUnique: jest.fn().mockResolvedValue({ name: 'Apollo Pharmacy' }) },
+    pharmacy: {
+      findUnique: jest.fn().mockResolvedValue({ name: 'Apollo Pharmacy', jurisdictionId: 'jur_in' }),
+    },
   };
 
   const service = new PharmacyService(

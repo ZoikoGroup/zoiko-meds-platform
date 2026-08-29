@@ -75,7 +75,9 @@ function buildService() {
       }),
       update: jest.fn(async ({ data }: any) => ({ ...state.catalogHit, ...data })),
     },
-    pharmacy: { findUnique: jest.fn().mockResolvedValue({ name: 'Apollo Pharmacy' }) },
+    pharmacy: {
+      findUnique: jest.fn().mockResolvedValue({ name: 'Apollo Pharmacy', jurisdictionId: 'jur_in' }),
+    },
   };
 
   // Echo back the identity the signal ends up pointing at, as Prisma would.
@@ -134,6 +136,7 @@ describe('editing an inventory item', () => {
         genericName: 'Salbutamol',
         strength: '200 mcg',
         dosageForm: 'Tablet',
+        jurisdictionId: 'jur_in',
       },
     });
     // ...and the row now points at it. Previously only `confidence` was written,

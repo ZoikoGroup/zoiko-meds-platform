@@ -440,6 +440,15 @@ export class MedibaseService {
     };
   }
 
+  /**
+   * Jurisdictions available to assign to a medicine identity during curation.
+   * An empty list is a real, distinct answer (MSA-35): it means no jurisdiction
+   * has ever been created in this deployment, not that the request failed.
+   */
+  async listJurisdictions() {
+    return this.prisma.jurisdiction.findMany({ orderBy: { code: 'asc' } });
+  }
+
   async getForAdmin(id: string) {
     const medicine = await this.prisma.medicineEntity.findUnique({
       where: { id },

@@ -71,6 +71,9 @@ describe('PharmacyService self-service profile onboarding', () => {
         update: jest.fn(),
         updateMany: jest.fn(),
       },
+      jurisdiction: {
+        upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN', name: 'India' }),
+      },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
     audit = { write: jest.fn() };
@@ -398,7 +401,7 @@ describe('PharmacyService self-service profile onboarding', () => {
         findUnique: jest.fn().mockResolvedValue(null),
         upsert: jest.fn().mockResolvedValue({ id: 'av_1' }),
       };
-      prisma.pharmacy.findUnique.mockResolvedValue({ id: 'ph_1', name: 'Apollo' });
+      prisma.pharmacy.findUnique.mockResolvedValue({ id: 'ph_1', name: 'Apollo', jurisdictionId: 'jur_in' });
     });
 
     it('looks the medicine up by name and strength together', async () => {
@@ -430,6 +433,10 @@ describe('PharmacyService self-service profile onboarding', () => {
           // Not silently 'Tablet': a syrup recorded as a tablet is a different
           // medicine as far as a patient reading the result is concerned.
           dosageForm: 'Syrup',
+          // Stamped from the reporting pharmacy (MSA-35) — without this every
+          // pharmacy-sourced identity stayed jurisdictionless forever, and the
+          // MediBase dashboard's market counts never moved off zero.
+          jurisdictionId: 'jur_in',
         },
       });
     });

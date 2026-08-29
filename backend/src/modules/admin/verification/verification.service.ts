@@ -8,6 +8,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
+import { resolveCountryAlpha2 } from '../../../common/countries';
+import { resolveJurisdictionId } from '../../../common/jurisdiction';
 import { CreateVerificationDto } from './dto/create-verification.dto';
 import { UpdateVerificationDto } from './dto/update-verification.dto';
 
@@ -133,6 +135,7 @@ export class VerificationService {
             addressLine1: 'Primary Location',
             city: 'Main City',
             country: 'India',
+            jurisdictionId: await resolveJurisdictionId(tx, resolveCountryAlpha2('India')),
           },
         });
         pharmacyId = newPharmacy.id;

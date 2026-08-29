@@ -15,6 +15,7 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { resolveCountryAlpha2 } from '../../common/countries';
+import { resolveJurisdictionId } from '../../common/jurisdiction';
 import { normalizePhone } from '../../common/phone';
 import { logoUrlFor } from './logo/pharmacy-logo.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -374,6 +375,7 @@ export class PharmacyService {
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
+      const jurisdictionId = await resolveJurisdictionId(tx, submittedCountry);
       const pharmacy = await tx.pharmacy.create({
         data: {
           name,
@@ -384,6 +386,7 @@ export class PharmacyService {
           city: dto.city?.trim() || null,
           region: dto.region?.trim() || null,
           country: submittedCountry,
+          jurisdictionId,
           postalCode: dto.postalCode?.trim() || null,
           // Without these the pharmacy is invisible to the distance-bounded
           // patient search, however complete the rest of the profile is.
@@ -489,6 +492,14 @@ export class PharmacyService {
     const country =
       dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country;
 
+    // Re-resolved only when the country itself is part of this edit — an edit
+    // to, say, the address alone must not spend a write re-deriving a value
+    // nothing about this save is changing.
+    const jurisdictionId =
+      dto.country !== undefined
+        ? await resolveJurisdictionId(this.prisma, country)
+        : existing.jurisdictionId;
+
     // The contact number is what a patient acts on, so it cannot be cleared, and a
     // record that never had one has to supply it on the next save. A save that does
     // not touch the field on a pharmacy that already has a number is unaffected: a
@@ -533,6 +544,7 @@ export class PharmacyService {
         city: dto.city !== undefined ? dto.city.trim() || null : existing.city,
         region: dto.region !== undefined ? dto.region.trim() || null : existing.region,
         country,
+        jurisdictionId,
         postalCode:
           dto.postalCode !== undefined ? dto.postalCode.trim() || null : existing.postalCode,
         latitude: dto.latitude !== undefined ? dto.latitude : existing.latitude,
@@ -955,6 +967,22 @@ export class PharmacyService {
   }
 
   /**
+   * The reporting pharmacy's jurisdiction, for stamping onto a MediBase
+   * identity created from what it typed (MSA-35). Without this, every
+   * pharmacy-sourced identity carries `jurisdictionId: null` forever — the
+   * catalog has no other moment at which a jurisdiction is ever attached to
+   * one, so the MediBase dashboard's market counts stay at zero regardless of
+   * how large the catalog grows.
+   */
+  private async getPharmacyJurisdictionId(pharmacyId: string): Promise<string | null> {
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id: pharmacyId },
+      select: { jurisdictionId: true },
+    });
+    return pharmacy?.jurisdictionId ?? null;
+  }
+
+  /**
    * Aggregate live database analytics for the authenticated pharmacy:
    * 1. Inventory Overview (Available, Limited, Out of Stock counts)
    * 2. Availability Trend (daily percentage over last 7 days)
@@ -1275,6 +1303,7 @@ export class PharmacyService {
           genericName: generic,
           strength,
           dosageForm,
+          jurisdictionId: await this.getPharmacyJurisdictionId(pharmacyId),
         },
       });
     }
@@ -1561,6 +1590,7 @@ export class PharmacyService {
             genericName: generic || null,
             strength: strength || null,
             dosageForm,
+            jurisdictionId: await this.getPharmacyJurisdictionId(pharmacyId),
           },
         });
         medicineId = created.id;
@@ -1762,6 +1792,11 @@ export class PharmacyService {
     let totalProcessed = 0;
     const processedSignalIds = new Set<string>();
 
+    // Looked up once, not per row: pharmacyId is constant for the whole file,
+    // and a several-hundred-row CSV should not cost a query per row for a
+    // value that never changes within the call.
+    const jurisdictionId = await this.getPharmacyJurisdictionId(pharmacyId);
+
     /**
      * Identities this file reported as in stock, deduplicated.
      *
@@ -1814,6 +1849,7 @@ export class PharmacyService {
               genericName: generic || null,
               strength: strength || null,
               dosageForm,
+              jurisdictionId,
             },
           });
         }

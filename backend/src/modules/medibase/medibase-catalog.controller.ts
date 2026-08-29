@@ -35,4 +35,10 @@ export class MedibaseCatalogController {
   identities(@Query() query: ListIdentitiesQuery) {
     return this.medibase.listIdentities(query);
   }
+
+  @Get('jurisdictions')
+  @ApiOperation({ summary: 'Jurisdictions available for curation (medicine/pharmacy assignment)' })
+  jurisdictions() {
+    return this.medibase.listJurisdictions();
+  }
 }

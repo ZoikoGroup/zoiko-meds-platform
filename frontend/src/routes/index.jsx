@@ -35,6 +35,7 @@ const ZoikoSignal = lazyImport(() => import('@/pages/ZoikoSignal'), 'ZoikoSignal
 const ZoikoAvail = lazyImport(() => import('@/pages/ZoikoAvail'), 'ZoikoAvail')
 const ZoikoAvailSandbox = lazyImport(() => import('@/pages/ZoikoAvailSandbox'), 'ZoikoAvailSandbox')
 const MediBase = lazyImport(() => import('@/pages/MediBase'), 'MediBase')
+const MediBaseReview = lazyImport(() => import('@/pages/MediBaseReview'), 'MediBaseReview')
 const Reports = lazyImport(() => import('@/pages/Reports'), 'Reports')
 const Notifications = lazyImport(() => import('@/pages/Notifications'), 'Notifications')
 const AuditLogs = lazyImport(() => import('@/pages/AuditLogs'), 'AuditLogs')
@@ -106,6 +107,7 @@ export const router = createBrowserRouter([
           { path: 'zoikoavail', element: <ZoikoAvail /> },
           { path: 'zoikoavail/sandbox', element: <ZoikoAvailSandbox /> },
           { path: 'medibase', element: <MediBase /> },
+          { path: 'medibase/review', element: <MediBaseReview /> },
           { path: 'reports', element: <Reports /> },
           { path: 'notifications', element: <Notifications /> },
           { path: 'audit-logs', element: <AuditLogs /> },
