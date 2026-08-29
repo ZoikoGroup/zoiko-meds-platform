@@ -72,6 +72,9 @@ export const deleteUser = (id) =>
 // controllers — so the matrix cannot claim access a route refuses.
 export const getRoleMatrix = () => apiFetch('/admin/roles')
 
+/** Cross-entity quick search for the console search bar (MSA-31). */
+export const globalSearch = (q) => apiFetch(`/admin/search${qs({ q })}`)
+
 // --- ZoikoAvail API keys ---------------------------------------------------
 //
 // There is no "reveal": only the hash is stored, so a key exists in the open

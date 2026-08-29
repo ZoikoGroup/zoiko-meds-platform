@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { DataTable } from '@/components/shared/data-table'
@@ -44,6 +45,12 @@ const selectClass =
   'h-8 rounded-lg border border-input bg-card px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50'
 
 export default function MediBaseReview() {
+  const [searchParams] = useSearchParams()
+  // Arriving from the console search bar with a medicine name already typed
+  // there (MSA-31). Read once: this page owns the query from here on, the
+  // same as it would if the operator had typed it into this box directly.
+  const [initialQuery] = useState(() => searchParams.get('q') || '')
+
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -53,9 +60,12 @@ export default function MediBaseReview() {
   const [busyId, setBusyId] = useState(null)
   const [flashMsg, flash] = useFlash()
 
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [qualityFilter, setQualityFilter] = useState('NEEDS_REVIEW')
+  const [search, setSearch] = useState(initialQuery)
+  const [debouncedSearch, setDebouncedSearch] = useState(initialQuery)
+  // A medicine found by name could be in any quality state, not only
+  // NEEDS_REVIEW — the default filter would otherwise hide the very record
+  // the search bar was asked to find.
+  const [qualityFilter, setQualityFilter] = useState(initialQuery ? '' : 'NEEDS_REVIEW')
 
   // Loaded once: jurisdictions rarely change mid-session, and every row's
   // dropdown reads from the same list. Null means "still loading" so the
