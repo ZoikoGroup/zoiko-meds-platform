@@ -107,7 +107,7 @@ export class PharmacyAdminService {
     return this.toDto(await this.require(id));
   }
 
-  async create(actorId: string, dto: CreatePharmacyDto) {
+  async create(actorId: string, dto: CreatePharmacyDto, ipAddress?: string) {
     // Resolved outside the transaction: geocoding is a network call and must
     // not hold a database transaction open.
     const coords = await this.resolveCoordinates(dto, [
@@ -161,13 +161,18 @@ export class PharmacyAdminService {
       return created;
     });
 
-    await this.audit.write(actorId, 'admin.pharmacy.create', 'Pharmacy', pharmacy.id, {
-      name: pharmacy.name,
-    });
+    await this.audit.write(
+      actorId,
+      'admin.pharmacy.create',
+      'Pharmacy',
+      pharmacy.id,
+      { name: pharmacy.name },
+      ipAddress,
+    );
     return this.toDto(pharmacy);
   }
 
-  async update(actorId: string, id: string, dto: UpdatePharmacyDto) {
+  async update(actorId: string, id: string, dto: UpdatePharmacyDto, ipAddress?: string) {
     const current = await this.prisma.pharmacy.findUnique({ where: { id } });
     if (!current) throw new NotFoundException('Pharmacy not found');
 
@@ -248,13 +253,23 @@ export class PharmacyAdminService {
       return updated;
     });
 
-    await this.audit.write(actorId, 'admin.pharmacy.update', 'Pharmacy', id, {
-      changed: Object.keys(dto),
-    });
+    await this.audit.write(
+      actorId,
+      'admin.pharmacy.update',
+      'Pharmacy',
+      id,
+      { changed: Object.keys(dto) },
+      ipAddress,
+    );
     return this.toDto(pharmacy);
   }
 
-  async setStatus(actorId: string, id: string, status: VerificationStatus) {
+  async setStatus(
+    actorId: string,
+    id: string,
+    status: VerificationStatus,
+    ipAddress?: string,
+  ) {
     const pharmacy = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.pharmacy.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('Pharmacy not found');
@@ -279,11 +294,17 @@ export class PharmacyAdminService {
       'Pharmacy',
       id,
       { name: pharmacy.name, status },
+      ipAddress,
     );
     return this.toDto(pharmacy);
   }
 
-  async bulkSetStatus(actorId: string, ids: string[], status: VerificationStatus) {
+  async bulkSetStatus(
+    actorId: string,
+    ids: string[],
+    status: VerificationStatus,
+    ipAddress?: string,
+  ) {
     await this.prisma.$transaction(async (tx) => {
       await tx.pharmacy.updateMany({
         where: { id: { in: ids } },
@@ -302,16 +323,22 @@ export class PharmacyAdminService {
       'Pharmacy',
       null,
       { ids, status },
+      ipAddress,
     );
     return { updated: ids.length, status };
   }
 
-  async remove(actorId: string, id: string) {
+  async remove(actorId: string, id: string, ipAddress?: string) {
     const pharmacy = await this.require(id);
     await this.prisma.pharmacy.delete({ where: { id } });
-    await this.audit.write(actorId, 'admin.pharmacy.delete', 'Pharmacy', id, {
-      name: pharmacy.name,
-    });
+    await this.audit.write(
+      actorId,
+      'admin.pharmacy.delete',
+      'Pharmacy',
+      id,
+      { name: pharmacy.name },
+      ipAddress,
+    );
     return { id, deleted: true };
   }
 

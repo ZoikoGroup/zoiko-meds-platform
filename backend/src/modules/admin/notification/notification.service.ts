@@ -18,7 +18,12 @@ export class NotificationService {
     return rows.map((n) => this.toDto(n));
   }
 
-  async create(actorId: string, actorEmail: string, dto: CreateNotificationDto) {
+  async create(
+    actorId: string,
+    actorEmail: string,
+    dto: CreateNotificationDto,
+    ipAddress?: string,
+  ) {
     const notification = await this.prisma.notification.create({
       data: {
         title: dto.title,
@@ -35,11 +40,12 @@ export class NotificationService {
       'Notification',
       notification.id,
       { title: notification.title, target: notification.target },
+      ipAddress,
     );
     return this.toDto(notification);
   }
 
-  async remove(actorId: string, id: string) {
+  async remove(actorId: string, id: string, ipAddress?: string) {
     const existing = await this.prisma.notification.findUnique({
       where: { id },
     });
@@ -50,6 +56,8 @@ export class NotificationService {
       'admin.notification.delete',
       'Notification',
       id,
+      undefined,
+      ipAddress,
     );
     return { id, deleted: true };
   }

@@ -22,7 +22,12 @@ export class ReportsService {
     return this.toDto(await this.require(id));
   }
 
-  async create(actorId: string, actorEmail: string, dto: CreateReportDto) {
+  async create(
+    actorId: string,
+    actorEmail: string,
+    dto: CreateReportDto,
+    ipAddress?: string,
+  ) {
     // A report with a schedule is SCHEDULED by default; one-off exports are READY.
     const status =
       dto.status ?? (dto.schedule ? ReportStatus.SCHEDULED : ReportStatus.READY);
@@ -39,15 +44,18 @@ export class ReportsService {
         createdBy: actorEmail,
       },
     });
-    await this.audit.write(actorId, 'admin.report.create', 'Report', report.id, {
-      name: report.name,
-      format: report.format,
-      scope: report.scope,
-    });
+    await this.audit.write(
+      actorId,
+      'admin.report.create',
+      'Report',
+      report.id,
+      { name: report.name, format: report.format, scope: report.scope },
+      ipAddress,
+    );
     return this.toDto(report);
   }
 
-  async duplicate(actorId: string, actorEmail: string, id: string) {
+  async duplicate(actorId: string, actorEmail: string, id: string, ipAddress?: string) {
     const src = await this.require(id);
     const report = await this.prisma.report.create({
       data: {
@@ -67,14 +75,15 @@ export class ReportsService {
       'Report',
       report.id,
       { sourceId: id },
+      ipAddress,
     );
     return this.toDto(report);
   }
 
-  async remove(actorId: string, id: string) {
+  async remove(actorId: string, id: string, ipAddress?: string) {
     await this.require(id);
     await this.prisma.report.delete({ where: { id } });
-    await this.audit.write(actorId, 'admin.report.delete', 'Report', id);
+    await this.audit.write(actorId, 'admin.report.delete', 'Report', id, undefined, ipAddress);
     return { id, deleted: true };
   }
 
@@ -83,7 +92,7 @@ export class ReportsService {
    * aggregate-only — never PHI or exact stock. The `data` block is a placeholder
    * that real per-scope generators plug into.
    */
-  async download(actorId: string, id: string) {
+  async download(actorId: string, id: string, ipAddress?: string) {
     const report = await this.require(id);
     await this.audit.write(
       actorId,
@@ -91,6 +100,7 @@ export class ReportsService {
       'Report',
       id,
       { format: report.format },
+      ipAddress,
     );
     return {
       report: this.toDto(report),

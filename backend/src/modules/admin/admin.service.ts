@@ -206,7 +206,7 @@ export class AdminService {
     return this.toPublicUser(user);
   }
 
-  async createUser(actorId: string, dto: CreateUserDto) {
+  async createUser(actorId: string, dto: CreateUserDto, ipAddress?: string) {
     const email = this.normalizeEmail(dto.email);
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -254,15 +254,21 @@ export class AdminService {
       await this.ensurePharmacyVerificationRequest(user.id, actorId);
     }
 
-    await this.audit(actorId, 'admin.user.create', user.id, {
-      email: user.email,
-      role: user.role,
-      provisioned: useInvite ? 'invite' : 'credentials',
-    });
+    await this.audit(
+      actorId,
+      'admin.user.create',
+      user.id,
+      {
+        email: user.email,
+        role: user.role,
+        provisioned: useInvite ? 'invite' : 'credentials',
+      },
+      ipAddress,
+    );
     return { ...this.toPublicUser(user), invited: useInvite };
   }
 
-  async updateUser(actorId: string, id: string, dto: UpdateUserDto) {
+  async updateUser(actorId: string, id: string, dto: UpdateUserDto, ipAddress?: string) {
     const target = await this.requireUser(id);
     const data: Prisma.UserUpdateInput = {};
 
@@ -308,13 +314,11 @@ export class AdminService {
     ) {
       await this.ensurePharmacyVerificationRequest(user.id, actorId);
     }
-    await this.audit(actorId, 'admin.user.update', id, {
-      changed: Object.keys(data),
-    });
+    await this.audit(actorId, 'admin.user.update', id, { changed: Object.keys(data) }, ipAddress);
     return this.toPublicUser(user);
   }
 
-  async setRole(actorId: string, id: string, role: UserRole) {
+  async setRole(actorId: string, id: string, role: UserRole, ipAddress?: string) {
     const target = await this.requireUser(id);
     if (target.role === role) {
       if (
@@ -343,23 +347,20 @@ export class AdminService {
       await this.ensurePharmacyVerificationRequest(user.id, actorId);
     }
 
-    await this.audit(actorId, 'admin.user.role', id, {
-      from: target.role,
-      to: role,
-    });
+    await this.audit(actorId, 'admin.user.role', id, { from: target.role, to: role }, ipAddress);
     return this.toPublicUser(user);
   }
 
-  async resetPassword(actorId: string, id: string, password: string) {
+  async resetPassword(actorId: string, id: string, password: string, ipAddress?: string) {
     await this.requireUser(id);
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     await this.prisma.user.update({ where: { id }, data: { passwordHash } });
     // NEVER log the password itself.
-    await this.audit(actorId, 'admin.user.password_reset', id);
+    await this.audit(actorId, 'admin.user.password_reset', id, undefined, ipAddress);
     return { id, message: 'Password has been reset' };
   }
 
-  async setActive(actorId: string, id: string, isActive: boolean) {
+  async setActive(actorId: string, id: string, isActive: boolean, ipAddress?: string) {
     const target = await this.requireUser(id);
     if (!isActive) {
       this.assertNotSelf(actorId, id, 'deactivate');
@@ -376,21 +377,25 @@ export class AdminService {
       isActive ? 'admin.user.activate' : 'admin.user.deactivate',
       id,
       { email: user.email, isActive },
+      ipAddress,
     );
     return this.toPublicUser(user);
   }
 
-  async deleteUser(actorId: string, id: string) {
+  async deleteUser(actorId: string, id: string, ipAddress?: string) {
     const target = await this.requireUser(id);
     this.assertNotSelf(actorId, id, 'delete');
     if (target.role === UserRole.SUPER_ADMIN) {
       await this.assertNotLastSuperAdmin(target);
     }
     await this.prisma.user.delete({ where: { id } });
-    await this.audit(actorId, 'admin.user.delete', id, {
-      email: target.email,
-      role: target.role,
-    });
+    await this.audit(
+      actorId,
+      'admin.user.delete',
+      id,
+      { email: target.email, role: target.role },
+      ipAddress,
+    );
     return { id, deleted: true };
   }
 
@@ -660,8 +665,9 @@ export class AdminService {
     action: string,
     entityId: string,
     metadata?: Prisma.InputJsonValue,
+    ipAddress?: string,
   ) {
-    return this.auditWriter.write(actorId, action, 'User', entityId, metadata);
+    return this.auditWriter.write(actorId, action, 'User', entityId, metadata, ipAddress);
   }
 
   private tally<T extends Record<string, unknown>>(
