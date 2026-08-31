@@ -70,7 +70,11 @@ function buildService(rows: Record<string, unknown>[]) {
     medicineEntity: { findMany: jest.fn().mockResolvedValue([]) },
     notification: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  const service = new PatientSignalService(prisma as never);
+  // No caller location in these units: they are about notification state, and
+  // a null origin is exactly what a patient who has not shared one produces.
+  const service = new PatientSignalService(prisma as never, {
+    resolveOrigin: jest.fn().mockResolvedValue(null),
+  } as never);
   return { service, prisma };
 }
 

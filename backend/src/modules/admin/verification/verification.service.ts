@@ -158,17 +158,22 @@ export class VerificationService {
       }
 
       if (!pharmacyId) {
+        // No address is invented for it. This row exists only because a
+        // verification request arrived without one, and "Primary Location, Main
+        // City, India" is not where the pharmacy is — it was shown to patients
+        // as the branch's address, and it geocodes (or fails to) somewhere that
+        // has nothing to do with the shop. Nulls are the true answer; the
+        // operator fills them in from the portal, which geocodes on save.
         const newPharmacy = await tx.pharmacy.create({
           data: {
             name: existing.pharmacyName,
             licenseNumber: existing.licenseNumber || `LIC-${Date.now().toString(36).toUpperCase()}`,
             verificationStatus: VerificationStatus.PENDING,
             isParticipating: false,
-            reliabilityScore: 0.8,
-            addressLine1: 'Primary Location',
-            city: 'Main City',
-            country: 'India',
-            jurisdictionId: await resolveJurisdictionId(tx, resolveCountryAlpha2('India')),
+            // Nothing has been reported yet, so nothing has been reported
+            // promptly. 0.8 was a score this pharmacy never earned, and it
+            // feeds the ZoikoAvail confidence band patients are shown.
+            reliabilityScore: 0,
           },
         });
         pharmacyId = newPharmacy.id;

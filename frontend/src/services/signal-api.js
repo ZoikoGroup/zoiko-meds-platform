@@ -7,6 +7,7 @@
 // ZoikoSignal page, home widget and cards render.
 
 import { apiFetch } from '@/lib/api-client'
+import { userLocationParams } from '@/lib/user-location'
 
 // Which notification types count as "safety" for the filter tab.
 export const SAFETY_TYPES = ['recall', 'safety']
@@ -14,8 +15,19 @@ export const SAFETY_TYPES = ['recall', 'safety']
 // ---------------------------------------------------------------------------
 // Read APIs
 // ---------------------------------------------------------------------------
+/**
+ * Saved medicines with their current availability status.
+ *
+ * The caller's location goes with the request: each row names the nearest
+ * pharmacy, and "nearest" is only meaningful relative to the patient. Without a
+ * stored location the API names the pharmacy and omits the distance rather than
+ * measuring from a fixed point.
+ */
 export function listSavedStatus() {
-  return apiFetch('/me/signal/saved-status')
+  const params = new URLSearchParams(
+    Object.entries(userLocationParams()).map(([k, v]) => [k, String(v)]),
+  ).toString()
+  return apiFetch(`/me/signal/saved-status${params ? `?${params}` : ''}`)
 }
 
 export function listNotifications() {

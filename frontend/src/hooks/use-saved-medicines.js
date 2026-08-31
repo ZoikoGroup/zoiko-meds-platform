@@ -19,6 +19,7 @@ import {
   archiveNotification,
   setMedicinePriority,
 } from '@/services/signal-api'
+import { readUserLocation, userLocationParams } from '@/lib/user-location'
 
 export const SAVED_MEDICINES_QUERY_KEY = ['saved-medicines']
 export const SIGNAL_SUMMARY_QUERY_KEY = ['signal-summary']
@@ -40,10 +41,19 @@ export function useInvalidateUserQueries() {
   }
 }
 
+/**
+ * Saved medicines, each carrying the verified pharmacies near the patient.
+ *
+ * The stored location is part of the query key: change it and this refetches,
+ * because "near me" means something different from the new place. It is the
+ * label rather than the resolved coordinates so the key stays stable across
+ * renders.
+ */
 export function useSavedMedicines() {
+  const location = readUserLocation()
   return useQuery({
-    queryKey: SAVED_MEDICINES_QUERY_KEY,
-    queryFn: listSaved,
+    queryKey: [...SAVED_MEDICINES_QUERY_KEY, location],
+    queryFn: () => listSaved(userLocationParams()),
     staleTime: 10_000,
   })
 }

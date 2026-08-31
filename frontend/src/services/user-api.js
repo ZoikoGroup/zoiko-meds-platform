@@ -22,7 +22,13 @@ export const listNearbyPharmacies = (maxDistance) =>
 export const getUserOverview = () => apiFetch('/me/overview')
 
 // --- Saved medicines -----------------------------------------------------
-export const listSaved = () => apiFetch('/me/saved')
+/**
+ * The medicines this patient follows, each with the verified pharmacies near
+ * them that stock it. `params` carries the caller's location (lat/lng or city,
+ * plus a km radius) — without it the API returns the pharmacies with no
+ * distances rather than measuring from a fixed point.
+ */
+export const listSaved = (params) => apiFetch(`/me/saved${qs(params)}`)
 
 /**
  * Save a medicine.

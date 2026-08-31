@@ -8,7 +8,7 @@ import { Flash, useFlash } from '@/components/shared/flash'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Search, Trash2, Heart, ArrowRight, MapPin, Clock } from 'lucide-react'
 import { ConfidenceBadge } from '@/components/shared/status'
-import { AVAILABILITY, CONFIRM_NOTE } from '@/lib/availability'
+import { AVAILABILITY, CONFIRM_NOTE, telHref } from '@/lib/availability'
 import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
 import { useLanguage } from '@/providers/language-provider'
 
@@ -122,17 +122,57 @@ export default function UserSaved() {
                   <span className="text-xs leading-relaxed text-foreground">
                     {AVAILABILITY[med.confidence]?.plain ?? AVAILABILITY.unknown.plain}
                   </span>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                    <span className="flex min-w-0 items-center gap-1">
-                      <MapPin className="size-3 shrink-0" />
-                      <span className="truncate">{med.pharmacy}</span>
-                      {med.distance != null && ` · ${med.distance.toFixed(1)} km`}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="size-3 shrink-0" />
-                      {med.updated}
-                    </span>
-                  </div>
+                  {/* Every verified pharmacy near the patient that reports this
+                      medicine. The API used to send one — the strongest signal
+                      — so a patient with several pharmacies down the road was
+                      shown a single name and no way to reach the others. The
+                      one-line summary above it is the headline for this list,
+                      not a substitute for it. */}
+                  {(med.pharmacies?.length ?? 0) > 0 ? (
+                    <ul className="flex flex-col divide-y divide-border border-t border-border">
+                      {med.pharmacies.map((p) => (
+                        <li key={p.id} className="flex flex-col gap-1 pt-2 first:pt-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
+                              <MapPin className="size-3 shrink-0 text-muted-foreground" />
+                              <span className="truncate">{p.name}</span>
+                            </span>
+                            <ConfidenceBadge level={p.confidence ?? 'unknown'} size="sm" />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 ps-4 text-[11px] text-muted-foreground">
+                            {p.distance != null && <span>{p.distance.toFixed(1)} km</span>}
+                            <span className="flex items-center gap-1">
+                              <Clock className="size-3 shrink-0" />
+                              {p.updated}
+                            </span>
+                            {/* Availability is a confidence signal, so the one
+                                action offered with it is to ring the branch and
+                                confirm. No number on the record, no dead link. */}
+                            {p.phone && (
+                              <a
+                                href={telHref(p.phone)}
+                                className="font-semibold text-primary hover:underline"
+                              >
+                                {t('call', 'Call')}
+                              </a>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <MapPin className="size-3 shrink-0" />
+                        <span className="truncate">{med.pharmacy}</span>
+                        {med.distance != null && ` · ${med.distance.toFixed(1)} km`}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="size-3 shrink-0" />
+                        {med.updated}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Alerts toggle */}

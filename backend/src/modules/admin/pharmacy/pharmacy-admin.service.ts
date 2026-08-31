@@ -1,9 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Pharmacy, Prisma, VerificationRequestStatus, VerificationStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { assertLocationIsFree } from '../../pharmacy/location-identity';
+import { resolvePharmacyCoordinates } from '../../pharmacy/pharmacy-coordinates';
 import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
 import { CreatePharmacyDto } from './dto/create-pharmacy.dto';
@@ -17,7 +18,6 @@ const JURISDICTION_INCLUDE = { jurisdiction: { select: { code: true, name: true 
 
 @Injectable()
 export class PharmacyAdminService {
-  private readonly logger = new Logger(PharmacyAdminService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -26,47 +26,17 @@ export class PharmacyAdminService {
   ) {}
 
   /**
-   * Coordinates for a pharmacy, preferring what the admin supplied and falling
-   * back to geocoding the pharmacy's own street address.
-   *
-   * A pharmacy with no coordinates is invisible to every distance-bounded
-   * patient search, so registering one by address alone silently produced a
-   * record that could never be found. Geocoding failure is non-fatal — the
-   * record is still saved, just not yet locatable.
-   *
-   * Two rules make the result the pharmacy's real position rather than a
-   * plausible-looking one:
-   *
-   *  - the whole address is geocoded, not [city, country]. Geocoding a city
-   *    returns its centroid, so every pharmacy registered in Hyderabad landed
-   *    on the same point, at the same distance from every patient, with nothing
-   *    to tell them apart on the map;
-   *  - an area-level match is discarded rather than stored. No coordinates is a
-   *    true statement ("not located yet", and the admin can supply the pin);
-   *    a city centre is a false one.
+   * Coordinates for a pharmacy. The rules live in `resolvePharmacyCoordinates`
+   * so that self-registration, verification approval and the pharmacy portal
+   * locate a branch exactly the way this panel does — the admin path being the
+   * only one that geocoded is why pharmacies created any other way were never
+   * returned by patient search.
    */
-  private async resolveCoordinates(
+  private resolveCoordinates(
     supplied: { latitude?: number; longitude?: number },
     address: (string | null | undefined)[],
-  ): Promise<{ latitude: number; longitude: number } | null> {
-    if (supplied.latitude != null && supplied.longitude != null) {
-      return { latitude: supplied.latitude, longitude: supplied.longitude };
-    }
-    const query = address.filter(Boolean).join(', ').trim();
-    if (!query) return null;
-
-    const point = await this.nearby.geocode(query);
-    if (!point) return null;
-
-    if (!point.precise) {
-      this.logger.warn(
-        `Geocoding "${query}" resolved only to ${point.granularity} — refusing to ` +
-          'store an area centroid as a pharmacy location. Supply the street ' +
-          'address or the exact coordinates.',
-      );
-      return null;
-    }
-    return { latitude: point.lat, longitude: point.lng };
+  ) {
+    return resolvePharmacyCoordinates(this.nearby, supplied, address);
   }
 
   async list(query: ListPharmaciesQuery) {

@@ -20,6 +20,7 @@ import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { SignalIngestService } from '../signal/signal-ingest.service';
 import { normalizeMedicineName } from '../saved-link/saved-medicine-link.service';
 import { SaveMedicineDto } from './dto/save-medicine.dto';
+import { SavedQueryDto } from './dto/saved-query.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { UpdateAlertsDto } from './dto/update-alerts.dto';
 
@@ -30,9 +31,11 @@ import { UpdateAlertsDto } from './dto/update-alerts.dto';
  * as exact stock.
  */
 
-// Reference point used to derive "distance from you". A real deployment would
-// use the user's chosen location; for now we anchor to the demo service area.
-const ORIGIN = { lat: 17.5561, lng: 78.4181 }; // Gandimaisamma, Hyderabad
+/**
+ * Default search radius in km, matching the radius selector's default on the
+ * patient search screen so an omitted value means the same thing on both sides.
+ */
+const DEFAULT_RADIUS_KM = 15;
 
 const CONFIDENCE_UI: Record<AvailabilityConfidence, string> = {
   HIGH: 'high',
@@ -65,7 +68,7 @@ export class MeService {
 
   async search(userId: string, query: SearchQueryDto) {
     const q = (query.q ?? '').trim();
-    const maxDistance = query.maxDistance ?? 5;
+    const maxDistance = query.maxDistance ?? DEFAULT_RADIUS_KM;
     const type = query.type ?? 'all';
 
     if (q) {
@@ -106,20 +109,24 @@ export class MeService {
       byGeneric.get(key)!.push(m);
     }
 
-    // Measure from where the caller actually is. Falls back to ORIGIN only
-    // when no coordinates or city were supplied and geocoding could not
-    // resolve one — otherwise every user is ranked from a fixed point.
-    const resolvedOrigin = await this.nearby.resolveOrigin({
+    // Measure from where the caller actually is, or from nowhere at all.
+    //
+    // There used to be a fixed fallback here — a demo address in Hyderabad —
+    // and it did not degrade gracefully: a patient who had not shared a
+    // location had every pharmacy in the country measured from that point, so
+    // the ones genuinely near them were dropped for being "too far" while
+    // pharmacies near the demo address were offered as local. A null origin
+    // means distances are unknown, and unknown distances are not filtered on.
+    const origin = await this.nearby.resolveOrigin({
       lat: query.lat,
       lng: query.lng,
       city: query.city,
     });
-    const origin = resolvedOrigin ?? ORIGIN;
 
     const dtos = medicines
       .map((m) => this.toMedicineDto(m, medicines, origin))
       .filter((m) => m !== null)
-      .filter((m) => (m!.distance ?? 999) <= maxDistance)
+      .filter((m) => origin == null || (m!.distance ?? 999) <= maxDistance)
       .filter((m) => {
         if (type === 'generic') return m!.isGeneric;
         if (type === 'brand') return !m!.isGeneric;
@@ -159,13 +166,34 @@ export class MeService {
     return { medicines: dtos, pharmacies, internetPharmacies };
   }
 
-  async pharmacies(maxDistance = 5) {
-    return this.nearbyPharmacies(maxDistance);
+  /**
+   * Nearby verified pharmacies, with no medicine in mind. `lat`/`lng` are the
+   * caller's own position; without them the list is every verified pharmacy
+   * rather than every verified pharmacy near a fixed point.
+   */
+  async pharmacies(maxDistance = DEFAULT_RADIUS_KM, origin?: { lat: number; lng: number } | null) {
+    return this.nearbyPharmacies(maxDistance, origin ?? null);
   }
 
   // --- Saved medicines -----------------------------------------------------
 
-  async listSaved(userId: string) {
+  /**
+   * The medicines this patient follows, each with the verified pharmacies near
+   * THEM that stock it.
+   *
+   * The location is the caller's own, resolved the same way search resolves it.
+   * Without one the list still returns — every pharmacy stocking the medicine,
+   * no distances — rather than measuring from a fixed demo address, which is
+   * what made a pharmacy on the other side of the country read as 4 km away.
+   */
+  async listSaved(userId: string, query: SavedQueryDto = {}) {
+    const origin = await this.nearby.resolveOrigin({
+      lat: query.lat,
+      lng: query.lng,
+      city: query.city,
+    });
+    const maxDistance = query.maxDistance ?? DEFAULT_RADIUS_KM;
+
     const rows = await this.prisma.savedMedicine.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -197,15 +225,25 @@ export class MeService {
             isGeneric: false,
             description: `${r.medicineName} is not in the MediBase catalog yet. We will alert you when a verified pharmacy adds it.`,
             related: [],
+            pharmacies: [],
             inCatalog: false,
             alertsEnabled: r.alertsEnabled ?? true,
             priority: r.priority?.toLowerCase() ?? 'medium',
           };
         }
-        const dto = this.toMedicineDto(r.medicine, [r.medicine]);
+        const dto = this.toMedicineDto(r.medicine, [r.medicine], origin ?? undefined);
         if (!dto) return null;
         return {
           ...dto,
+          // Every verified pharmacy near the patient that reports this medicine
+          // — not just the single strongest signal the headline fields above
+          // summarise. One name was all this page could ever show, so a patient
+          // with three pharmacies down the road saw one of them.
+          pharmacies: this.nearbySignalPharmacies(
+            r.medicine!.availabilitySignals ?? [],
+            origin,
+            maxDistance,
+          ),
           savedId: r.id,
           inCatalog: true,
           alertsEnabled: r.alertsEnabled ?? true,
@@ -434,7 +472,7 @@ export class MeService {
    */
   private async nearbyPharmacies(
     maxDistance: number,
-    origin: { lat: number; lng: number } = ORIGIN,
+    origin: { lat: number; lng: number } | null,
     medicineIds?: string[],
   ) {
     // The searched term resolved to no MediBase identity, so no pharmacy can be
@@ -479,14 +517,20 @@ export class MeService {
       },
     });
 
-    // Only pharmacies within range are shown. Compute the SVG map bounds over
-    // THIS filtered set (not all rows) so nearby pins spread across the map
-    // instead of collapsing onto a global-scale corner.
+    // Only pharmacies within range are shown — but only when there is a range
+    // to be within. With no caller location every distance is null, and
+    // filtering on null would empty the list; the pharmacies that stock the
+    // medicine are still the answer, they just cannot be ordered by proximity.
+    // Compute the SVG map bounds over THIS filtered set (not all rows) so
+    // nearby pins spread across the map instead of collapsing onto a
+    // global-scale corner.
     const near = rows
       .map((p) => ({ p, distance: this.distanceFor(p, origin) }))
-      .filter((x) => x.distance != null && x.distance <= maxDistance);
+      .filter((x) => (origin ? x.distance != null && x.distance <= maxDistance : true));
     const bounds = this.bounds(
-      near.map(({ p }) => ({ lat: p.latitude!, lng: p.longitude! })),
+      near
+        .filter(({ p }) => p.latitude != null && p.longitude != null)
+        .map(({ p }) => ({ lat: p.latitude!, lng: p.longitude! })),
     );
 
     return near
@@ -504,7 +548,7 @@ export class MeService {
   private toMedicineDto(
     medicine: MedicineEntity & { availabilitySignals?: SignalWithPharmacy[] },
     all: (MedicineEntity & { availabilitySignals?: SignalWithPharmacy[] })[],
-    origin: { lat: number; lng: number } = ORIGIN,
+    origin?: { lat: number; lng: number } | null,
   ) {
     const signals = medicine.availabilitySignals ?? [];
     // Best signal = strongest confidence, then freshest, then nearest.
@@ -635,20 +679,76 @@ export class MeService {
   /**
    * Distance from the caller to a pharmacy, in km.
    *
-   * `origin` is the caller's resolved location. It defaults to ORIGIN only for
-   * surfaces that have no request location to work from (e.g. the saved-medicine
-   * list); medicine search always passes the caller's own position, otherwise
-   * every user is measured from a fixed point in Hyderabad.
-   *
-   * Returns null when the pharmacy has no coordinates — an unlocatable pharmacy
-   * cannot be distance-ranked and is excluded rather than guessed at.
+   * `origin` is the caller's resolved location, and null when they have not
+   * shared one. Both a missing origin and a pharmacy without coordinates give
+   * null: there is no distance to state, and stating one anyway is how a
+   * pharmacy nobody has located ends up wearing a plausible "4.2 km".
    */
   private distanceFor(
     p?: { latitude: number | null; longitude: number | null } | null,
-    origin: { lat: number; lng: number } = ORIGIN,
+    origin?: { lat: number; lng: number } | null,
   ) {
+    if (!origin) return null;
     if (!p || p.latitude == null || p.longitude == null) return null;
     return this.haversine(origin.lat, origin.lng, p.latitude, p.longitude);
+  }
+
+  /**
+   * The verified pharmacies behind a medicine's signals, as a patient-facing
+   * list ordered by how far away they are.
+   *
+   * With an origin the list is bounded by `maxDistance` and an unlocated
+   * pharmacy is left out: it cannot be shown as nearby when nobody knows where
+   * it is. Without an origin nothing can be bounded, so every stocking pharmacy
+   * is returned with a null distance — an honest "here they all are" rather
+   * than a radius measured from somewhere the patient has never been.
+   *
+   * One row per pharmacy: several signals for the same medicine from one
+   * pharmacy are the same shop reporting more than once, and the freshest of
+   * those is the one that stands.
+   */
+  private nearbySignalPharmacies(
+    signals: SignalWithPharmacy[],
+    origin: { lat: number; lng: number } | null,
+    maxDistance: number,
+  ) {
+    const byPharmacy = new Map<string, SignalWithPharmacy>();
+    for (const s of signals) {
+      if (!s.pharmacy) continue;
+      const held = byPharmacy.get(s.pharmacy.id);
+      if (!held || s.computedAt > held.computedAt) byPharmacy.set(s.pharmacy.id, s);
+    }
+
+    return [...byPharmacy.values()]
+      .map((s) => ({ signal: s, distance: this.distanceFor(s.pharmacy, origin) }))
+      .filter(({ distance }) => (origin ? distance != null && distance <= maxDistance : true))
+      .map(({ signal, distance }) => ({
+        id: signal.pharmacy.id,
+        name: signal.pharmacy.name,
+        address:
+          [
+            signal.pharmacy.addressLine1,
+            signal.pharmacy.addressLine2,
+            signal.pharmacy.city,
+            signal.pharmacy.region,
+            signal.pharmacy.postalCode,
+          ]
+            .filter(Boolean)
+            .join(', ') || '—',
+        // The number to ring: availability is a confidence signal, so the one
+        // action offered alongside it is to call and confirm before travelling.
+        phone: signal.pharmacy.phone ?? '',
+        latitude: signal.pharmacy.latitude,
+        longitude: signal.pharmacy.longitude,
+        confidence: CONFIDENCE_UI[signal.confidence],
+        distance,
+        updated: this.relativeTime(signal.computedAt),
+      }))
+      .sort(
+        (a, b) =>
+          (a.distance ?? Number.POSITIVE_INFINITY) - (b.distance ?? Number.POSITIVE_INFINITY) ||
+          CONFIDENCE_RANK[a.confidence] - CONFIDENCE_RANK[b.confidence],
+      );
   }
 
   private haversine(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -667,8 +767,11 @@ export class MeService {
   }
 
   private bounds(coords: { lat: number; lng: number }[]) {
+    // Nothing to frame. A degenerate box centred on 0,0 is fine: `project`
+    // collapses it to the middle of the map, and with no pins to place there is
+    // nothing to be wrong about. It used to be centred on the demo address.
     if (coords.length === 0) {
-      return { minLat: ORIGIN.lat, maxLat: ORIGIN.lat, minLng: ORIGIN.lng, maxLng: ORIGIN.lng };
+      return { minLat: 0, maxLat: 0, minLng: 0, maxLng: 0 };
     }
     const lats = coords.map((c) => c.lat);
     const lngs = coords.map((c) => c.lng);
