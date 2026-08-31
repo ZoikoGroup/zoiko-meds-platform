@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { SaveMedicineDto } from './dto/save-medicine.dto';
+import { SavedQueryDto } from './dto/saved-query.dto';
 import { UpdateAlertsDto } from './dto/update-alerts.dto';
 import { UpdateSavedAlertsDto } from './dto/update-saved-alerts.dto';
 
@@ -37,8 +38,12 @@ export class MeController {
 
   @Get('pharmacies')
   @ApiOperation({ summary: 'Nearby verified pharmacies' })
-  pharmacies(@Query('maxDistance') maxDistance?: string) {
-    return this.me.pharmacies(maxDistance ? Number(maxDistance) : 5);
+  pharmacies(@Query() query: SavedQueryDto) {
+    // "Nearby" is relative to the caller. Without lat/lng there is no point to
+    // be near, so the list is unbounded rather than measured from a fixed one.
+    const origin =
+      query.lat != null && query.lng != null ? { lat: query.lat, lng: query.lng } : null;
+    return this.me.pharmacies(query.maxDistance, origin);
   }
 
   @Get('overview')
@@ -49,8 +54,8 @@ export class MeController {
 
   @Get('saved')
   @ApiOperation({ summary: 'List saved medicines' })
-  listSaved(@CurrentUser('id') userId: string) {
-    return this.me.listSaved(userId);
+  listSaved(@CurrentUser('id') userId: string, @Query() query: SavedQueryDto) {
+    return this.me.listSaved(userId, query);
   }
 
   @Post('saved')

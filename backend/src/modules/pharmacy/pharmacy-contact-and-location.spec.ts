@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
@@ -74,10 +75,19 @@ const stored = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function buildService(state: { neighbours?: Record<string, unknown>[]; existing?: any } = {}) {
+function buildService(
+  state: {
+    neighbours?: Record<string, unknown>[];
+    existing?: any;
+    geocode?: { lat: number; lng: number; precise: boolean; granularity: string } | null;
+  } = {},
+) {
   const neighbours = state.neighbours ?? [];
+  const geocode = jest.fn().mockResolvedValue(state.geocode ?? null);
   const tx = {
     pharmacy: { create: jest.fn(async ({ data }: any) => ({ id: 'ph_new', ...data })) },
+    // Registering with a country resolves it to a Jurisdiction row.
+    jurisdiction: { upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN' }) },
     user: { update: jest.fn() },
     verificationRequest: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
   };
@@ -105,8 +115,9 @@ function buildService(state: { neighbours?: Record<string, unknown>[]; existing?
     { linkPendingSaves: jest.fn() } as unknown as SavedMedicineLinkService,
     { inventoryBecameAvailable: jest.fn(), inventoryBecameUnavailable: jest.fn(), bulkUploadCompleted: jest.fn() } as unknown as PharmacyNotificationService,
     allowAllPreferences(),
+    { geocode } as unknown as NearbyPharmacyService,
   );
-  return { service, prisma, tx };
+  return { service, prisma, tx, geocode };
 }
 
 describe('registering a pharmacy — duplicate locations', () => {
@@ -253,5 +264,83 @@ describe('registering a pharmacy — contact number', () => {
     await service.updateProfile('ph_1', { addressLine2: 'Near the metro' } as never, USER);
 
     expect(prisma.pharmacy.update.mock.calls[0][0].data.phone).toBe('+91 40 2345 6789');
+  });
+});
+
+/**
+ * A pharmacy with no coordinates is invisible to patient search — every result
+ * is distance-bounded, and a row without a pin has no distance — so the one
+ * moment its address is known has to be the moment it gets located. Only the
+ * admin panel used to geocode; a pharmacy that registered itself was stored
+ * with a full address, no pin, and no way for a patient to ever find it.
+ */
+describe('registering a pharmacy — locating it from its address', () => {
+  const BY_ADDRESS = {
+    name: 'Zoiko Meds Pharmacy',
+    licenseNumber: 'LIC-JHC951',
+    phone: '+91 40 2345 6789',
+    addressLine1: 'Plot 42, Gandimaisamma Main Road',
+    city: 'Hyderabad',
+    region: 'Telangana',
+    postalCode: '500043',
+    country: 'IN',
+  };
+
+  it('geocodes the street address when the operator supplied no pin', async () => {
+    const { service, tx, geocode, prisma } = buildService({
+      neighbours: [],
+      geocode: { lat: 17.5878172, lng: 78.4236196, precise: true, granularity: 'ROOFTOP:premise' },
+    });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await service.saveMyProfile(USER, BY_ADDRESS as never);
+
+    // The whole address, not [city, country] — a city geocodes to its centroid,
+    // which would put every Hyderabad pharmacy on one pin.
+    expect(geocode).toHaveBeenCalledWith(
+      'Plot 42, Gandimaisamma Main Road, Hyderabad, Telangana, 500043, IN',
+    );
+    const { data } = tx.pharmacy.create.mock.calls[0][0];
+    expect(data.latitude).toBe(17.5878172);
+    expect(data.longitude).toBe(78.4236196);
+  });
+
+  it('stores no coordinates when the address only resolves to a city centroid', async () => {
+    const { service, tx, prisma } = buildService({
+      neighbours: [],
+      geocode: { lat: 17.385, lng: 78.4867, precise: false, granularity: 'APPROXIMATE:locality' },
+    });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await service.saveMyProfile(USER, BY_ADDRESS as never);
+
+    // "Not located yet" is true and fixable. A city centre is false, and it
+    // would read on a patient's screen as this branch's own position.
+    const { data } = tx.pharmacy.create.mock.calls[0][0];
+    expect(data.latitude).toBeNull();
+    expect(data.longitude).toBeNull();
+  });
+
+  it('keeps the operator pin and does not geocode when one was supplied', async () => {
+    const { service, tx, geocode, prisma } = buildService({ neighbours: [] });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await service.saveMyProfile(USER, NEW_PHARMACY as never);
+
+    expect(geocode).not.toHaveBeenCalled();
+    const { data } = tx.pharmacy.create.mock.calls[0][0];
+    expect(data.latitude).toBe(NEW_PHARMACY.latitude);
+  });
+
+  it('registration is still accepted when geocoding fails outright', async () => {
+    const { service, tx, prisma } = buildService({ neighbours: [], geocode: null });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await service.saveMyProfile(USER, BY_ADDRESS as never);
+
+    // A network failure at the geocoder must not cost the pharmacy its
+    // submission; the row is written and can be located later.
+    expect(tx.pharmacy.create).toHaveBeenCalled();
+    expect(tx.pharmacy.create.mock.calls[0][0].data.latitude).toBeNull();
   });
 });

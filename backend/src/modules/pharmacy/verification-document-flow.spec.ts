@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
@@ -71,6 +72,7 @@ function buildService({ requestId = 'req_1' }: { requestId?: string | null } = {
     { linkPendingSaves: jest.fn() } as unknown as SavedMedicineLinkService,
     { inventoryBecameAvailable: jest.fn(), inventoryBecameUnavailable: jest.fn(), bulkUploadCompleted: jest.fn() } as unknown as PharmacyNotificationService,
     {} as unknown as NotificationPreferencesService,
+    { geocode: jest.fn().mockResolvedValue(null) } as unknown as NearbyPharmacyService,
   );
   return { service, prisma };
 }

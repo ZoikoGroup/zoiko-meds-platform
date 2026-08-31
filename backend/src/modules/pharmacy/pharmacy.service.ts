@@ -30,6 +30,8 @@ import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { assertLocationIsFree } from './location-identity';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
+import { resolvePharmacyCoordinates } from './pharmacy-coordinates';
 import {
   NotificationCategory,
   NotificationPreferencesService,
@@ -240,6 +242,7 @@ export class PharmacyService {
     private readonly savedLink: SavedMedicineLinkService,
     private readonly portalNotifications: PharmacyNotificationService,
     private readonly notificationPreferences: NotificationPreferencesService,
+    private readonly nearby: NearbyPharmacyService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -458,14 +461,29 @@ export class PharmacyService {
     // submission the reviewer cannot act on.
     const document = dto.document?.content ? readVerificationDocument(dto.document) : null;
 
+    // Resolved before the transaction opens: geocoding is a network call and
+    // must not hold a database transaction. An operator registering by address
+    // does not have coordinates to hand, and a pharmacy stored without them can
+    // never be returned by the distance-bounded patient search — so the address
+    // is geocoded here rather than leaving the row unlocatable until someone
+    // notices and runs the backfill.
+    const coords = await resolvePharmacyCoordinates(this.nearby, dto, [
+      dto.addressLine1,
+      dto.addressLine2,
+      dto.city,
+      dto.region,
+      dto.postalCode,
+      submittedCountry,
+    ]);
+
     // One physical pharmacy, one record. Checked before the insert, so the
     // second registration of a shop is refused rather than created and merged
     // later — by then both halves hold their own availability signals and there
     // is no way to tell a patient which card is the real one.
-    if (dto.latitude != null && dto.longitude != null) {
+    if (coords) {
       await assertLocationIsFree(this.prisma, {
-        latitude: dto.latitude,
-        longitude: dto.longitude,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
       });
     }
 
@@ -485,8 +503,8 @@ export class PharmacyService {
           postalCode: dto.postalCode?.trim() || null,
           // Without these the pharmacy is invisible to the distance-bounded
           // patient search, however complete the rest of the profile is.
-          latitude: dto.latitude ?? null,
-          longitude: dto.longitude ?? null,
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
           // Awaiting review — a self-declared pharmacy is never trusted on
           // submit, so it stays out of public results until an admin approves.
           verificationStatus: VerificationStatus.PENDING,
@@ -624,14 +642,45 @@ export class PharmacyService {
       );
     }
 
+    // Re-locate when the operator supplied a pin, when the address changed, or
+    // when the record simply never had coordinates. That last case is what
+    // brings an already-registered pharmacy into patient search: it is stored
+    // with an address and no pin, and until it has one no distance-bounded
+    // search can return it, so the next profile save is the natural moment to
+    // resolve it rather than waiting for an admin to notice.
+    const addressChanged =
+      dto.addressLine1 !== undefined ||
+      dto.addressLine2 !== undefined ||
+      dto.city !== undefined ||
+      dto.region !== undefined ||
+      dto.postalCode !== undefined ||
+      dto.country !== undefined;
+    const missingCoords = existing.latitude == null || existing.longitude == null;
+    const suppliedPin = dto.latitude != null && dto.longitude != null;
+
+    const geocoded =
+      !suppliedPin && (addressChanged || missingCoords)
+        ? await resolvePharmacyCoordinates(this.nearby, {}, [
+            dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
+            dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
+            dto.city !== undefined ? dto.city : existing.city,
+            dto.region !== undefined ? dto.region : existing.region,
+            dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
+            country,
+          ])
+        : null;
+
+    // An explicit pin always wins over a geocode: the operator dropped it on
+    // their own branch, which is more precise than anything an address lookup
+    // can return. Geocoding only ever fills a gap, and never overwrites a pin
+    // that is already stored.
+    const nextLat = suppliedPin ? dto.latitude! : geocoded?.latitude ?? existing.latitude;
+    const nextLng = suppliedPin ? dto.longitude! : geocoded?.longitude ?? existing.longitude;
+
     // A profile edit can move the pin. Moving it onto another pharmacy's
     // premises creates the same duplicate a second registration would; itself
     // excluded, so re-saving an unchanged location is never blocked.
-    const movingPin =
-      (dto.latitude !== undefined && dto.latitude !== existing.latitude) ||
-      (dto.longitude !== undefined && dto.longitude !== existing.longitude);
-    const nextLat = dto.latitude !== undefined ? dto.latitude : existing.latitude;
-    const nextLng = dto.longitude !== undefined ? dto.longitude : existing.longitude;
+    const movingPin = nextLat !== existing.latitude || nextLng !== existing.longitude;
     if (movingPin && nextLat != null && nextLng != null) {
       await assertLocationIsFree(this.prisma, {
         latitude: nextLat,
@@ -656,8 +705,8 @@ export class PharmacyService {
         jurisdictionId,
         postalCode:
           dto.postalCode !== undefined ? dto.postalCode.trim() || null : existing.postalCode,
-        latitude: dto.latitude !== undefined ? dto.latitude : existing.latitude,
-        longitude: dto.longitude !== undefined ? dto.longitude : existing.longitude,
+        latitude: nextLat,
+        longitude: nextLng,
         updatedAt: new Date(),
       },
     });

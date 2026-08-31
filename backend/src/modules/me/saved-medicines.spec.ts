@@ -17,7 +17,7 @@ const USER = 'user_1';
 const OTHER_USER = 'user_2';
 const MEDICINE = 'med_1';
 
-function buildService() {
+function buildService(origin: { lat: number; lng: number } | null = null) {
   const prisma = {
     savedMedicine: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -33,7 +33,7 @@ function buildService() {
   };
   const service = new MeService(
     prisma as never,
-    { findNearby: jest.fn() } as never,
+    { findNearby: jest.fn(), resolveOrigin: jest.fn().mockResolvedValue(origin) } as never,
     { recordSearch: jest.fn(), recordZeroResult: jest.fn() } as never,
   );
   return { service, prisma };
@@ -244,6 +244,151 @@ describe('MeService — saved medicines', () => {
       expect(saved).toHaveProperty('updated');
       expect(saved.alertsEnabled).toBe(false);
       expect(saved.priority).toBe('high');
+    });
+  });
+
+  /**
+   * A saved medicine answers "can I get this near me?", so it has to name every
+   * verified pharmacy near the patient that reports it — not the single
+   * strongest signal, which is all this list used to carry. A patient with
+   * three pharmacies down the road saw one name and no way to reach the others.
+   */
+  describe('listSaved — the pharmacies behind each medicine', () => {
+    const HERE = { lat: 17.5561, lng: 78.4181 };
+
+    const pharmacy = (over: Record<string, unknown> = {}) => ({
+      id: 'ph_near',
+      name: 'Zoiko Meds Pharmacy',
+      addressLine1: 'Gandimaisamma',
+      addressLine2: null,
+      city: 'Hyderabad',
+      region: 'Telangana',
+      postalCode: '500043',
+      phone: '+914023456789',
+      latitude: 17.5578,
+      longitude: 78.4199,
+      ...over,
+    });
+
+    const signal = (over: Record<string, unknown> = {}) => ({
+      confidence: 'HIGH',
+      computedAt: new Date(),
+      pharmacy: pharmacy(),
+      ...over,
+    });
+
+    const savedRow = (signals: unknown[]) => ({
+      id: 'saved_1',
+      alertsEnabled: true,
+      priority: 'MEDIUM',
+      medicine: {
+        id: MEDICINE,
+        canonicalName: 'Amoxicillin 500 mg',
+        genericName: 'Amoxicillin',
+        brandNames: [],
+        strength: '500 mg',
+        dosageForm: 'Capsule',
+        manufacturer: 'Acme',
+        description: null,
+        prescriptionCategory: 'PRESCRIPTION',
+        availabilitySignals: signals,
+      },
+    });
+
+    it('lists every pharmacy in range, nearest first', async () => {
+      const { service, prisma } = buildService(HERE);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          signal({
+            confidence: 'HIGH',
+            pharmacy: pharmacy({ id: 'ph_far', name: 'Apollo', latitude: 17.62, longitude: 78.49 }),
+          }),
+          signal({ confidence: 'MODERATE' }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER, { lat: HERE.lat, lng: HERE.lng });
+
+      expect(saved.pharmacies.map((p: { name: string }) => p.name)).toEqual([
+        'Zoiko Meds Pharmacy',
+        'Apollo',
+      ]);
+      expect(saved.pharmacies[0].distance!).toBeLessThan(saved.pharmacies[1].distance!);
+      // The number to ring, and where to go — both straight off the record.
+      expect(saved.pharmacies[0].phone).toBe('+914023456789');
+      expect(saved.pharmacies[0].address).toBe(
+        'Gandimaisamma, Hyderabad, Telangana, 500043',
+      );
+    });
+
+    it('drops a pharmacy outside the requested radius', async () => {
+      const { service, prisma } = buildService(HERE);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          signal(),
+          signal({
+            pharmacy: pharmacy({ id: 'ph_mumbai', name: 'Wellness', latitude: 19.076, longitude: 72.877 }),
+          }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER, { lat: HERE.lat, lng: HERE.lng, maxDistance: 5 });
+
+      expect(saved.pharmacies.map((p: { name: string }) => p.name)).toEqual(['Zoiko Meds Pharmacy']);
+    });
+
+    it('collapses repeat signals from one pharmacy to its freshest', async () => {
+      const { service, prisma } = buildService(HERE);
+      const fresh = new Date();
+      const stale = new Date(Date.now() - 6 * 60 * 60 * 1000);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          signal({ confidence: 'LOW', computedAt: stale }),
+          signal({ confidence: 'HIGH', computedAt: fresh }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER, { lat: HERE.lat, lng: HERE.lng });
+
+      // One shop, one card — reporting twice is not two pharmacies.
+      expect(saved.pharmacies).toHaveLength(1);
+      expect(saved.pharmacies[0].confidence).toBe('high');
+    });
+
+    it('names every stocking pharmacy, without distances, when no location was given', async () => {
+      const { service, prisma } = buildService(null);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          signal(),
+          signal({
+            pharmacy: pharmacy({ id: 'ph_mumbai', name: 'Wellness', latitude: 19.076, longitude: 72.877 }),
+          }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER);
+
+      // Nothing to measure from, so nothing is bounded and no distance is
+      // invented — the list used to be measured from a fixed demo address.
+      expect(saved.pharmacies).toHaveLength(2);
+      expect(saved.pharmacies.every((p: { distance: number | null }) => p.distance === null)).toBe(true);
+    });
+
+    it('leaves an unlocated pharmacy out of a list that has a location to measure from', async () => {
+      const { service, prisma } = buildService(HERE);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          signal(),
+          signal({
+            pharmacy: pharmacy({ id: 'ph_nopin', name: 'Unlocated', latitude: null, longitude: null }),
+          }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER, { lat: HERE.lat, lng: HERE.lng });
+
+      // It cannot be shown as nearby when nobody knows where it is.
+      expect(saved.pharmacies.map((p: { name: string }) => p.name)).toEqual(['Zoiko Meds Pharmacy']);
     });
   });
 });

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
@@ -130,6 +131,7 @@ function buildService() {
     savedLink as unknown as SavedMedicineLinkService,
     portalNotifications as unknown as PharmacyNotificationService,
     allowAllPreferences(),
+    { geocode: jest.fn().mockResolvedValue(null) } as unknown as NearbyPharmacyService,
   );
   return { service, prisma, audit, savedLink, portalNotifications, state };
 }

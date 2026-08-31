@@ -11,6 +11,8 @@ import {
   PUBLIC_SIGNALS_INCLUDE,
   signalAgeMinutes,
 } from '../../availability/availability.visibility';
+import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
+import { SavedQueryDto } from '../dto/saved-query.dto';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
 
 /**
@@ -25,8 +27,6 @@ import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
  * (SignalAggregate) consumed by enterprise/government/admin roles.
  */
 
-// Anchor for "distance from you" — matches MeService's demo service area.
-const ORIGIN = { lat: 17.5561, lng: 78.4181 }; // Gandimaisamma, Hyderabad
 
 type PatientStatus = 'available' | 'limited' | 'running-low' | 'out-of-stock';
 
@@ -96,15 +96,32 @@ type SignalWithPharmacy = Prisma.AvailabilitySignalGetPayload<{
 
 @Injectable()
 export class PatientSignalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly nearby: NearbyPharmacyService,
+  ) {}
 
   // === Public read surface =================================================
 
-  async savedStatus(userId: string) {
+  /**
+   * Saved medicines with their current signal status.
+   *
+   * `query` is where the patient is. The "nearest pharmacy" on each row is only
+   * nearest to someone, and it used to be nearest to a fixed demo address in
+   * Hyderabad — every patient was told the same pharmacy was the same number of
+   * kilometres away, wherever they actually were. With no location the pharmacy
+   * is still named, with no distance attached.
+   */
+  async savedStatus(userId: string, query: SavedQueryDto = {}) {
+    const origin = await this.nearby.resolveOrigin({
+      lat: query.lat,
+      lng: query.lng,
+      city: query.city,
+    });
     await this.regenerate(userId);
     const saved = await this.loadSavedWithSignals(userId);
     const genericIndex = await this.buildAlternativesIndex(saved.map((s) => s.medicine));
-    return saved.map((s) => this.toSavedStatusDto(s, genericIndex));
+    return saved.map((s) => this.toSavedStatusDto(s, genericIndex, origin));
   }
 
   async listNotifications(userId: string) {
@@ -254,6 +271,8 @@ export class PatientSignalService {
     for (const s of saved) {
       const status = this.statusFor(s);
       const prev = s.notifiedStatus as PatientStatus | null;
+      // No location here, and none needed: notification generation ranks on
+      // confidence then freshness, and distance is only the last tie-break.
       const best = this.bestSignal(s.medicine.availabilitySignals ?? []);
       const type = this.notificationTypeFor(status, prev, best);
       const currentKey = type ? `med:${s.medicineId}:${TYPE_UI[type]}` : null;
@@ -437,9 +456,10 @@ export class PatientSignalService {
   private toSavedStatusDto(
     s: SavedWithSignals,
     genericIndex: Map<string, string[]>,
+    origin: { lat: number; lng: number } | null,
   ) {
     const status = this.statusFor(s);
-    const best = this.bestSignal(s.medicine.availabilitySignals ?? []);
+    const best = this.bestSignal(s.medicine.availabilitySignals ?? [], origin);
     const pharmacy = best?.signal.pharmacy;
     const generic = s.medicine.genericName ?? s.medicine.canonicalName;
     const alternatives = (genericIndex.get(generic.toLowerCase()) ?? [])
@@ -458,7 +478,7 @@ export class PatientSignalService {
         pharmacy && status !== 'out-of-stock'
           ? {
               name: pharmacy.name,
-              distance: this.distanceFor(pharmacy),
+              distance: this.distanceFor(pharmacy, origin),
               open: pharmacy.isParticipating || pharmacy.verificationStatus === 'VERIFIED',
               is24x7: pharmacy.reliabilityScore >= 0.9,
             }
@@ -553,10 +573,13 @@ export class PatientSignalService {
   }
 
   /** Strongest confidence, then freshest, then nearest. */
-  private bestSignal(signals: SignalWithPharmacy[]): RankedSignal | null {
+  private bestSignal(
+    signals: SignalWithPharmacy[],
+    origin?: { lat: number; lng: number } | null,
+  ): RankedSignal | null {
     if (signals.length === 0) return null;
     return signals
-      .map((signal) => ({ signal, distance: this.distanceFor(signal.pharmacy) }))
+      .map((signal) => ({ signal, distance: this.distanceFor(signal.pharmacy, origin) }))
       .sort(
         (a, b) =>
           CONFIDENCE_RANK[a.signal.confidence] - CONFIDENCE_RANK[b.signal.confidence] ||
@@ -567,14 +590,24 @@ export class PatientSignalService {
       )[0];
   }
 
-  private distanceFor(p?: { latitude: number | null; longitude: number | null } | null) {
+  /**
+   * Distance from the patient to a pharmacy, in km, or null when there is no
+   * honest answer — the patient shared no location, or the pharmacy has no
+   * coordinates. Null is what the client renders as "—"; a number here is a
+   * claim about how far someone has to travel.
+   */
+  private distanceFor(
+    p?: { latitude: number | null; longitude: number | null } | null,
+    origin?: { lat: number; lng: number } | null,
+  ) {
+    if (!origin) return null;
     if (!p || p.latitude == null || p.longitude == null) return null;
     const R = 6371;
-    const dLat = this.rad(p.latitude - ORIGIN.lat);
-    const dLng = this.rad(p.longitude - ORIGIN.lng);
+    const dLat = this.rad(p.latitude - origin.lat);
+    const dLng = this.rad(p.longitude - origin.lng);
     const a =
       Math.sin(dLat / 2) ** 2 +
-      Math.cos(this.rad(ORIGIN.lat)) * Math.cos(this.rad(p.latitude)) * Math.sin(dLng / 2) ** 2;
+      Math.cos(this.rad(origin.lat)) * Math.cos(this.rad(p.latitude)) * Math.sin(dLng / 2) ** 2;
     return Math.round(2 * R * Math.asin(Math.min(1, Math.sqrt(a))) * 10) / 10;
   }
 

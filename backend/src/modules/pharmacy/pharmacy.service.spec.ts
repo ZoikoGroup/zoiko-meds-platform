@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
@@ -49,6 +50,7 @@ describe('PharmacyService.resolvePharmacyId', () => {
       savedLinkStub(),
       portalNotificationStub(),
       allowAllPreferences(),
+      { geocode: jest.fn().mockResolvedValue(null) } as unknown as NearbyPharmacyService,
     );
   });
 
@@ -107,6 +109,7 @@ describe('PharmacyService self-service profile onboarding', () => {
       savedLinkStub(),
       portalNotificationStub(),
       allowAllPreferences(),
+      { geocode: jest.fn().mockResolvedValue(null) } as unknown as NearbyPharmacyService,
     );
   });
 

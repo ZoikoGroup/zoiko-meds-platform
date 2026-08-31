@@ -1,4 +1,5 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
 import { NotificationPreferencesService } from './notification-preferences.service';
@@ -58,6 +59,7 @@ function buildService({
     {} as unknown as SavedMedicineLinkService,
     { inventoryBecameAvailable: jest.fn(), inventoryBecameUnavailable: jest.fn(), bulkUploadCompleted: jest.fn() } as unknown as PharmacyNotificationService,
     {} as unknown as NotificationPreferencesService,
+    { geocode: jest.fn().mockResolvedValue(null) } as unknown as NearbyPharmacyService,
   );
   return { service, prisma };
 }
