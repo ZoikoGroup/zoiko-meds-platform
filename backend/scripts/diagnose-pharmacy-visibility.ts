@@ -54,6 +54,46 @@ function haversine(aLat: number, aLng: number, bLat: number, bLng: number) {
 }
 
 async function main() {
+  // --- What is actually in here? -------------------------------------------
+  // Printed first and unconditionally. "No other pharmacy is showing" has a
+  // very different fix depending on whether the table holds one pharmacy or
+  // forty, and this answers that before any rule is evaluated.
+  const [pharmacyCount, verifiedCount, participatingCount, locatedCount,
+         medicineCount, signalCount, pharmaciesWithSignals] = await Promise.all([
+    prisma.pharmacy.count(),
+    prisma.pharmacy.count({ where: { verificationStatus: VerificationStatus.VERIFIED } }),
+    prisma.pharmacy.count({ where: { isParticipating: true } }),
+    prisma.pharmacy.count({ where: { latitude: { not: null }, longitude: { not: null } } }),
+    prisma.medicineEntity.count({ where: { isSuppressed: false } }),
+    prisma.availabilitySignal.count(),
+    prisma.pharmacy.count({ where: { availabilitySignals: { some: {} } } }),
+  ]);
+
+  console.log('--- What the database holds ---');
+  console.log(`Pharmacies:            ${pharmacyCount}`);
+  console.log(`  VERIFIED:            ${verifiedCount}`);
+  console.log(`  isParticipating:     ${participatingCount}`);
+  console.log(`  with lat AND lng:    ${locatedCount}   <-- anything below this never appears in search`);
+  console.log(`  holding any signal:  ${pharmaciesWithSignals}   <-- only these can stock anything`);
+  console.log(`Medicines (unsuppressed): ${medicineCount}`);
+  console.log(`Availability signals:  ${signalCount}`);
+
+  if (pharmacyCount > 0 && locatedCount < pharmacyCount) {
+    console.log(
+      `
+!! ${pharmacyCount - locatedCount} pharmac${pharmacyCount - locatedCount === 1 ? 'y has' : 'ies have'} no coordinates. ` +
+        'Those are invisible to patient search no matter what else is true.',
+    );
+  }
+  if (pharmaciesWithSignals <= 1) {
+    console.log(
+      `
+!! Only ${pharmaciesWithSignals} pharmac${pharmaciesWithSignals === 1 ? 'y holds' : 'ies hold'} availability signals. ` +
+        'A pharmacy with no signal stocks nothing, so no medicine search can return it ' +
+        '- this is inventory missing, not a search bug.',
+    );
+  }
+
   // --- Which medicine identities does the term resolve to? -----------------
   // Copied from MeService.search so this reports on the same rows it would.
   let medicineIds: string[] | undefined;
