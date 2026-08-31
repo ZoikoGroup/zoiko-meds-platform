@@ -374,6 +374,46 @@ describe('MeService — saved medicines', () => {
       expect(saved.pharmacies.every((p: { distance: number | null }) => p.distance === null)).toBe(true);
     });
 
+    it('names no pharmacy in the headline when nothing is in range', async () => {
+      const { service, prisma } = buildService(HERE);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          signal({
+            pharmacy: pharmacy({ id: 'ph_far', name: 'Zoiko Group Pharmacy', latitude: 19.076, longitude: 72.877 }),
+          }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER, { lat: HERE.lat, lng: HERE.lng, maxDistance: 15 });
+
+      // The card's summary line must agree with the list under it. It used to
+      // name the strongest signal anywhere, so a patient was told their
+      // medicine was at a pharmacy the same card had just excluded.
+      expect(saved.pharmacies).toHaveLength(0);
+      expect(saved.pharmacy).not.toContain('Zoiko Group Pharmacy');
+      expect(saved.distance).toBeNull();
+      expect(saved.confidence).toBe('unknown');
+    });
+
+    it('summarises with the nearest in-range pharmacy, not the strongest anywhere', async () => {
+      const { service, prisma } = buildService(HERE);
+      prisma.savedMedicine.findMany.mockResolvedValue([
+        savedRow([
+          // Strongest band, but far outside the radius.
+          signal({
+            confidence: 'HIGH',
+            pharmacy: pharmacy({ id: 'ph_far', name: 'Faraway', latitude: 19.076, longitude: 72.877 }),
+          }),
+          signal({ confidence: 'MODERATE', pharmacy: pharmacy({ name: 'Round The Corner' }) }),
+        ]),
+      ]);
+
+      const [saved] = await service.listSaved(USER, { lat: HERE.lat, lng: HERE.lng, maxDistance: 15 });
+
+      expect(saved.pharmacy).toBe('Round The Corner');
+      expect(saved.confidence).toBe('moderate');
+    });
+
     it('leaves an unlocated pharmacy out of a list that has a location to measure from', async () => {
       const { service, prisma } = buildService(HERE);
       prisma.savedMedicine.findMany.mockResolvedValue([

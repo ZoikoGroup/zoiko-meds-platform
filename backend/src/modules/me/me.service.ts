@@ -233,17 +233,33 @@ export class MeService {
         }
         const dto = this.toMedicineDto(r.medicine, [r.medicine], origin ?? undefined);
         if (!dto) return null;
+
+        // Every verified pharmacy near the patient that reports this medicine
+        // — not just the single strongest signal, which was all this page could
+        // ever show: a patient with three pharmacies down the road saw one.
+        const pharmacies = this.nearbySignalPharmacies(
+          r.medicine!.availabilitySignals ?? [],
+          origin,
+          maxDistance,
+        );
+
+        // The headline has to be one of the pharmacies listed below it.
+        //
+        // `toMedicineDto` ranks every signal the medicine has, in range or not,
+        // so its summary named the strongest pharmacy anywhere — and the client
+        // printed that name whenever the list came back empty. A patient in
+        // Delhi was told their medicine was at a pharmacy in Hyderabad, on the
+        // same card whose list had just excluded it for being 1,200 km away.
+        // With nothing in range there is no pharmacy to name, and saying so is
+        // the whole point of the radius.
+        const nearest = pharmacies[0] ?? null;
         return {
           ...dto,
-          // Every verified pharmacy near the patient that reports this medicine
-          // — not just the single strongest signal the headline fields above
-          // summarise. One name was all this page could ever show, so a patient
-          // with three pharmacies down the road saw one of them.
-          pharmacies: this.nearbySignalPharmacies(
-            r.medicine!.availabilitySignals ?? [],
-            origin,
-            maxDistance,
-          ),
+          pharmacies,
+          confidence: nearest?.confidence ?? 'unknown',
+          pharmacy: nearest?.name ?? 'No verified pharmacy near you stocks this yet',
+          distance: nearest?.distance ?? null,
+          updated: nearest?.updated ?? 'No recent signal nearby',
           savedId: r.id,
           inCatalog: true,
           alertsEnabled: r.alertsEnabled ?? true,

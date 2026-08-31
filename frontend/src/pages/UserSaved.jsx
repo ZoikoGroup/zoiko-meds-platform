@@ -161,6 +161,12 @@ export default function UserSaved() {
                       ))}
                     </ul>
                   ) : (
+                    // Nothing in range. The summary line is safe to print here:
+                    // the API derives it from the same radius-bounded set as the
+                    // list, so with nothing nearby it says so rather than naming
+                    // the strongest pharmacy anywhere — which is how a patient in
+                    // Delhi was shown a Hyderabad pharmacy on a card whose own
+                    // radius had just excluded it.
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                       <span className="flex min-w-0 items-center gap-1">
                         <MapPin className="size-3 shrink-0" />

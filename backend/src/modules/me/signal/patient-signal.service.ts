@@ -15,6 +15,9 @@ import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { SavedQueryDto } from '../dto/saved-query.dto';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
 
+/** Default search radius in km, matching the patient search radius selector. */
+const DEFAULT_RADIUS_KM = 15;
+
 /**
  * Patient ZoikoSignal™ — personalized availability notifications.
  *
@@ -121,7 +124,8 @@ export class PatientSignalService {
     await this.regenerate(userId);
     const saved = await this.loadSavedWithSignals(userId);
     const genericIndex = await this.buildAlternativesIndex(saved.map((s) => s.medicine));
-    return saved.map((s) => this.toSavedStatusDto(s, genericIndex, origin));
+    const maxDistance = query.maxDistance ?? DEFAULT_RADIUS_KM;
+    return saved.map((s) => this.toSavedStatusDto(s, genericIndex, origin, maxDistance));
   }
 
   async listNotifications(userId: string) {
@@ -457,6 +461,7 @@ export class PatientSignalService {
     s: SavedWithSignals,
     genericIndex: Map<string, string[]>,
     origin: { lat: number; lng: number } | null,
+    maxDistance: number,
   ) {
     const status = this.statusFor(s);
     const best = this.bestSignal(s.medicine.availabilitySignals ?? [], origin);
@@ -465,6 +470,15 @@ export class PatientSignalService {
     const alternatives = (genericIndex.get(generic.toLowerCase()) ?? [])
       .filter((name) => name !== s.medicine.canonicalName)
       .slice(0, 3);
+
+    // `nearest` is a claim that this pharmacy is near the patient, so it has to
+    // respect the same radius the rest of the app does. Unbounded, it named the
+    // strongest signal anywhere: a patient in Delhi was shown a Hyderabad
+    // pharmacy as their nearest, on a screen that offers it as somewhere to go.
+    // Out of range means there is no nearest, and null is what the client
+    // renders as "none nearby".
+    const distance = this.distanceFor(pharmacy, origin);
+    const inRange = origin == null || (distance != null && distance <= maxDistance);
 
     return {
       id: s.medicineId,
@@ -475,10 +489,10 @@ export class PatientSignalService {
       priority: s.priority.toLowerCase(),
       updated: best ? this.relativeTime(best.signal.computedAt) : 'No recent signal',
       nearest:
-        pharmacy && status !== 'out-of-stock'
+        pharmacy && inRange && status !== 'out-of-stock'
           ? {
               name: pharmacy.name,
-              distance: this.distanceFor(pharmacy, origin),
+              distance,
               open: pharmacy.isParticipating || pharmacy.verificationStatus === 'VERIFIED',
               is24x7: pharmacy.reliabilityScore >= 0.9,
             }
