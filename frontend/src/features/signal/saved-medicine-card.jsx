@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/shared/status'
 import { cn } from '@/lib/utils'
 import { STATUS_META, PRIORITY_META } from '@/features/signal/signal-meta'
+import { formatDistanceKm } from '@/lib/user-location'
 import { useLanguage } from '@/providers/language-provider'
 
 export function SavedMedicineCard({ med, index = 0, onQuickAction, onCyclePriority }) {
@@ -54,13 +55,18 @@ export function SavedMedicineCard({ med, index = 0, onQuickAction, onCyclePriori
                     24/7
                   </Badge>
                 )}
-                <span className="font-semibold text-foreground tabular">{med.nearest.distance} km</span>
+                {/* Null whenever the patient has not shared a location — the
+                    API names the pharmacy but will not measure to it. Printed
+                    raw that rendered as a bare " km". */}
+                <span className="font-semibold text-foreground tabular">
+                  {formatDistanceKm(med.nearest.distance, med.nearest.approximate)}
+                </span>
               </span>
             </div>
           ) : (
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <MapPin className="size-3.5" />
-              No nearby pharmacy currently has this medicine
+              No pharmacy within your search radius has this medicine
             </span>
           )}
 
