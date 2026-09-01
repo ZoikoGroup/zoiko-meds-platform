@@ -589,13 +589,6 @@ model Organization {
   /// told to enrol, rather than being let in on the password alone.
   requireMfa         Boolean  @default(false)
 
-  /// Restrict the API to a set of networks. Deliberately separate from the list
-  /// being empty: switching it on with nothing in the list would lock every
-  /// operator out, so the guard reads that as "not configured" not "deny all".
-  ipAllowlistEnabled Boolean  @default(false)
-  /// CIDR ranges, or bare addresses.
-  ipAllowlist        String[] @default([])
-
   /// Whether members may sign in through Google. The provider must still be
   /// configured on the server; this decides whether the workspace accepts it
   /// when it is.

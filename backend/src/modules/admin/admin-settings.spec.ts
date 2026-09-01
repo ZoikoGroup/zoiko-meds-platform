@@ -1,4 +1,3 @@
-import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from './audit.writer';
@@ -142,8 +141,6 @@ describe('MSA-42 · security posture', () => {
 
   const POLICY = {
     requireMfa: false,
-    ipAllowlistEnabled: false,
-    ipAllowlist: [] as string[],
     allowOauthSignIn: true,
   };
 
@@ -170,11 +167,7 @@ describe('MSA-42 · security posture', () => {
     const controls = await serviceWith().list();
 
     const settable = controls.filter((c) => c.setting);
-    expect(settable.map((c) => c.id).sort()).toEqual([
-      'ip-allowlist',
-      'mfa',
-      'oauth-sign-in',
-    ]);
+    expect(settable.map((c) => c.id).sort()).toEqual(['mfa', 'oauth-sign-in']);
     // Everything else is decided in configuration or in code, so the page must
     // not render a switch that could only misreport it.
     for (const control of controls.filter((c) => !c.setting)) {
@@ -194,19 +187,14 @@ describe('MSA-42 · security posture', () => {
     expect(on?.detail).toMatch(/refused a session/i);
   });
 
-  it('counts the ranges actually in force', async () => {
-    const control = (
-      await serviceWith({}, {
-        ipAllowlistEnabled: true,
-        ipAllowlist: ['203.0.113.0/24', '10.0.0.0/8'],
-      }).list()
-    ).find((c) => c.id === 'ip-allowlist');
+  // Withdrawn (MSA-42). An operator saved a subnet mask as a range, switched it
+  // on, and the guard refused every request including the console session of the
+  // only account that could switch it back off. Nothing here may offer it again.
+  it('offers no IP allowlist control at all', async () => {
+    const controls = await serviceWith().list();
 
-    expect(control?.state).toBe('enforced');
-    expect(control?.detail).toContain('2 approved ranges');
-    // Said on the page, because it is what stops a wrong entry taking the
-    // service out of its load balancer.
-    expect(control?.detail).toMatch(/health probes/i);
+    expect(controls.find((c) => c.id === 'ip-allowlist')).toBeUndefined();
+    expect(controls.some((c) => /allowlist/i.test(c.label))).toBe(false);
   });
 
   it('still names SAML as absent, since sign-on here is OAuth', async () => {
@@ -262,52 +250,20 @@ describe('MSA-42 · security posture', () => {
       );
     });
 
-    // The page would read "restricted" while the guard, correctly, let
-    // everything through. The two must not disagree.
-    it('refuses an allowlist switched on with nothing in it', async () => {
-      await expect(
-        serviceWith().update('u1', { ipAllowlistEnabled: true }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(prisma.organization.upsert).not.toHaveBeenCalled();
-    });
-
-    it('accepts it when entries are supplied in the same save', async () => {
-      await expect(
-        serviceWith().update('u1', {
-          ipAllowlistEnabled: true,
-          ipAllowlist: ['203.0.113.0/24'],
-        }),
-      ).resolves.toBeDefined();
-    });
-
-    it('names the entry it could not parse', async () => {
-      await expect(
-        serviceWith().update('u1', { ipAllowlist: ['203.0.113.0/24', 'example.com'] }),
-      ).rejects.toThrow(/example\.com/);
-    });
-
-    it('trims stored entries, so a pasted line still matches', async () => {
-      await serviceWith().update('u1', { ipAllowlist: ['  203.0.113.0/24  '] });
-
-      const { update } = prisma.organization.upsert.mock.calls[0][0];
-      expect(update.ipAllowlist).toEqual(['203.0.113.0/24']);
-    });
-
-    it('can switch the allowlist off without restating the entries', async () => {
-      prisma.organization.findUnique.mockResolvedValue({
-        ...POLICY,
+    // The DTO no longer carries the allowlist fields, so a client still sending
+    // them cannot write one back onto the row by accident.
+    it('never writes an allowlist, whatever the body claims', async () => {
+      await serviceWith().update('u1', {
+        requireMfa: true,
         ipAllowlistEnabled: true,
         ipAllowlist: ['203.0.113.0/24'],
-      });
-      const service = new SecurityPostureService(
-        configFor({}),
-        prisma as unknown as PrismaService,
-        audit as unknown as AuditWriter,
-      );
+      } as never);
 
-      await expect(
-        service.update('u1', { ipAllowlistEnabled: false }),
-      ).resolves.toBeDefined();
+      const { update, create } = prisma.organization.upsert.mock.calls[0][0];
+      for (const written of [update, create]) {
+        expect(written).not.toHaveProperty('ipAllowlistEnabled');
+        expect(written).not.toHaveProperty('ipAllowlist');
+      }
     });
   });
 });

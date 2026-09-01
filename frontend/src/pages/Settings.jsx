@@ -450,17 +450,20 @@ function MembersPanel() {
 }
 
 /**
- * The three sign-in controls this page has always shown (MSA-42).
+ * The sign-in controls this page shows (MSA-42).
  *
  * They were switches bound to useState and nothing else, two of them on by
  * default, so all three read as active security while none of them did anything.
- * The rows and the wording are unchanged; what changed is that a switch is now
- * live only where the platform really enforces the control, and the other two
- * say so instead of sitting there inviting a click.
+ * What changed is that a switch is live only where the platform really enforces
+ * the control, and the rest say so instead of sitting there inviting a click.
  *
- * IP allowlist is live: PATCH writes CIDR ranges that IpAllowlistGuard checks on
- * every request, and the API refuses to switch it on with an empty list, so it
- * cannot lock the operator out.
+ * IP allowlist has been withdrawn. It was the one live switch here, and it did
+ * exactly what it said: an operator saved a subnet mask as though it were a
+ * range, switched it on, and every request from outside that list was refused —
+ * including the console session of the only account that could switch it back
+ * off. Recovering it took a write to the database. Restriction by network now
+ * belongs at the load balancer, where locking yourself out does not also remove
+ * the means to undo it.
  *
  * SAML is not built at all. Single sign-on here is OAuth against Google, which
  * is a different protocol — an Okta IdP that only speaks SAML cannot be
@@ -488,20 +491,13 @@ const SECURITY_ROWS = [
     // No SAML service provider exists; Google OAuth is not the same protocol.
     comingSoon: true,
   },
-  {
-    id: 'ip-allowlist',
-    title: 'IP allowlist',
-    detail: 'Restrict access to approved network ranges.',
-    setting: 'ipAllowlistEnabled',
-  },
 ]
 
 function SecurityPanel() {
   const [controls, setControls] = useState(null)
   // `error` is only for a failed load, which leaves the page with nothing to
   // show. A refused save is transient: it belongs to the click that caused it,
-  // and the allowlist message used to sit there afterwards reading as a standing
-  // complaint about a switch that was simply off.
+  // rather than sitting there afterwards reading as a standing complaint.
   const [error, setError] = useState('')
   const [savingKey, setSavingKey] = useState(null)
   const [flashMsg, flash] = useFlash()
@@ -516,19 +512,10 @@ function SecurityPanel() {
    * stored, and gone on the next mount, because the feature really is off.
    */
   const [uiOnly, setUiOnly] = useState({})
-  // The approved-network editor: the saved ranges, the textarea's working copy,
-  // and whether it is open. Restored from the version this card used to carry.
-  const [policy, setPolicy] = useState(null)
-  const [allowlistDraft, setAllowlistDraft] = useState('')
-  const [networksOpen, setNetworksOpen] = useState(false)
 
-  /** Take a { policy, controls } payload, and seed the editor from it. */
+  /** Take a { policy, controls } payload from either a read or a save. */
   const apply = useCallback((next) => {
     setControls(Array.isArray(next?.controls) ? next.controls : [])
-    if (next?.policy) {
-      setPolicy(next.policy)
-      setAllowlistDraft((next.policy.ipAllowlist ?? []).join('\n'))
-    }
   }, [])
 
   useEffect(() => {
@@ -559,27 +546,6 @@ function SecurityPanel() {
     } finally {
       setSavingKey(null)
     }
-  }
-
-  /** The ranges as the textarea currently holds them. */
-  const draftEntries = () =>
-    allowlistDraft.split('\n').map((line) => line.trim()).filter(Boolean)
-
-  /**
-   * Switch the allowlist, refusing an empty one before the request is made.
-   *
-   * The API refuses it too — an allowlist switched on with nothing in it would
-   * lock out every operator, including whoever would switch it back off — but
-   * saying so here opens the editor at the same time, which is where the
-   * operator has to go next.
-   */
-  const toggleAllowlist = (next) => {
-    if (next && (policy?.ipAllowlist?.length ?? 0) === 0) {
-      flashError('Add at least one approved IP address or range first.')
-      setNetworksOpen(true)
-      return
-    }
-    save('ipAllowlistEnabled', { ipAllowlistEnabled: next }, 'Security policy saved')
   }
 
   if (error && !controls) {
@@ -639,59 +605,13 @@ function SecurityPanel() {
                   disabled={savingKey === row.setting}
                   aria-label={row.title}
                   onCheckedChange={(next) =>
-                    row.comingSoon ? setUiOnlySwitch(row.id, next) : toggleAllowlist(next)
+                    row.comingSoon
+                      ? setUiOnlySwitch(row.id, next)
+                      : save(row.setting, { [row.setting]: next }, 'Security policy saved')
                   }
                 />
               </div>
             </div>
-            {row.id === 'ip-allowlist' && (
-              <div className="pb-1">
-                <button
-                  type="button"
-                  onClick={() => setNetworksOpen((open) => !open)}
-                  aria-expanded={networksOpen}
-                  className="text-xs font-medium text-primary hover:underline"
-                >
-                  {networksOpen ? 'Hide approved networks' : 'Approved networks'}
-                  {policy?.ipAllowlist?.length ? ` (${policy.ipAllowlist.length})` : ''}
-                </button>
-
-                {networksOpen && (
-                  <div className="mt-3 flex flex-col gap-3">
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      One address or CIDR range per line. The switch above only takes
-                      effect once there is something here — switching it on with an empty
-                      list would lock every operator out, including whoever would switch
-                      it off again.
-                    </p>
-                    <textarea
-                      aria-label="Approved networks"
-                      rows={5}
-                      value={allowlistDraft}
-                      onChange={(e) => setAllowlistDraft(e.target.value)}
-                      placeholder={'203.0.113.25\n203.0.113.0/24\n2001:db8::/32'}
-                      className="w-full rounded-lg border border-input bg-card px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-                    />
-                    <p className="text-[11px] leading-relaxed text-muted-foreground">
-                      Health checks are always answered, whatever is listed here, so a
-                      wrong entry cannot pull this service out of its load balancer.
-                    </p>
-                    <div className="flex justify-end">
-                      <Button
-                        size="sm"
-                        disabled={savingKey === 'ipAllowlist'}
-                        onClick={() =>
-                          save('ipAllowlist', { ipAllowlist: draftEntries() }, 'Approved networks saved')
-                        }
-                      >
-                        {savingKey === 'ipAllowlist' && <Loader2 className="size-4 animate-spin" />}
-                        Save networks
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
             {i < SECURITY_ROWS.length - 1 && <Separator />}
           </div>
         ))}

@@ -32,9 +32,7 @@ export const updateOrganization = (body) =>
 // than no flag at all (MSA-42).
 export const getSecurityPosture = () => apiFetch('/admin/security')
 
-// Set the controls this page can actually decide. Refuses an allowlist switched
-// on with nothing in it, because the page would then read "restricted" while the
-// guard, correctly, lets everything through.
+// Set the controls this page can actually decide.
 export const updateSecurityPolicy = (body) =>
   apiFetch('/admin/security', { method: 'PATCH', body })
 

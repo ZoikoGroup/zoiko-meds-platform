@@ -84,15 +84,6 @@ const CONTROLS = [
     enabled: false,
   },
   {
-    id: 'ip-allowlist',
-    label: 'IP allowlist',
-    detail: 'The API accepts requests from any address that reaches it.',
-    state: 'available',
-    configuredBy: 'This page',
-    setting: 'ipAllowlistEnabled',
-    enabled: false,
-  },
-  {
     id: 'saml',
     label: 'SAML 2.0',
     detail:
@@ -102,13 +93,8 @@ const CONTROLS = [
   },
 ]
 
-/** A literal newline, for the one-range-per-line textarea. */
-const NL = String.fromCharCode(10)
-
 const POLICY = {
   requireMfa: false,
-  ipAllowlistEnabled: false,
-  ipAllowlist: [],
   allowOauthSignIn: true,
 }
 
@@ -243,20 +229,25 @@ describe('MSA-41 · members', () => {
 })
 
 describe('MSA-42 · security', () => {
-  // The tab lists the three controls it has always listed. What it no longer
-  // does is present all three as live: a switch is interactive only where the
-  // platform really enforces the control, and the other two say Coming Soon
-  // rather than sitting at "off", which invites a click.
+  // A switch is interactive only where the platform really enforces the control;
+  // the rest say Coming Soon rather than sitting at "off", which invites a click.
+  //
+  // The IP allowlist row is gone entirely. It was the one live switch here, and
+  // it worked: an operator saved a subnet mask as a range, switched it on, and
+  // every request from outside that list was refused — including the console
+  // session of the only account that could switch it back off.
   const ROWS = [
     ['Enforce multi-factor authentication', 'Require MFA for all members on every sign-in.'],
     ['SSO (SAML 2.0)', 'Single sign-on via your identity provider (Okta).'],
-    ['IP allowlist', 'Restrict access to approved network ranges.'],
   ]
 
-  it('lists exactly the three original rows, in order', async () => {
+  const settled = () =>
+    waitFor(() => expect(screen.getByText('SSO (SAML 2.0)')).toBeDefined())
+
+  it('lists exactly the remaining rows, in order', async () => {
     renderTab('security')
 
-    await waitFor(() => expect(screen.getByText('IP allowlist')).toBeDefined())
+    await settled()
     const switches = screen.getAllByRole('switch')
     expect(switches.map((el) => el.getAttribute('aria-label'))).toEqual(ROWS.map(([t]) => t))
   })
@@ -271,7 +262,7 @@ describe('MSA-42 · security', () => {
   it('shows none of the technical detail the redesign had added', async () => {
     renderTab('security')
 
-    await waitFor(() => expect(screen.getByText('IP allowlist')).toBeDefined())
+    await settled()
     for (const gone of [
       /Password minimum length/i,
       /Session lifetime/i,
@@ -284,12 +275,21 @@ describe('MSA-42 · security', () => {
     }
   })
 
-  it('keeps the editor out of the way until it is asked for', async () => {
+  // The withdrawal, held as a test so the row cannot quietly come back.
+  it('offers no IP allowlist anywhere on the tab', async () => {
+    const user = userEvent.setup()
     renderTab('security')
 
-    await waitFor(() => expect(screen.getByText('IP allowlist')).toBeDefined())
+    await settled()
+    expect(screen.queryByText(/ip allowlist/i)).toBeNull()
+    expect(screen.queryByRole('switch', { name: /ip allowlist/i })).toBeNull()
+    expect(screen.queryByText(/approved network/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /approved networks/i })).toBeNull()
     expect(screen.queryByLabelText(/approved networks/i)).toBeNull()
-    expect(screen.getByRole('button', { name: /approved networks/i })).toBeDefined()
+
+    // And nothing left on the tab can send one.
+    for (const control of screen.getAllByRole('switch')) await user.click(control)
+    expect(updateSecurityPolicyMock).not.toHaveBeenCalled()
   })
 
   describe('a control that is not built yet', () => {
@@ -298,7 +298,7 @@ describe('MSA-42 · security', () => {
     it('opens as an ordinary off switch, saying nothing', async () => {
       renderTab('security')
 
-      await waitFor(() => expect(screen.getByText('IP allowlist')).toBeDefined())
+      await settled()
       expect(screen.queryByText(/coming soon/i)).toBeNull()
       for (const title of UNBUILT) {
         const control = screen.getByRole('switch', { name: title })
@@ -393,237 +393,13 @@ describe('MSA-42 · security', () => {
       const control = await screen.findByRole('switch', { name: /multi-factor/i })
       expect(control.getAttribute('data-state')).toBe('unchecked')
     })
-
-    it('leaves the IP allowlist on real server state', async () => {
-      // A range already saved, so enabling has something to enforce.
-      getSecurityPostureMock.mockResolvedValue({
-        controls: CONTROLS,
-        policy: { ...POLICY, ipAllowlist: ['203.0.113.0/24'] },
-      })
-      const user = userEvent.setup()
-      renderTab('security')
-
-      await user.click(await screen.findByRole('switch', { name: /ip allowlist/i }))
-
-      await waitFor(() =>
-        expect(updateSecurityPolicyMock).toHaveBeenCalledWith({ ipAllowlistEnabled: true }),
-      )
-      // And never wears the badge.
-      expect(screen.queryByText(/coming soon/i)).toBeNull()
-    })
   })
 
-  it('takes the switch state from the server, not from a local default', async () => {
-    getSecurityPostureMock.mockResolvedValue({
-      controls: CONTROLS.map((c) => (c.id === 'ip-allowlist' ? { ...c, enabled: true } : c)),
-      policy: { ...POLICY, ipAllowlistEnabled: true, ipAllowlist: ['203.0.113.0/24'] },
-    })
+  it('reports a failure to load as a failure, not an empty tab', async () => {
+    getSecurityPostureMock.mockRejectedValue(new Error('Could not load security settings.'))
     renderTab('security')
-
-    const control = await screen.findByRole('switch', { name: /ip allowlist/i })
-    expect(control.getAttribute('data-state')).toBe('checked')
-  })
-
-  it('does not show a validation message until something is attempted', async () => {
-    // It used to sit above a switch that was simply off, reading as a standing
-    // complaint about the allowlist rather than the result of a click.
-    renderTab('security')
-
-    await waitFor(() => expect(screen.getByText('IP allowlist')).toBeDefined())
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByText(/add at least one address/i)).toBeNull()
-  })
-
-  describe('enabling with nothing to enforce', () => {
-    it('says what is needed, without asking the server', async () => {
-      // The API refuses this too, but answering here saves a pointless round
-      // trip and can open the editor at the same time.
-      const user = userEvent.setup()
-      renderTab('security')
-
-      await user.click(await screen.findByRole('switch', { name: /ip allowlist/i }))
-
-      expect(
-        await screen.findByText('Add at least one approved IP address or range first.'),
-      ).toBeDefined()
-      expect(updateSecurityPolicyMock).not.toHaveBeenCalled()
-    })
-
-    it('leaves the switch off', async () => {
-      const user = userEvent.setup()
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: /ip allowlist/i })
-      await user.click(control)
-
-      expect(control.getAttribute('data-state')).toBe('unchecked')
-    })
-
-    it('opens the editor, which is where the operator has to go next', async () => {
-      const user = userEvent.setup()
-      renderTab('security')
-
-      await user.click(await screen.findByRole('switch', { name: /ip allowlist/i }))
-
-      expect(await screen.findByLabelText(/approved networks/i)).toBeDefined()
-    })
-
-    it('does not show the message before anything is attempted', async () => {
-      renderTab('security')
-
-      await waitFor(() => expect(screen.getByText('IP allowlist')).toBeDefined())
-      expect(screen.queryByRole('alert')).toBeNull()
-    })
-
-    it('clears the message on its own', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true })
-      try {
-        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-        renderTab('security')
-
-        await user.click(await screen.findByRole('switch', { name: /ip allowlist/i }))
-        expect(await screen.findByText(/at least one approved/i)).toBeDefined()
-
-        await vi.advanceTimersByTimeAsync(6000)
-        await waitFor(() => expect(screen.queryByText(/at least one approved/i)).toBeNull())
-      } finally {
-        vi.useRealTimers()
-      }
-    })
-  })
-
-  describe('the approved-networks editor', () => {
-    const WITH_RANGES = {
-      controls: CONTROLS,
-      policy: { ...POLICY, ipAllowlist: ['203.0.113.25', '203.0.113.0/24', '2001:db8::/32'] },
-    }
-
-    /** Open the editor and hand back its textarea. */
-    async function openEditor() {
-      const user = userEvent.setup()
-      renderTab('security')
-      await user.click(await screen.findByRole('button', { name: /approved networks/i }))
-      return { user, box: await screen.findByLabelText(/approved networks/i) }
-    }
-
-    it('opens with the ranges already saved, not blank', async () => {
-      // GET used to answer with the controls alone, so the editor had nothing to
-      // start from and a workspace with ranges was shown an empty box.
-      getSecurityPostureMock.mockResolvedValue(WITH_RANGES)
-
-      const { box } = await openEditor()
-
-      expect(box.value).toBe(['203.0.113.25', '203.0.113.0/24', '2001:db8::/32'].join(NL))
-    })
-
-    it('says how many are saved without being opened', async () => {
-      getSecurityPostureMock.mockResolvedValue(WITH_RANGES)
-      renderTab('security')
-
-      expect(await screen.findByRole('button', { name: /approved networks \(3\)/i })).toBeDefined()
-    })
-
-    it.each([
-      ['a bare IPv4 address', '203.0.113.25'],
-      ['an IPv4 CIDR range', '203.0.113.0/24'],
-      ['an IPv6 CIDR range', '2001:db8::/32'],
-    ])('saves %s', async (_label, entry) => {
-      const { user, box } = await openEditor()
-      await user.clear(box)
-      await user.type(box, entry)
-      await user.click(screen.getByRole('button', { name: /save networks/i }))
-
-      await waitFor(() =>
-        expect(updateSecurityPolicyMock).toHaveBeenCalledWith({ ipAllowlist: [entry] }),
-      )
-    })
-
-    it('sends one entry per line, trimmed, blank lines dropped', async () => {
-      const { user, box } = await openEditor()
-      await user.clear(box)
-      // Typing a newline into a textarea, plus stray whitespace either side.
-      await user.type(box, `  203.0.113.25  ${NL}${NL}  2001:db8::/32 `)
-      await user.click(screen.getByRole('button', { name: /save networks/i }))
-
-      await waitFor(() =>
-        expect(updateSecurityPolicyMock).toHaveBeenCalledWith({
-          ipAllowlist: ['203.0.113.25', '2001:db8::/32'],
-        }),
-      )
-    })
-
-    it('shows the reason when the server rejects an entry', async () => {
-      updateSecurityPolicyMock.mockRejectedValue(
-        new Error('"not-an-ip" is not a valid address or range.'),
-      )
-      const { user, box } = await openEditor()
-      await user.clear(box)
-      await user.type(box, 'not-an-ip')
-      await user.click(screen.getByRole('button', { name: /save networks/i }))
-
-      expect(await screen.findByText(/not a valid address or range/i)).toBeDefined()
-    })
-
-    it('lets the allowlist be enabled once a range is saved', async () => {
-      // Saving answers with the new policy, so the switch stops being refused.
-      updateSecurityPolicyMock.mockResolvedValue({
-        controls: CONTROLS,
-        policy: { ...POLICY, ipAllowlist: ['203.0.113.0/24'] },
-      })
-      const { user, box } = await openEditor()
-      await user.clear(box)
-      await user.type(box, '203.0.113.0/24')
-      await user.click(screen.getByRole('button', { name: /save networks/i }))
-      await waitFor(() => expect(updateSecurityPolicyMock).toHaveBeenCalledTimes(1))
-
-      await user.click(screen.getByRole('switch', { name: /ip allowlist/i }))
-
-      await waitFor(() =>
-        expect(updateSecurityPolicyMock).toHaveBeenLastCalledWith({ ipAllowlistEnabled: true }),
-      )
-    })
-
-    it('can always be switched off again', async () => {
-      // Whatever the list holds — the way back must never be blocked.
-      getSecurityPostureMock.mockResolvedValue({
-        controls: CONTROLS.map((c) => (c.id === 'ip-allowlist' ? { ...c, enabled: true } : c)),
-        policy: { ...POLICY, ipAllowlistEnabled: true, ipAllowlist: ['203.0.113.0/24'] },
-      })
-      const user = userEvent.setup()
-      renderTab('security')
-
-      await user.click(await screen.findByRole('switch', { name: /ip allowlist/i }))
-
-      await waitFor(() =>
-        expect(updateSecurityPolicyMock).toHaveBeenCalledWith({ ipAllowlistEnabled: false }),
-      )
-    })
-
-    it('reports the enabled state the server holds after a reload', async () => {
-      getSecurityPostureMock.mockResolvedValue({
-        controls: CONTROLS.map((c) => (c.id === 'ip-allowlist' ? { ...c, enabled: true } : c)),
-        policy: { ...POLICY, ipAllowlistEnabled: true, ipAllowlist: ['203.0.113.0/24'] },
-      })
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: /ip allowlist/i })
-      expect(control.getAttribute('data-state')).toBe('checked')
-    })
-  })
-
-  it('reports a policy the server refuses', async () => {
-    // An invalid entry, say — the API names which one, and that is what shows.
-    getSecurityPostureMock.mockResolvedValue({
-      controls: CONTROLS,
-      policy: { ...POLICY, ipAllowlist: ['203.0.113.0/24'] },
-    })
-    updateSecurityPolicyMock.mockRejectedValue(new Error('not-an-ip is not a valid address or range.'))
-    const user = userEvent.setup()
-    renderTab('security')
-
-    await user.click(await screen.findByRole('switch', { name: /ip allowlist/i }))
 
     expect(await screen.findByRole('alert')).toBeDefined()
-    expect(screen.getByText(/not a valid address or range/i)).toBeDefined()
+    expect(screen.getByText(/could not load security settings/i)).toBeDefined()
   })
 })

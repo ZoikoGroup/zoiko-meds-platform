@@ -17,7 +17,6 @@ import { ReportsService } from './reports/reports.service';
 import { OrganizationService } from './organization/organization.service';
 import { SecurityPostureService } from './security/security-posture.service';
 import { HelpResourcesService } from './help/help-resources.service';
-import { IpAllowlistGuard } from './security/ip-allowlist.guard';
 import { RoleCapabilitiesService } from './roles/role-capabilities.service';
 import { PlatformApiKeyService } from './api-keys/platform-api-key.service';
 import { GatewayTelemetryController } from './telemetry/gateway-telemetry.controller';
@@ -52,7 +51,6 @@ import { GatewayTelemetryInterceptor } from './telemetry/gateway-telemetry.inter
     OrganizationService,
     SecurityPostureService,
     HelpResourcesService,
-    IpAllowlistGuard,
     RoleCapabilitiesService,
     PlatformApiKeyService,
     GatewayTelemetryService,
@@ -61,7 +59,6 @@ import { GatewayTelemetryInterceptor } from './telemetry/gateway-telemetry.inter
   ],
   exports: [
     AuditWriter,
-    IpAllowlistGuard,
     PlatformApiKeyService,
     GatewayRequestRecorder,
     GatewayTelemetryInterceptor,
