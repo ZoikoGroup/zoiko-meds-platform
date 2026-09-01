@@ -7,6 +7,12 @@
  *   1. verificationStatus = VERIFIED      (PUBLIC_PHARMACY_WHERE)
  *   2. isParticipating = true             (PUBLIC_PHARMACY_WHERE)
  *   3. latitude AND longitude are set     (distanceFor() returns null otherwise)
+ *
+ * Rules 2 and 3 are no longer independent: canParticipate() derives
+ * isParticipating from VERIFIED *and* located, so an unlocated pharmacy fails
+ * both and the report below prints two lines for one cause. Setting a location
+ * clears both at once - there is no separate "publish" step to remember.
+ *
  *   4. distance from the patient <= maxDistance km
  *   5. it holds a non-SUPPRESSED AvailabilitySignal for the searched medicine
  *

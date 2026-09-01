@@ -37,6 +37,10 @@ function buildService({ wantsUpdates }: { wantsUpdates: boolean }) {
       update: jest.fn(),
       create: jest.fn(),
       findFirst: jest.fn().mockResolvedValue(null),
+      // Approval reads the pharmacy's coordinates to decide whether it can be
+      // listed as well as verified. Located, so these specs stay about
+      // notification preferences.
+      findUnique: jest.fn().mockResolvedValue({ latitude: 17.5561, longitude: 78.4181 }),
     },
     signalNotification: { create: jest.fn() },
     pharmacyNotificationPreference: {

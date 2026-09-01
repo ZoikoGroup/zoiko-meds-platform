@@ -11,6 +11,7 @@ import { AuditWriter } from '../audit.writer';
 import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
 import { allowsCategory } from '../../pharmacy/notification-preferences.service';
+import { canParticipate } from '../../pharmacy/participation';
 import { CreateVerificationDto } from './dto/create-verification.dto';
 import { UpdateVerificationDto } from './dto/update-verification.dto';
 
@@ -189,11 +190,29 @@ export class VerificationService {
       }
 
       if (dto.status === VerificationRequestStatus.APPROVED) {
+        // Approving the licence and publishing the pharmacy used to be the same
+        // write. They answer different questions, and fusing them listed
+        // pharmacies that no patient could ever be shown: a request that
+        // arrives without a pharmacy row creates one with no address and no
+        // coordinates, and this marked it participating. Every distance-bounded
+        // search then dropped it, so it was simultaneously part of the verified
+        // network and absent from it.
+        //
+        // The licence is approved either way. Listing waits for a location and
+        // starts by itself the moment the operator or a reviewer sets one.
+        const approved = await tx.pharmacy.findUnique({
+          where: { id: pharmacyId },
+          select: { latitude: true, longitude: true },
+        });
         await tx.pharmacy.update({
           where: { id: pharmacyId },
           data: {
             verificationStatus: VerificationStatus.VERIFIED,
-            isParticipating: true,
+            isParticipating: canParticipate({
+              verificationStatus: VerificationStatus.VERIFIED,
+              latitude: approved?.latitude ?? null,
+              longitude: approved?.longitude ?? null,
+            }),
             updatedAt: new Date(),
           },
         });

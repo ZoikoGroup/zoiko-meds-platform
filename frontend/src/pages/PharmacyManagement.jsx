@@ -28,6 +28,7 @@ import {
   ExternalLink,
   MapPin,
   MapPinOff,
+  EyeOff,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
 import {
@@ -362,10 +363,25 @@ export default function PharmacyManagement() {
       key: 'status',
       header: 'Status',
       sortable: true,
+      // Verified and listed are two answers, and the console has to show both.
+      // Approving a licence no longer publishes a pharmacy that has nowhere to
+      // be found, so a row can legitimately read VERIFIED and still be shown to
+      // no patient — which is invisible unless it is said out loud.
       cell: (row) => (
-        <Badge variant={STATUS_VARIANT[row.status] || 'secondary'}>
-          {STATUS_LABEL[row.status] || row.status}
-        </Badge>
+        <div className="flex flex-col items-start gap-1">
+          <Badge variant={STATUS_VARIANT[row.status] || 'secondary'}>
+            {STATUS_LABEL[row.status] || row.status}
+          </Badge>
+          {row.listingBlockedReason && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] text-warning"
+              title={row.listingBlockedReason}
+            >
+              <EyeOff className="size-3" />
+              Not listed to patients
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -418,7 +434,7 @@ export default function PharmacyManagement() {
           {!row.located ? (
             <Badge variant="destructive" className="w-fit gap-1">
               <MapPinOff className="size-3" />
-              Not located — hidden from search
+              Not located
             </Badge>
           ) : row.locationPrecision === 'APPROXIMATE' ? (
             <span
@@ -633,6 +649,28 @@ export default function PharmacyManagement() {
                 <span className="text-muted-foreground">Headquarters Location</span>
                 <span className="text-right max-w-[240px] font-medium">{[selectedPharmacy.addressLine1, selectedPharmacy.city, selectedPharmacy.region, selectedPharmacy.postalCode, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
               </div>
+              {/* Whether patients can actually be shown this pharmacy, which is
+                  no longer the same question as whether it is verified. */}
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Listed to patients</span>
+                {selectedPharmacy.isParticipating ? (
+                  <Badge variant="success" className="gap-1">
+                    <Eye className="size-3" />
+                    Listed
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="gap-1">
+                    <EyeOff className="size-3" />
+                    Not listed
+                  </Badge>
+                )}
+              </div>
+              {selectedPharmacy.listingBlockedReason && (
+                <p className="-mt-2 border-b pb-2 text-xs text-warning">
+                  {selectedPharmacy.listingBlockedReason}
+                </p>
+              )}
+
               {/* Map position — the column patient search actually filters on. */}
               <div className="flex flex-col gap-2 border-b pb-3">
                 <div className="flex justify-between">
@@ -654,7 +692,8 @@ export default function PharmacyManagement() {
                 {!selectedPharmacy.located && (
                   <p className="text-xs text-muted-foreground">
                     Patient search is distance-bounded, so this pharmacy is returned to
-                    nobody until it has a position — whatever its verification status says.
+                    nobody until it has a position. Setting one here lists it immediately
+                    if its licence is already approved.
                   </p>
                 )}
                 {selectedPharmacy.locationPrecision === 'APPROXIMATE' && (

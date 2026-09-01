@@ -4,6 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { assertLocationIsFree } from '../../pharmacy/location-identity';
+import { canParticipate, participationBlockedReason } from '../../pharmacy/participation';
 import { resolvePharmacyCoordinates } from '../../pharmacy/pharmacy-coordinates';
 import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
@@ -213,8 +214,18 @@ export class PharmacyAdminService {
       }
       if (dto.verificationStatus !== undefined) {
         data.verificationStatus = dto.verificationStatus;
-        data.isParticipating = dto.verificationStatus === VerificationStatus.VERIFIED;
       }
+
+      // Listing is derived from the record this save leaves behind, not from
+      // the field that happened to change. One edit can move both halves of the
+      // rule — verifying a pharmacy and pinning it in the same request — and an
+      // edit that only sets coordinates has to publish an already-verified
+      // pharmacy that was waiting for exactly that.
+      data.isParticipating = canParticipate({
+        verificationStatus: dto.verificationStatus ?? existing.verificationStatus,
+        latitude: coords ? coords.latitude : existing.latitude,
+        longitude: coords ? coords.longitude : existing.longitude,
+      });
 
       const updated = await tx.pharmacy.update({ where: { id }, data, include: JURISDICTION_INCLUDE });
 
@@ -250,7 +261,14 @@ export class PharmacyAdminService {
         where: { id },
         data: {
           verificationStatus: status,
-          isParticipating: status === VerificationStatus.VERIFIED,
+          // Approving the licence does not by itself put the pharmacy in front
+          // of patients: an unlocated one would be listed and returned by no
+          // search. It is published the moment it has a position.
+          isParticipating: canParticipate({
+            verificationStatus: status,
+            latitude: existing.latitude,
+            longitude: existing.longitude,
+          }),
           updatedAt: new Date(),
         },
         include: JURISDICTION_INCLUDE,
@@ -278,14 +296,24 @@ export class PharmacyAdminService {
     ipAddress?: string,
   ) {
     await this.prisma.$transaction(async (tx) => {
+      // Two writes rather than one, because listing depends on each row's own
+      // coordinates and updateMany can only set one value across the batch.
+      // Verifying forty pharmacies at once must not publish the unlocated ones
+      // simply because they were selected alongside located ones.
+      const listed = status === VerificationStatus.VERIFIED;
       await tx.pharmacy.updateMany({
-        where: { id: { in: ids } },
-        data: {
-          verificationStatus: status,
-          isParticipating: status === VerificationStatus.VERIFIED,
-          updatedAt: new Date(),
+        where: {
+          id: { in: ids },
+          ...(listed ? { latitude: { not: null }, longitude: { not: null } } : {}),
         },
+        data: { verificationStatus: status, isParticipating: listed, updatedAt: new Date() },
       });
+      if (listed) {
+        await tx.pharmacy.updateMany({
+          where: { id: { in: ids }, OR: [{ latitude: null }, { longitude: null }] },
+          data: { verificationStatus: status, isParticipating: false, updatedAt: new Date() },
+        });
+      }
       await this.syncVerificationRequests(tx, ids, status);
     });
 
@@ -398,6 +426,11 @@ export class PharmacyAdminService {
       locationPrecision: p.locationPrecision,
       located: p.latitude != null && p.longitude != null,
       status: p.verificationStatus,
+      // Verified and listed are separate answers, so the console shows both.
+      // `listingBlockedReason` is null unless something is holding an approved
+      // pharmacy back — a reviewer looking at a verified record that patients
+      // cannot see needs to be told what would release it.
+      listingBlockedReason: participationBlockedReason(p),
       // Commercial standing is a separate axis from verification: a pharmacy can
       // be verified and still non-billable (ZM-COM-BILL-001 S-B1).
       commercialClassification: p.commercialClassification,
