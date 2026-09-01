@@ -112,6 +112,133 @@ function hasFieldLabel(text) {
   return FIELD_LABEL_WORDS_RE.test(label)
 }
 
+/**
+ * Prescription form labels as they arrive with no colon to give them away.
+ *
+ * `hasFieldLabel` needs the "Label: value" shape. OCR of a printed form loses
+ * the colon constantly, and the label then arrives as a bare token — "Disp",
+ * "Qty 30", "Refill 2", "Dr. Test". Those are name-shaped, so they took the
+ * plausible-name path, matched nothing in MediBase, and were shown to the
+ * patient as an unmatched medicine to confirm.
+ */
+const FIELD_LABEL_TOKENS = new Set([
+  'disp', 'dispense', 'dispensed', 'sig', 'signa', 'qty', 'quantity',
+  'refill', 'refills', 'ref', 'rx', 'dr', 'doctor', 'prescriber', 'patient',
+  'date', 'dob', 'age', 'sex', 'gender', 'address', 'direction', 'directions',
+  'instruction', 'instructions', 'frequency', 'route', 'duration', 'days',
+  'take', 'dose', 'dosage', 'mitte', 'dea', 'npi', 'signature', 'stamp',
+])
+
+/**
+ * Labels whose value is a person, not a drug.
+ *
+ * "Dr. Test" and "Prescriber Smith" leave a remainder that is name-shaped by
+ * every structural measure — which is exactly what a person's name is. The
+ * label already said what follows it, so the line is metadata whatever it holds.
+ */
+const PERSON_LABEL_TOKENS = new Set([
+  'dr', 'doctor', 'prescriber', 'patient', 'physician', 'consultant',
+  'surgeon', 'pharmacist', 'signature', 'name',
+])
+
+/**
+ * The labels the one-edit arm is allowed to guess at.
+ *
+ * A deliberate subset. Every label is matched exactly; only these are also
+ * matched approximately, because widening it costs real medicines: "Signa" is
+ * one substitution from "Sigma", so allowing that label to be guessed at would
+ * refuse a brand on the strength of a single letter. These are the short,
+ * high-frequency form labels OCR actually mangles, and none has a real medicine
+ * name within one edit.
+ */
+const FUZZY_LABEL_TOKENS = [
+  'disp', 'sig', 'qty', 'refill', 'refills', 'date', 'dose', 'dosage', 'days',
+]
+
+/** Digits OCR substitutes for letters, folded back before a label is matched. */
+const OCR_DIGIT_FOLD = { 1: 'i', 0: 'o', 5: 's', 8: 'b', 2: 'z' }
+
+/** Reduce a word to the letters a label comparison should see. */
+function labelKey(word) {
+  return (word ?? '')
+    .toLowerCase()
+    .replace(/[0-9]/g, (d) => OCR_DIGIT_FOLD[d] ?? d)
+    .replace(/[^a-z]/g, '')
+}
+
+/** Damerau-Levenshtein distance of at most one — one slip, not a resemblance. */
+function withinOneEdit(a, b) {
+  if (a === b) return true
+  if (Math.abs(a.length - b.length) > 1) return false
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a]
+  let i = 0
+  while (i < short.length && short[i] === long[i]) i++
+  let j = 0
+  while (j < short.length - i && short[short.length - 1 - j] === long[long.length - 1 - j]) j++
+
+  if (a.length === b.length) {
+    // One substitution: the words agree either side of a single position.
+    // "Disp"/"Diap" and "Qty"/"Oty" are both this.
+    if (i + j >= a.length - 1) return true
+    // Or two adjacent letters have swapped places.
+    return (
+      i + 2 <= a.length &&
+      a[i] === b[i + 1] &&
+      a[i + 1] === b[i] &&
+      a.slice(i + 2) === b.slice(i + 2)
+    )
+  }
+  // Lengths differ by one: an insertion or a deletion, so the shorter word must
+  // be fully explained by its shared prefix and suffix. "Refil"/"Refill".
+  return i + j >= short.length
+}
+
+/**
+ * Is this word one of the form labels, allowing for a single OCR slip?
+ *
+ * The fuzzy arm is deliberately narrow: a closed list, a length window, and one
+ * edit. It exists for "Diap" (Disp), "Oty" (Qty), "Refil" (Refill) — not as
+ * general fuzzy matching, which would start refusing real medicines.
+ */
+function isLabelWord(word) {
+  const key = labelKey(word)
+  if (!key) return false
+  if (FIELD_LABEL_TOKENS.has(key)) return true
+  if (key.length < 3 || key.length > 9) return false
+  for (const label of FUZZY_LABEL_TOKENS) {
+    if (withinOneEdit(key, label)) return true
+  }
+  return false
+}
+
+/**
+ * A form label standing on its own line, with no medicine on it.
+ *
+ * Strength or dosage form anywhere on the line means the label is a prefix in
+ * front of a real medicine — "Rx: Amoxicillin 500 mg" — and prefixes are
+ * stripped elsewhere, never rejected here. Without either, a label-led line is
+ * dispensing metadata: a count, a date, a prescriber, or nothing at all.
+ */
+export function isFieldLabelLine(line) {
+  const text = toAscii(line ?? '').trim()
+  if (!text) return false
+  if (STRENGTH_RE.test(text) || FORM_RE.test(text)) return false
+
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length === 0 || !isLabelWord(words[0])) return false
+
+  const rest = words.slice(1).join(' ').trim()
+  // "Disp", "Sig", "Refill" — the label alone.
+  if (!rest) return true
+  // "Dr. Test", "Patient: A Sharma" — whatever follows is a person.
+  if (PERSON_LABEL_TOKENS.has(labelKey(words[0]))) return true
+  // "Qty 30", "Refill 2", "Date 16/06/2026" — a label and its value.
+  if (/^[\d\s.,:;/%()-]*$/.test(rest)) return true
+  // "Rx Amoxicillin" — the remainder may be the medicine, so keep the line and
+  // let the prefix strip deal with the label.
+  return !isPlausibleMedicineName(rest)
+}
+
 /** Clinical qualifications — mark a prescriber line, not a medicine. */
 const CREDENTIAL_RE =
   /\b(mbbs|md|ms|mch|dm|dnb|bds|mds|bams|bhms|bums|phd|frcs|mrcp|mrcgp|frcp|facp|fics|dch|dgo|dpm|dnb|rmp|rph|pharm\.?\s?d|do)\b/i
@@ -225,6 +352,8 @@ export function scoreLine(line, { inMedicineSection = false } = {}) {
   // Negative structure. A field label or a credential outweighs a stray
   // strength-looking number (e.g. "Weight: 62 kg", "BP: 120/80").
   if (hasFieldLabel(text)) score -= 5
+  // A label with no colon carries the same weight as one with it.
+  if (isFieldLabelLine(text)) score -= 5
   if (CREDENTIAL_RE.test(text)) score -= 4
   if (ORG_RE.test(text)) score -= 3
   if (DATE_RE.test(text)) score -= 3
@@ -275,6 +404,7 @@ export function isPlausibleMedicineName(line) {
   // Header-shaped text is never a bare medicine name.
   if (
     hasFieldLabel(line) ||
+    isFieldLabelLine(line) ||
     CREDENTIAL_RE.test(line) ||
     ORG_RE.test(line) ||
     ADDRESS_RE.test(line) ||
@@ -347,7 +477,7 @@ export function extractCandidateLines(rawText) {
     // An inline "Rx:" prefix opens the section and leaves the rest of the line
     // as a candidate ("Rx: Tab Amoxicillin 500mg").
     let text = line
-    const inlineRx = text.match(/^\s*(rx|r\/|℞|advice|advise|treatment|medications?)\s*[:.\-–]\s*(?=\S)/i)
+    const inlineRx = text.match(/^\s*(rx|r\/|℞|advice|advise|treatment|medications?|medicines?|drugs?|prescription)\s*[:.\-–]\s*(?=\S)/i)
     if (inlineRx) {
       inMedicineSection = true
       inClinicalSection = false

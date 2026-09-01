@@ -187,6 +187,43 @@ describe('audit log', () => {
 
     expect(await screen.findByText(/nothing recorded yet/i)).toBeDefined()
   })
+
+  // The tab asked for `limit: 50`. /admin/audit-logs paginates on page/pageSize
+  // and its query DTO is whitelisted with forbidNonWhitelisted, so the parameter
+  // was not ignored — it was rejected, and the panel rendered the validator's
+  // own words: "property limit should not exist".
+  describe('the query it sends', () => {
+    it('asks for a page size, not a limit', async () => {
+      renderTab('audit')
+
+      await waitFor(() => expect(listAuditLogsMock).toHaveBeenCalled())
+      const params = listAuditLogsMock.mock.calls[0][0] ?? {}
+      expect(params).not.toHaveProperty('limit')
+      expect(params.pageSize).toBe(50)
+    })
+
+    it('sends nothing the query DTO does not declare', async () => {
+      // Whitelisted validation makes any stray parameter a failed request, so
+      // the frontend has to stay inside the contract exactly.
+      const ALLOWED = [
+        'page', 'pageSize', 'module', 'action', 'user',
+        'pharmacy', 'search', 'startDate', 'endDate', 'severity',
+      ]
+      renderTab('audit')
+
+      await waitFor(() => expect(listAuditLogsMock).toHaveBeenCalled())
+      const sent = Object.keys(listAuditLogsMock.mock.calls[0][0] ?? {})
+      expect(sent.filter((k) => !ALLOWED.includes(k))).toEqual([])
+    })
+
+    it('shows the reason when the API refuses the request', async () => {
+      // Not a silent blank tab: whatever the API says is what the operator reads.
+      listAuditLogsMock.mockRejectedValue(new Error('property limit should not exist'))
+      renderTab('audit')
+
+      expect(await screen.findByText(/property limit should not exist/i)).toBeDefined()
+    })
+  })
 })
 
 describe('API keys', () => {

@@ -69,6 +69,22 @@ function buildService(rows: Record<string, unknown>[]) {
     },
     medicineEntity: { findMany: jest.fn().mockResolvedValue([]) },
     notification: { findMany: jest.fn().mockResolvedValue([]) },
+    // Regeneration now reads the patient's switches before producing anything.
+    // These specs are about which event is detected, so every switch is on —
+    // the defaults a new account gets.
+    signalNotificationPreference: {
+      upsert: jest.fn().mockResolvedValue({
+        userId: USER,
+        runningLow: true,
+        backInStock: true,
+        nearbyRestock: true,
+        recall: true,
+        safety: true,
+        push: true,
+        email: false,
+        sms: false,
+      }),
+    },
   };
   // No caller location in these units: they are about notification state, and
   // a null origin is exactly what a patient who has not shared one produces.

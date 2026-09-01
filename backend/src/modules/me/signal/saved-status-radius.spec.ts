@@ -77,6 +77,24 @@ function buildService(
     },
     medicineEntity: { findMany: jest.fn().mockResolvedValue([]) },
     notification: { findMany: jest.fn().mockResolvedValue([]) },
+    // Regeneration reads the patient's notification switches before producing
+    // anything. These specs are about the radius that bounds a saved medicine's
+    // status, so the row is the one a new account gets: everything on except the
+    // two channels that have no delivery path, matching the column defaults on
+    // SignalNotificationPreference.
+    signalNotificationPreference: {
+      upsert: jest.fn().mockResolvedValue({
+        userId: USER,
+        runningLow: true,
+        backInStock: true,
+        nearbyRestock: true,
+        recall: true,
+        safety: true,
+        push: true,
+        email: false,
+        sms: false,
+      }),
+    },
   };
   const service = new PatientSignalService(prisma as never, {
     resolveOrigin: jest.fn().mockResolvedValue(origin),

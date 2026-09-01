@@ -149,6 +149,18 @@ export class SecurityPostureService {
     return { policy: await this.policy(), controls: await this.list() };
   }
 
+  /**
+   * Everything the settings page needs in one read.
+   *
+   * The same shape `update` answers with. It used to return the controls alone,
+   * so the approved-networks editor had nothing to open with: the ranges came
+   * back only on the next save, and a workspace that already had some was shown
+   * an empty box.
+   */
+  async posture(): Promise<{ policy: SecurityPolicy; controls: SecurityControl[] }> {
+    return { policy: await this.policy(), controls: await this.list() };
+  }
+
   async list(): Promise<SecurityControl[]> {
     const policy = await this.policy();
     return [

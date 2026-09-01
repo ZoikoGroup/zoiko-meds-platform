@@ -5,6 +5,7 @@ import {
   MedicinePriority,
   Prisma,
   SignalNotification,
+  SignalNotificationPreference,
   SignalNotificationType,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -285,6 +286,7 @@ export class PatientSignalService {
    * prunes stale availability rows, preserving read/archived/dismissed state.
    */
   private async regenerate(userId: string): Promise<void> {
+    const prefs = await this.preferencesFor(userId);
     const saved = await this.loadSavedWithSignals(userId);
 
     for (const s of saved) {
@@ -294,7 +296,12 @@ export class PatientSignalService {
       // confidence then freshness, and distance is only the last tie-break.
       const best = this.bestSignal(s.medicine.availabilitySignals ?? []);
       const type = this.notificationTypeFor(status, prev, best);
-      const currentKey = type ? `med:${s.medicineId}:${TYPE_UI[type]}` : null;
+      // A switch the patient turned off means no notification of that kind is
+      // produced at all. `notifiedStatus` still advances below, so switching it
+      // back on does not replay a transition that happened while it was off.
+      const suppressed = type !== null && !this.allows(prefs, type);
+      const currentKey =
+        type && !suppressed ? `med:${s.medicineId}:${TYPE_UI[type]}` : null;
 
       // Prune stale availability notifications for this medicine (keeps at most
       // the one reflecting the current state).
@@ -308,7 +315,14 @@ export class PatientSignalService {
           userId,
           medicineId: s.medicineId,
           dedupeKey: { startsWith: `med:${s.medicineId}:` },
-          ...(currentKey ? { NOT: { dedupeKey: currentKey } } : { read: true }),
+          // Switched off: the rows go too, unread included — "do not tell me
+          // about this" is not "keep the last one on the page forever". With no
+          // current event at all, unread rows survive (see above).
+          ...(currentKey
+            ? { NOT: { dedupeKey: currentKey } }
+            : suppressed
+              ? {}
+              : { read: true }),
         },
       });
 
@@ -341,11 +355,14 @@ export class PatientSignalService {
       }
     }
 
-    await this.syncBroadcasts(userId);
+    await this.syncBroadcasts(userId, prefs);
   }
 
   /** Fan dispatched platform emergency broadcasts out to this user. */
-  private async syncBroadcasts(userId: string): Promise<void> {
+  private async syncBroadcasts(
+    userId: string,
+    prefs: SignalNotificationPreference,
+  ): Promise<void> {
     const broadcasts = await this.prisma.notification.findMany({
       where: {
         status: 'DISPATCHED',
@@ -361,6 +378,10 @@ export class PatientSignalService {
         ? SignalNotificationType.RECALL
         : SignalNotificationType.SAFETY;
       const dedupeKey = `broadcast:${b.id}`;
+      if (!this.allows(prefs, type)) {
+        await this.prisma.signalNotification.deleteMany({ where: { userId, dedupeKey } });
+        continue;
+      }
       await this.prisma.signalNotification.upsert({
         where: { userId_dedupeKey: { userId, dedupeKey } },
         create: {
@@ -380,6 +401,38 @@ export class PatientSignalService {
         },
       });
     }
+  }
+
+  /**
+   * This patient's switches, created on first use.
+   *
+   * An upsert rather than find-then-create: regeneration runs on every read of
+   * the signal surface, and two concurrent reads by the same account would
+   * otherwise race to insert the same row.
+   */
+  private preferencesFor(userId: string): Promise<SignalNotificationPreference> {
+    return this.prisma.signalNotificationPreference.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+    });
+  }
+
+  /**
+   * Does this patient still want this kind of notification?
+   *
+   * SETTING_FOR_TYPE has always described the mapping; nothing consulted it, so
+   * every switch on the ZoikoSignal settings page persisted and then changed
+   * nothing about what was generated or shown.
+   */
+  private allows(
+    prefs: SignalNotificationPreference,
+    type: SignalNotificationType,
+  ): boolean {
+    const key = SETTING_FOR_TYPE[type];
+    // A type with no switch of its own is always delivered.
+    if (!key) return true;
+    return prefs[key as keyof SignalNotificationPreference] !== false;
   }
 
   private notificationTypeFor(
