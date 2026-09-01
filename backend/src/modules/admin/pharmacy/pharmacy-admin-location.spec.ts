@@ -10,8 +10,10 @@ import { PharmacyAdminService } from './pharmacy-admin.service';
  * Coordinates used to come from geocoding [city, country], which returns the
  * city centroid: every pharmacy registered in Hyderabad landed on one point, at
  * one distance from every patient, indistinguishable on the map. The street
- * address is what identifies the premises, and an area-level match is refused
- * rather than stored — "not located yet" is true, a city centre is not.
+ * address is what identifies the premises, so it is the whole address that is
+ * geocoded — and how precisely it resolved is stored alongside the result, so
+ * an area-level pin can be used without being quoted as the shop's own front
+ * door.
  */
 
 const DTO = {
@@ -103,26 +105,53 @@ describe('PharmacyAdminService.create — locating the pharmacy', () => {
     expect(data.longitude).toBe(PRECISE.lng);
   });
 
-  it('refuses to store a city centroid as a pharmacy location', async () => {
+  it('records how precisely the address resolved', async () => {
+    const { service, tx } = buildService();
+
+    await service.create('admin_1', DTO as never);
+
+    expect(tx.pharmacy.create.mock.calls[0][0].data.locationPrecision).toBe('EXACT');
+  });
+
+  it('stores a city centroid, marked APPROXIMATE', async () => {
     const { service, tx } = buildService({ geocode: CITY_CENTROID });
 
     await service.create('admin_1', DTO as never);
 
     const { data } = tx.pharmacy.create.mock.calls[0][0];
-    // No coordinates is honest — the record is saved and shows as not located
-    // yet, rather than appearing at a point it has never been.
-    expect(data.latitude).toBeNull();
-    expect(data.longitude).toBeNull();
+    // Storing nothing was honest about the centroid and dishonest about the
+    // pharmacy: it dropped the record out of every distance-bounded search, so
+    // a patient in the same city was told there was nothing there. The point is
+    // kept and labelled, and the label is what stops it being read as the
+    // branch's own front door.
+    expect(data.latitude).toBe(CITY_CENTROID.lat);
+    expect(data.longitude).toBe(CITY_CENTROID.lng);
+    expect(data.locationPrecision).toBe('APPROXIMATE');
   });
 
   it('prefers coordinates the admin supplied over any geocoding', async () => {
-    const { service, nearby, tx } = buildService();
+    const { service, tx } = buildService();
 
     await service.create('admin_1', { ...DTO, latitude: 41.9, longitude: -87.63 } as never);
 
-    expect(nearby.geocode).not.toHaveBeenCalled();
     const { data } = tx.pharmacy.create.mock.calls[0][0];
     expect(data.latitude).toBe(41.9);
+    expect(data.longitude).toBe(-87.63);
+    expect(data.locationPrecision).toBe('EXACT');
+  });
+
+  it('refuses a supplied pin that sits in a different city from the address', async () => {
+    // The address is geocoded even when a pin was given — not to override it,
+    // but to check the two describe the same place. A well-formed pin in the
+    // wrong state used to be stored unquestioned and could never be corrected
+    // by a later save.
+    const { service, tx } = buildService({ geocode: CITY_CENTROID });
+
+    await expect(
+      // Los Angeles, ~2,800 km from the Chicago address on the same record.
+      service.create('admin_1', { ...DTO, latitude: 34.0522, longitude: -118.2437 } as never),
+    ).rejects.toThrow(/km from the address/i);
+    expect(tx.pharmacy.create).not.toHaveBeenCalled();
   });
 
   it('saves the branch address and contact number it was given', async () => {

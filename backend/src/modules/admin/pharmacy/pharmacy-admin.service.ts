@@ -116,6 +116,7 @@ export class PharmacyAdminService {
           phone: dto.phone || null,
           latitude: coords?.latitude ?? null,
           longitude: coords?.longitude ?? null,
+          locationPrecision: coords?.precision ?? null,
           reliabilityScore: (dto.availabilityScore ?? 100) / 100,
           verificationStatus: VerificationStatus.PENDING,
         },
@@ -187,6 +188,7 @@ export class PharmacyAdminService {
       if (coords) {
         data.latitude = coords.latitude;
         data.longitude = coords.longitude;
+        data.locationPrecision = coords.precision;
       }
       if (dto.name !== undefined) data.name = dto.name;
       if (dto.licenseNumber !== undefined) data.licenseNumber = dto.licenseNumber || null;
@@ -383,6 +385,18 @@ export class PharmacyAdminService {
       // field happens to be spelled.
       jurisdiction: p.jurisdiction ? { code: p.jurisdiction.code, name: p.jurisdiction.name } : null,
       phone: p.phone,
+      // Where this pharmacy actually is, and how sure we are of it.
+      //
+      // These were the one part of the record the console could not see, which
+      // is why a pharmacy pinned in the wrong state and five with no pin at all
+      // sat in the network for weeks: every rule that hides a pharmacy from
+      // patient search reads these two columns, and nothing showed them to the
+      // person able to fix them. `located` is the same test patient search
+      // applies, stated once here rather than re-derived by every caller.
+      latitude: p.latitude,
+      longitude: p.longitude,
+      locationPrecision: p.locationPrecision,
+      located: p.latitude != null && p.longitude != null,
       status: p.verificationStatus,
       // Commercial standing is a separate axis from verification: a pharmacy can
       // be verified and still non-billable (ZM-COM-BILL-001 S-B1).

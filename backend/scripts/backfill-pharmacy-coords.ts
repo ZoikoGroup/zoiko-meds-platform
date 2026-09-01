@@ -17,7 +17,7 @@
  * Requires GOOGLE_PLACES_API_KEY (Geocoding API enabled). Idempotent: it only
  * touches rows where latitude or longitude is null, so it is safe to re-run.
  */
-import { PrismaClient } from '@prisma/client';
+import { LocationPrecision, PrismaClient } from '@prisma/client';
 
 const GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
 const prisma = new PrismaClient();
@@ -25,16 +25,53 @@ const prisma = new PrismaClient();
 const apply = process.argv.includes('--apply');
 const apiKey = (process.env.GOOGLE_PLACES_API_KEY ?? '').trim();
 
-async function geocode(address: string): Promise<{ lat: number; lng: number } | null> {
+/**
+ * Area-level result types, matching NearbyPharmacyService.
+ *
+ * A result Google calls APPROXIMATE, or one whose every type names a region
+ * rather than a place, is the middle of an area — usable as a rough position,
+ * but not the shop's own door.
+ */
+const AREA_LEVEL_TYPES = new Set([
+  'locality',
+  'sublocality',
+  'administrative_area_level_1',
+  'administrative_area_level_2',
+  'administrative_area_level_3',
+  'postal_code',
+  'political',
+  'country',
+  'neighborhood',
+]);
+
+async function geocode(
+  address: string,
+): Promise<{ lat: number; lng: number; precision: LocationPrecision } | null> {
   const url = `${GEOCODE_URL}?address=${encodeURIComponent(address)}&key=${apiKey}`;
   const res = await fetch(url);
   if (!res.ok) return null;
   const data = (await res.json()) as {
     status?: string;
-    results?: { geometry?: { location?: { lat: number; lng: number } } }[];
+    results?: {
+      types?: string[];
+      geometry?: { location?: { lat: number; lng: number }; location_type?: string };
+    }[];
   };
-  const loc = data.results?.[0]?.geometry?.location;
-  return data.status === 'OK' && loc ? loc : null;
+  const best = data.results?.[0];
+  const loc = best?.geometry?.location;
+  if (data.status !== 'OK' || !loc) return null;
+
+  const types = Array.isArray(best?.types) ? best!.types! : [];
+  const precise =
+    best?.geometry?.location_type !== 'APPROXIMATE' &&
+    types.length > 0 &&
+    types.some((t) => !AREA_LEVEL_TYPES.has(t));
+
+  return {
+    lat: loc.lat,
+    lng: loc.lng,
+    precision: precise ? LocationPrecision.EXACT : LocationPrecision.APPROXIMATE,
+  };
 }
 
 async function main() {
@@ -78,12 +115,20 @@ async function main() {
     }
 
     console.log(
-      `  OK    ${p.name} [${p.verificationStatus}] → ${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}`,
+      `  OK    ${p.name} [${p.verificationStatus}] → ${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}` +
+        ` (${point.precision})`,
     );
     if (apply) {
       await prisma.pharmacy.update({
         where: { id: p.id },
-        data: { latitude: point.lat, longitude: point.lng },
+        // Written together, always: a row with coordinates and a null precision
+        // reads to every patient surface as an exact pin, which is the one
+        // thing an address-only backfill cannot promise.
+        data: {
+          latitude: point.lat,
+          longitude: point.lng,
+          locationPrecision: point.precision,
+        },
       });
     }
     located += 1;

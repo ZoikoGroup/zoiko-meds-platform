@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Search, Trash2, Heart, ArrowRight, MapPin, Clock } from 'lucide-react'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { AVAILABILITY, CONFIRM_NOTE, telHref } from '@/lib/availability'
+import { formatDistanceKm } from '@/lib/user-location'
 import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
 import { useLanguage } from '@/providers/language-provider'
 
@@ -140,7 +141,7 @@ export default function UserSaved() {
                             <ConfidenceBadge level={p.confidence ?? 'unknown'} size="sm" />
                           </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 ps-4 text-[11px] text-muted-foreground">
-                            {p.distance != null && <span>{p.distance.toFixed(1)} km</span>}
+                            {p.distance != null && <span>{formatDistanceKm(p.distance, p.approximate)}</span>}
                             <span className="flex items-center gap-1">
                               <Clock className="size-3 shrink-0" />
                               {p.updated}
@@ -171,7 +172,7 @@ export default function UserSaved() {
                       <span className="flex min-w-0 items-center gap-1">
                         <MapPin className="size-3 shrink-0" />
                         <span className="truncate">{med.pharmacy}</span>
-                        {med.distance != null && ` · ${med.distance.toFixed(1)} km`}
+                        {med.distance != null && ` · ${formatDistanceKm(med.distance, med.approximate)}`}
                       </span>
                       <span className="flex items-center gap-1">
                         <Clock className="size-3 shrink-0" />

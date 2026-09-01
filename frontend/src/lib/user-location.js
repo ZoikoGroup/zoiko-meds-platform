@@ -39,3 +39,18 @@ export function userLocationParams(maxDistanceKm = DEFAULT_RADIUS_KM) {
   }
   return { city: raw, maxDistance: maxDistanceKm }
 }
+
+/**
+ * A distance for display, or '—' when there is none.
+ *
+ * `approximate` marks a pharmacy the platform placed by geocoding an area — a
+ * city or a PIN code — rather than its street address. The pin is the middle of
+ * that area, so the pharmacy is genuinely around there and worth showing, but
+ * "4.2 km" claims a precision nobody has. Those read as "~4 km": near enough to
+ * act on, honest about not being surveyed.
+ */
+export function formatDistanceKm(distance, approximate = false) {
+  if (distance == null) return '—'
+  if (approximate) return `~${Math.round(distance)} km`
+  return `${distance.toFixed(1)} km`
+}

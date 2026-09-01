@@ -23,6 +23,7 @@ import { ScanPrescription } from '@/features/scan/scan-prescription'
 import { DetectedMedicinesBar } from '@/features/scan/detected-medicines-bar'
 import { useSavedMedicines, useSaveMedicine, useUnsaveMedicine } from '@/hooks/use-saved-medicines'
 import { isMedicineSaved } from '@/lib/medicine-name'
+import { formatDistanceKm } from '@/lib/user-location'
 import { useLanguage } from '@/providers/language-provider'
 
 const LOC_KEY = 'zoiko-user-loc'
@@ -707,7 +708,7 @@ export default function UserSearch() {
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                               <span className="font-semibold text-foreground tabular">
-                                {p.distance == null ? '—' : `${p.distance.toFixed(1)} km`}
+                                {formatDistanceKm(p.distance, p.approximate)}
                               </span>
                             </div>
                             <div className="flex items-center justify-between">
@@ -818,7 +819,7 @@ export default function UserSearch() {
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                               <span className="font-semibold text-foreground tabular">
-                                {p.distance == null ? '—' : `${p.distance.toFixed(1)} km`}
+                                {formatDistanceKm(p.distance, p.approximate)}
                               </span>
                             </div>
                             {p.rating != null && (

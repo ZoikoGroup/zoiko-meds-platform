@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AvailabilityConfidence,
+  LocationPrecision,
   MedicineEntity,
   Pharmacy,
   Prisma,
@@ -259,6 +260,9 @@ export class MeService {
           confidence: nearest?.confidence ?? 'unknown',
           pharmacy: nearest?.name ?? 'No verified pharmacy near you stocks this yet',
           distance: nearest?.distance ?? null,
+          // Travels with the distance it qualifies: the summary line quotes the
+          // same number the pharmacy row does, so it has to round the same way.
+          approximate: nearest?.approximate ?? false,
           updated: nearest?.updated ?? 'No recent signal nearby',
           savedId: r.id,
           inCatalog: true,
@@ -673,6 +677,12 @@ export class MeService {
       // name/address text lookup, which misses for similarly-named branches.
       latitude: p.latitude,
       longitude: p.longitude,
+      // This pharmacy was placed by geocoding an area — a city or a PIN code —
+      // so the pin is the middle of that area and `distance` is a rough figure.
+      // The client prints it as "~4 km" rather than "4.2 km": the pharmacy is
+      // genuinely around there, which is worth showing, but quoting it to a
+      // tenth of a kilometre claims a precision nobody has.
+      approximate: p.locationPrecision === LocationPrecision.APPROXIMATE,
     };
   }
 
@@ -756,6 +766,8 @@ export class MeService {
         phone: signal.pharmacy.phone ?? '',
         latitude: signal.pharmacy.latitude,
         longitude: signal.pharmacy.longitude,
+        // See toPharmacyDto: an area-level pin makes `distance` a rough figure.
+        approximate: signal.pharmacy.locationPrecision === LocationPrecision.APPROXIMATE,
         confidence: CONFIDENCE_UI[signal.confidence],
         distance,
         updated: this.relativeTime(signal.computedAt),
