@@ -23,6 +23,9 @@ export default defineConfig({
     // `// @vitest-environment jsdom` docblock — jsdom startup is slow, so the
     // pure-logic suites stay on the node default.
     include: ['src/**/*.{test,spec}.{js,jsx}'],
+    // Node 24+ defines a localStorage global of its own, which shadows jsdom's.
+    // See vitest.setup.js.
+    setupFiles: ['./vitest.setup.js'],
     clearMocks: true,
     testTimeout: 15000,
   },

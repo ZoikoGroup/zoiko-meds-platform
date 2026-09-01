@@ -255,6 +255,33 @@
     scroll-behavior: smooth;
   }
 
+  /*
+   * Accessibility preferences (Settings -> Accessibility), applied as classes
+   * on <html> by src/lib/a11y-preferences.js and by the boot script in
+   * index.html so neither one flashes before React mounts.
+   */
+
+  /* Larger text. The root font size is the one lever that moves every label,
+     because the whole design system sizes in rem — bumping a few text classes
+     would leave the fields and buttons around them at their old height. */
+  html.a11y-large-text {
+    font-size: 118.75%;
+  }
+
+  /* Reduce motion. Animations are collapsed rather than removed so anything
+     that waits on transitionend or animationend still gets its event. */
+  html.a11y-reduce-motion,
+  html.a11y-reduce-motion *,
+  html.a11y-reduce-motion *::before,
+  html.a11y-reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
   body {
     margin: 0;
     min-height: 100vh;
