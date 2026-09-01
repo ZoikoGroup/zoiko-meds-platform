@@ -450,62 +450,136 @@ function MembersPanel() {
 }
 
 /**
- * What the platform enforces about sign-in, and the parts of it this page can
- * decide (MSA-42).
+ * The three sign-in controls this page has always shown (MSA-42).
  *
- * This was three switches bound to useState and nothing else, two of them on by
- * default, naming controls the platform did not have. The controls that are real
- * now have switches that write a policy the auth path reads; the ones that are
- * still absent are reported as absent, rather than as switched off, because
- * "off" invites someone to turn it on.
+ * They were switches bound to useState and nothing else, two of them on by
+ * default, so all three read as active security while none of them did anything.
+ * The rows and the wording are unchanged; what changed is that a switch is now
+ * live only where the platform really enforces the control, and the other two
+ * say so instead of sitting there inviting a click.
+ *
+ * IP allowlist is live: PATCH writes CIDR ranges that IpAllowlistGuard checks on
+ * every request, and the API refuses to switch it on with an empty list, so it
+ * cannot lock the operator out.
+ *
+ * SAML is not built at all. Single sign-on here is OAuth against Google, which
+ * is a different protocol — an Okta IdP that only speaks SAML cannot be
+ * connected, so this switch would have configured nothing.
+ *
+ * MFA is built and enforced at login, but the enable path does not yet check
+ * that the admin turning it on has finished enrolling. Switching it on while
+ * unenrolled refuses every password sign-in, including theirs — which is exactly
+ * what happened in production. It stays disabled until that guard exists.
  */
+
+/** The rows, in the order the page has always listed them. */
+const SECURITY_ROWS = [
+  {
+    id: 'mfa',
+    title: 'Enforce multi-factor authentication',
+    detail: 'Require MFA for all members on every sign-in.',
+    // Enforced at login, but enabling it can still lock out an unenrolled admin.
+    comingSoon: true,
+  },
+  {
+    id: 'saml',
+    title: 'SSO (SAML 2.0)',
+    detail: 'Single sign-on via your identity provider (Okta).',
+    // No SAML service provider exists; Google OAuth is not the same protocol.
+    comingSoon: true,
+  },
+  {
+    id: 'ip-allowlist',
+    title: 'IP allowlist',
+    detail: 'Restrict access to approved network ranges.',
+    setting: 'ipAllowlistEnabled',
+  },
+]
+
 function SecurityPanel() {
   const [controls, setControls] = useState(null)
-  const [policy, setPolicy] = useState(null)
+  // `error` is only for a failed load, which leaves the page with nothing to
+  // show. A refused save is transient: it belongs to the click that caused it,
+  // and the allowlist message used to sit there afterwards reading as a standing
+  // complaint about a switch that was simply off.
   const [error, setError] = useState('')
   const [savingKey, setSavingKey] = useState(null)
-  const [allowlistDraft, setAllowlistDraft] = useState('')
   const [flashMsg, flash] = useFlash()
+  const [saveError, flashError] = useFlash(5200)
+  /**
+   * The switches for controls that are not built yet.
+   *
+   * Held here rather than bound to the server policy, which is why they move at
+   * all: reading them off the policy pinned them off, so a click appeared to do
+   * nothing and the control read as broken rather than as unfinished. This state
+   * is the switch's appearance and nothing else — it is never sent, never
+   * stored, and gone on the next mount, because the feature really is off.
+   */
+  const [uiOnly, setUiOnly] = useState({})
+  // The approved-network editor: the saved ranges, the textarea's working copy,
+  // and whether it is open. Restored from the version this card used to carry.
+  const [policy, setPolicy] = useState(null)
+  const [allowlistDraft, setAllowlistDraft] = useState('')
+  const [networksOpen, setNetworksOpen] = useState(false)
 
-  const apply = useCallback((rows, next) => {
-    setControls(rows)
-    if (next) {
-      setPolicy(next)
-      setAllowlistDraft((next.ipAllowlist ?? []).join('\n'))
+  /** Take a { policy, controls } payload, and seed the editor from it. */
+  const apply = useCallback((next) => {
+    setControls(Array.isArray(next?.controls) ? next.controls : [])
+    if (next?.policy) {
+      setPolicy(next.policy)
+      setAllowlistDraft((next.policy.ipAllowlist ?? []).join('\n'))
     }
   }, [])
 
   useEffect(() => {
     let alive = true
     getSecurityPosture()
-      .then((rows) => {
-        if (!alive) return
-        setControls(Array.isArray(rows) ? rows : [])
-        const list = (Array.isArray(rows) ? rows : []).find((c) => c.id === 'ip-allowlist')
-        // The list itself is not in the control rows; it is read back from the
-        // first save. Until then the textarea starts from what the API returns
-        // on the next PATCH, so it is left empty rather than guessed at.
-        setPolicy({ ipAllowlistEnabled: Boolean(list?.enabled) })
-      })
+      .then((next) => alive && apply(next))
       .catch((err) => alive && setError(err.message || 'Could not load security settings.'))
     return () => { alive = false }
-  }, [])
+  }, [apply])
 
-  const save = async (key, body) => {
+  /** Is this control on, according to the server rather than to this component? */
+  const isOn = (id) => Boolean(controls?.find((c) => c.id === id)?.enabled)
+
+  /** Move an unbuilt control's switch, and say why it will not do anything. */
+  const setUiOnlySwitch = (id, next) => setUiOnly((prev) => ({ ...prev, [id]: next }))
+
+  const save = async (key, body, message) => {
     setSavingKey(key)
     setError('')
     try {
-      const { controls: rows, policy: next } = await updateSecurityPolicy(body)
-      apply(rows, next)
-      flash('Security policy saved')
+      apply(await updateSecurityPolicy(body))
+      flash(message)
     } catch (err) {
-      setError(err?.message || 'Could not save the security policy.')
-      // Re-read, so a refused save does not leave the switch showing a state
-      // the server never accepted.
-      try { setControls(await getSecurityPosture()) } catch { /* keep the error above */ }
+      flashError(err?.message || 'Could not save the security policy.')
+      // Re-read, so a refused save does not leave the switch showing a state the
+      // server never accepted.
+      try { apply(await getSecurityPosture()) } catch { /* keep the message above */ }
     } finally {
       setSavingKey(null)
     }
+  }
+
+  /** The ranges as the textarea currently holds them. */
+  const draftEntries = () =>
+    allowlistDraft.split('\n').map((line) => line.trim()).filter(Boolean)
+
+  /**
+   * Switch the allowlist, refusing an empty one before the request is made.
+   *
+   * The API refuses it too — an allowlist switched on with nothing in it would
+   * lock out every operator, including whoever would switch it back off — but
+   * saying so here opens the editor at the same time, which is where the
+   * operator has to go next.
+   */
+  const toggleAllowlist = (next) => {
+    if (next && (policy?.ipAllowlist?.length ?? 0) === 0) {
+      flashError('Add at least one approved IP address or range first.')
+      setNetworksOpen(true)
+      return
+    }
+    save('ipAllowlistEnabled', { ipAllowlistEnabled: next }, 'Security policy saved')
   }
 
   if (error && !controls) {
@@ -525,111 +599,104 @@ function SecurityPanel() {
     )
   }
 
-  const TONE = {
-    enforced: { label: 'Enforced', variant: 'default' },
-    available: { label: 'Available', variant: 'secondary' },
-    'not-implemented': { label: 'Not available', variant: 'outline' },
-  }
-
-  const allowlistEnabled = controls.find((c) => c.id === 'ip-allowlist')?.enabled
-  // 2FA is not managed from this console — filtered out rather than rendered
-  // as a switch with no enrollment flow behind it.
-  const visibleControls = controls.filter((c) => c.id !== 'mfa')
-
   return (
-    <div className="flex flex-col gap-5">
-      <Card>
-        <CardHeader>
-          <CardTitle>Security</CardTitle>
-          <CardDescription>
-            Authentication and access controls for the workspace. A control with a switch
-            is decided here; the rest are set in server configuration or in code, and are
-            shown so the page cannot disagree with what the platform does.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-1">
-          {flashMsg && <p className="pb-2 text-xs font-medium text-success">{flashMsg}</p>}
-          {error && (
-            <p role="alert" className="flex items-start gap-2 pb-2 text-xs font-medium text-danger">
-              <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              {error}
-            </p>
-          )}
-          {visibleControls.map((c, i) => (
-            <div key={c.id}>
-              <div className="flex items-start justify-between gap-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{c.label}</p>
-                  <p className="text-xs leading-relaxed text-muted-foreground">{c.detail}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Set by {c.configuredBy}</p>
-                </div>
-                {c.setting ? (
-                  <Switch
-                    checked={Boolean(c.enabled)}
-                    disabled={savingKey === c.setting}
-                    aria-label={c.label}
-                    onCheckedChange={(next) => save(c.setting, { [c.setting]: next })}
-                  />
-                ) : (
-                  <Badge variant={(TONE[c.state] ?? TONE['not-implemented']).variant} size="sm">
-                    {(TONE[c.state] ?? TONE['not-implemented']).label}
-                  </Badge>
+    <Card>
+      <CardHeader>
+        <CardTitle>Security</CardTitle>
+        <CardDescription>Authentication and access controls for the workspace.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1">
+        {flashMsg && <p className="pb-2 text-xs font-medium text-success">{flashMsg}</p>}
+        {saveError && (
+          <p role="alert" className="flex items-start gap-2 pb-2 text-xs font-medium text-danger">
+            <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {saveError}
+          </p>
+        )}
+        {SECURITY_ROWS.map((row, i) => (
+          <div key={row.id}>
+            <div className="flex items-center justify-between gap-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{row.title}</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">{row.detail}</p>
+              </div>
+              {/* Badge then switch, as the patient Accessibility rows do, and
+                  only while the switch is on — the answer belongs to the moment
+                  somebody asks for the feature, not to the row at rest. */}
+              <div className="flex shrink-0 items-center gap-3">
+                {row.comingSoon && uiOnly[row.id] && (
+                  <span
+                    role="status"
+                    className="rounded-full border border-teal/20 bg-teal/10 px-2.5 py-1 text-xs font-semibold text-teal dark:border-emerald-800/40 dark:bg-emerald-950/40 dark:text-emerald-400"
+                  >
+                    Coming soon
+                  </span>
+                )}
+                <Switch
+                  // An unbuilt control's switch is local appearance; a real one
+                  // reports what the server holds.
+                  checked={row.comingSoon ? Boolean(uiOnly[row.id]) : isOn(row.id)}
+                  disabled={savingKey === row.setting}
+                  aria-label={row.title}
+                  onCheckedChange={(next) =>
+                    row.comingSoon ? setUiOnlySwitch(row.id, next) : toggleAllowlist(next)
+                  }
+                />
+              </div>
+            </div>
+            {row.id === 'ip-allowlist' && (
+              <div className="pb-1">
+                <button
+                  type="button"
+                  onClick={() => setNetworksOpen((open) => !open)}
+                  aria-expanded={networksOpen}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  {networksOpen ? 'Hide approved networks' : 'Approved networks'}
+                  {policy?.ipAllowlist?.length ? ` (${policy.ipAllowlist.length})` : ''}
+                </button>
+
+                {networksOpen && (
+                  <div className="mt-3 flex flex-col gap-3">
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      One address or CIDR range per line. The switch above only takes
+                      effect once there is something here — switching it on with an empty
+                      list would lock every operator out, including whoever would switch
+                      it off again.
+                    </p>
+                    <textarea
+                      aria-label="Approved networks"
+                      rows={5}
+                      value={allowlistDraft}
+                      onChange={(e) => setAllowlistDraft(e.target.value)}
+                      placeholder={'203.0.113.25\n203.0.113.0/24\n2001:db8::/32'}
+                      className="w-full rounded-lg border border-input bg-card px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                    />
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      Health checks are always answered, whatever is listed here, so a
+                      wrong entry cannot pull this service out of its load balancer.
+                    </p>
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        disabled={savingKey === 'ipAllowlist'}
+                        onClick={() =>
+                          save('ipAllowlist', { ipAllowlist: draftEntries() }, 'Approved networks saved')
+                        }
+                      >
+                        {savingKey === 'ipAllowlist' && <Loader2 className="size-4 animate-spin" />}
+                        Save networks
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </div>
-              {i < visibleControls.length - 1 && <Separator />}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Approved networks</CardTitle>
-          <CardDescription>
-            One address or CIDR range per line. The allowlist above only takes effect once
-            there is something here — switching it on with an empty list would lock every
-            operator out, including whoever would switch it off again.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <textarea
-            aria-label="Approved networks"
-            rows={5}
-            value={allowlistDraft}
-            onChange={(e) => setAllowlistDraft(e.target.value)}
-            placeholder={'203.0.113.0/24\n2001:db8::/32'}
-            className="w-full rounded-lg border border-input bg-card px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-          />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Health checks are always answered, whatever is listed here, so a wrong entry
-            cannot pull this service out of its load balancer.
-          </p>
-        </CardContent>
-        <CardFooter className="justify-end">
-          <Button
-            size="sm"
-            disabled={savingKey === 'ipAllowlist'}
-            onClick={() =>
-              save('ipAllowlist', {
-                ipAllowlist: allowlistDraft
-                  .split('\n')
-                  .map((line) => line.trim())
-                  .filter(Boolean),
-              })
-            }
-          >
-            {savingKey === 'ipAllowlist' && <Loader2 className="size-4 animate-spin" />}
-            Save networks
-          </Button>
-        </CardFooter>
-      </Card>
-
-      {allowlistEnabled && (policy?.ipAllowlist?.length ?? 0) === 0 && (
-        <p className="text-xs text-muted-foreground">
-          Save at least one network above for the allowlist to take effect.
-        </p>
-      )}
-    </div>
+            )}
+            {i < SECURITY_ROWS.length - 1 && <Separator />}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -721,7 +788,11 @@ function AuditPanel() {
 
   useEffect(() => {
     let alive = true
-    listAuditLogs({ limit: 50 })
+    // pageSize, not limit: /admin/audit-logs paginates on page/pageSize, and the
+    // query DTO is whitelisted with forbidNonWhitelisted — so `limit` was not
+    // ignored, it was rejected, and the tab rendered "property limit should not
+    // exist" instead of the log. 50 is also the server's own default.
+    listAuditLogs({ pageSize: 50 })
       .then((data) => {
         if (!alive) return
         // The endpoint is paginated, so the rows may arrive wrapped.

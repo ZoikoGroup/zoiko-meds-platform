@@ -503,10 +503,20 @@ export default function UserHome() {
       {/* ---------------------------------------------------------------- */}
       {/*  Hero                                                           */}
       {/* ---------------------------------------------------------------- */}
-      <section className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft">
-        <div className="absolute inset-0 bg-grid opacity-60" aria-hidden />
-        <div className="absolute -right-24 -top-24 size-72 rounded-full bg-primary/15 blur-3xl" aria-hidden />
-        <div className="absolute -left-20 top-1/2 size-56 rounded-full bg-teal/10 blur-3xl" aria-hidden />
+      {/* The card itself must not clip: the search suggestions open downward out
+          of it, and `overflow-hidden` here cut the list off at the card's edge —
+          one row on desktop, where the hero is shortest below the input. The
+          decoration still needs clipping (two of the blobs are deliberately
+          outside the box), so it gets its own clipped layer instead. */}
+      <section className="relative rounded-2xl border border-border bg-card shadow-soft">
+        <div
+          className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
+          aria-hidden
+        >
+          <div className="absolute inset-0 bg-grid opacity-60" />
+          <div className="absolute -right-24 -top-24 size-72 rounded-full bg-primary/15 blur-3xl" />
+          <div className="absolute -left-20 top-1/2 size-56 rounded-full bg-teal/10 blur-3xl" />
+        </div>
 
         <div className="relative flex flex-col gap-6 p-6 sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">

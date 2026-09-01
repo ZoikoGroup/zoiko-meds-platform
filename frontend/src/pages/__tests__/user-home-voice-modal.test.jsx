@@ -66,6 +66,10 @@ class FakeSpeechRecognition {
     alternatives.isFinal = true
     this.onresult?.({ results: [alternatives], resultIndex: 0 })
   }
+  /** Refuse, the way the browser does when the mic permission is denied. */
+  fail(error = 'not-allowed') {
+    this.onerror?.({ error })
+  }
 }
 
 /** Open the modal and get it into its "Medicine Captured" review state. */
@@ -76,6 +80,21 @@ async function captureMedicine(user, phrase = 'Paracetamol') {
   // Speech arrives outside React's event system.
   await act(async () => recognition.say(phrase))
   await screen.findByText('Medicine Captured')
+}
+
+/**
+ * Open the modal and get it into its "Voice Search Error" state.
+ *
+ * The reported case is a denied microphone, which arrives through onerror. In
+ * this state Cancel is the only action in the footer — every other button is
+ * behind `!voiceError` — so it is the one button carrying the whole footer.
+ */
+async function failVoice(user, error = 'not-allowed') {
+  render(<UserHome />)
+  await user.click(screen.getByRole('button', { name: /voice search/i }))
+  await waitFor(() => expect(recognition).toBeDefined())
+  await act(async () => recognition.fail(error))
+  await screen.findByText('Voice Search Error')
 }
 
 const actionButton = (name) => screen.getByRole('button', { name })
@@ -207,5 +226,106 @@ describe('the modal itself', () => {
     await user.click(actionButton(/^search$/i))
 
     await waitFor(() => expect(screen.queryByText('Medicine Captured')).toBeNull())
+  })
+})
+
+describe('the error state, where Cancel stands alone', () => {
+  it('shows the error rather than the capture flow', async () => {
+    await failVoice(userEvent.setup())
+
+    expect(screen.getByText('Voice Search Error')).toBeDefined()
+    expect(screen.queryByText('Medicine Captured')).toBeNull()
+  })
+
+  it('offers Cancel and nothing else', async () => {
+    // Speak again, Search and Listening are all behind `!voiceError`, so this
+    // footer holds a single button — the case the stacked layout has to survive.
+    await failVoice(userEvent.setup())
+
+    expect(actionButton(/^cancel$/i)).toBeDefined()
+    expect(screen.queryByRole('button', { name: /speak again/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^search$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /listening/i })).toBeNull()
+  })
+
+  it('gives Cancel a touch-sized height on mobile', async () => {
+    await failVoice(userEvent.setup())
+
+    // h-11 is 44px. Without it the button inherits h-8 from size="sm" (32px),
+    // which is what "almost flat" looks like on a phone.
+    expect(actionButton(/^cancel$/i).className).toContain('h-11')
+  })
+
+  it('gives Cancel the full width of the modal on mobile', async () => {
+    await failVoice(userEvent.setup())
+
+    expect(actionButton(/^cancel$/i).className).toContain('w-full')
+  })
+
+  it('does not size Cancel with flex-1, which collapsed it when stacked', async () => {
+    await failVoice(userEvent.setup())
+
+    expect(actionButton(/^cancel$/i).className).not.toMatch(/(^|\s)flex-1(\s|$)/)
+  })
+
+  it('centres the label inside the button', async () => {
+    await failVoice(userEvent.setup())
+
+    const { className } = actionButton(/^cancel$/i)
+    expect(className).toContain('items-center')
+    expect(className).toContain('justify-center')
+  })
+
+  it('keeps the desktop sizing behind the sm: breakpoint', async () => {
+    await failVoice(userEvent.setup())
+
+    const { className } = actionButton(/^cancel$/i)
+    expect(className).toContain('sm:h-8')
+    expect(className).toContain('sm:w-auto')
+    expect(className).toContain('sm:text-xs')
+  })
+
+  it('keeps the text label rather than reducing to an icon', async () => {
+    await failVoice(userEvent.setup())
+
+    expect(actionButton(/^cancel$/i).textContent.trim()).toBe('Cancel')
+  })
+
+  it('leaves Cancel reachable and enabled', async () => {
+    await failVoice(userEvent.setup())
+
+    const cancel = actionButton(/^cancel$/i)
+    expect(cancel.tabIndex).not.toBe(-1)
+    expect(cancel.disabled).toBe(false)
+  })
+
+  it('holds the dialog inside a narrow viewport', async () => {
+    await failVoice(userEvent.setup())
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className).toContain('max-w-[calc(100vw-2rem)]')
+    expect(dialog.className).toContain('sm:max-w-[420px]')
+  })
+
+  it('still closes the modal when Cancel is pressed', async () => {
+    // The layout fix must not have cost the button its job.
+    const user = userEvent.setup()
+    await failVoice(user)
+
+    await user.click(actionButton(/^cancel$/i))
+
+    await waitFor(() => expect(screen.queryByText('Voice Search Error')).toBeNull())
+  })
+
+  it('reports the same way when the browser has no speech recognition at all', async () => {
+    // A second route into this state, with no recognition object involved.
+    delete window.SpeechRecognition
+    const user = userEvent.setup()
+    render(<UserHome />)
+
+    await user.click(screen.getByRole('button', { name: /voice search/i }))
+
+    await screen.findByText('Voice Search Error')
+    expect(actionButton(/^cancel$/i).className).toContain('h-11')
   })
 })

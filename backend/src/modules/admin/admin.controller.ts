@@ -83,10 +83,10 @@ export class AdminController {
   @ApiOperation({
     summary: 'Authentication controls, as they actually stand',
     description:
-      'Read-only. Every control here is decided by server configuration or by code, so there is nothing for the console to toggle — and a stored flag that nothing enforces is worse than no flag (MSA-42).',
+      'The stored policy and the controls derived from it. Controls the console cannot decide report where they are configured instead — a stored flag that nothing enforces is worse than no flag (MSA-42).',
   })
   getSecurityPosture() {
-    return this.security.list();
+    return this.security.posture();
   }
 
   @Patch('security')

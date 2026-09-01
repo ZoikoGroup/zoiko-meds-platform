@@ -7,9 +7,36 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Validate,
   ValidateNested,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
-import { MAX_DOCUMENT_BASE64_CHARS } from '../verification-document';
+import { MAX_DOCUMENT_BASE64_CHARS, MAX_DOCUMENT_BYTES } from '../verification-document';
+
+/**
+ * The base64 payload is no longer than a 5 MB file can produce.
+ *
+ * A coarse gate on the wire length, so an oversized body is refused before it is
+ * decoded; `readVerificationDocument` then checks the real decoded byte count.
+ *
+ * Anything that is not a string passes here on purpose. @IsString already
+ * reports a missing or mistyped value, and a length check that failed on
+ * `undefined` too is what told a pharmacy its 31 KB screenshot was over 5 MB on
+ * a save that carried no file at all.
+ */
+@ValidatorConstraint({ name: 'documentContentWithinLimit', async: false })
+export class DocumentContentWithinLimit implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (typeof value !== 'string') return true;
+    return value.length <= MAX_DOCUMENT_BASE64_CHARS;
+  }
+
+  defaultMessage(): string {
+    const mb = MAX_DOCUMENT_BYTES / (1024 * 1024);
+    return `That file is too large. Licence documents must be under ${mb} MB.`;
+  }
+}
 
 /**
  * The licence document sent with a verification submission.
@@ -29,9 +56,7 @@ export class VerificationDocumentDto {
   @ApiPropertyOptional({ description: 'Base64, or a data: URL of the file.' })
   @IsString()
   @IsNotEmpty({ message: 'Select a licence document to upload.' })
-  @MaxLength(MAX_DOCUMENT_BASE64_CHARS, {
-    message: 'That file is too large. Licence documents must be under 5 MB.',
-  })
+  @Validate(DocumentContentWithinLimit)
   content!: string;
 }
 

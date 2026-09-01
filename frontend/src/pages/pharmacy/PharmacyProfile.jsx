@@ -513,8 +513,16 @@ export default function PharmacyProfile() {
       // One request: the profile and the licence document are saved together,
       // so a file the API refuses fails the whole submission rather than
       // reporting a submission the reviewer has nothing to review.
+      //
+      // `profile.document` is what GET returned about the file already on record
+      // — filename, mimeType, sizeBytes, uploadedAt — and is display-only. It is
+      // dropped here: sending it back made the API read a description of the
+      // stored file as an upload of a new one, so a save that changed only the
+      // licence number failed on a document nobody had touched. Only a file the
+      // operator has just chosen is submitted.
+      const { document: _attached, ...profileFields } = profile
       const updated = await updateProfile(
-        pendingDoc ? { ...profile, document: pendingDoc.document } : profile,
+        pendingDoc ? { ...profileFields, document: pendingDoc.document } : profileFields,
       )
       if (updated) {
         setProfile(updated)
