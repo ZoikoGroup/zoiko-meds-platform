@@ -208,12 +208,6 @@ export class GatewayTelemetryService {
         detail: `Every request is capped at ${this.rateCeiling()}, enforced globally by a single ThrottlerGuard tier — not yet split by plan.`,
         status: 'ok',
       },
-      {
-        label: 'IP allowlist',
-        detail:
-          'A workspace-wide IP allowlist guard is registered; it only restricts traffic once ranges are added and switched on in Settings.',
-        status: 'ok',
-      },
     ];
   }
 }

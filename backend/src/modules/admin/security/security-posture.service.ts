@@ -1,9 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { isOAuthConfigured } from '../../auth/guards/oauth.guard';
-import { isValidEntry } from './ip-allowlist';
 import { UpdateSecurityPolicyDto } from './update-security-policy.dto';
 
 /**
@@ -26,15 +25,13 @@ export interface SecurityControl {
    * where the answer lives in server configuration or in code, which is what
    * stops the page rendering a switch that could only misreport.
    */
-  setting?: 'requireMfa' | 'ipAllowlistEnabled' | 'allowOauthSignIn';
+  setting?: 'requireMfa' | 'allowOauthSignIn';
   /** Current value of that setting. Only present alongside `setting`. */
   enabled?: boolean;
 }
 
 export interface SecurityPolicy {
   requireMfa: boolean;
-  ipAllowlistEnabled: boolean;
-  ipAllowlist: string[];
   allowOauthSignIn: boolean;
 }
 
@@ -46,23 +43,24 @@ export interface SecurityPolicy {
  * nothing else. Two of them showed on by default. Toggling changed a variable
  * that a reload discarded.
  *
- * None of the three exists in this platform: there is no MFA anywhere in the
- * auth module or the schema, no SAML, and no network restriction. Persisting
- * those flags would have been the worse fix of the two available, because a
- * stored "MFA enforced: on" that nothing reads is a control an operator will
- * report to an auditor and rely on in an incident.
- *
  * So this reports the controls the platform really has, the same way the
  * integrations page reports the services it really talks to, and names the
  * ones it does not have as absent rather than as switched off.
+ *
+ * The IP allowlist has since been withdrawn. It worked, which was the problem:
+ * an operator saved a subnet mask as though it were a range, switched it on,
+ * and locked every request out of the workspace including their own — the one
+ * account that could have switched it back off. A control whose failure mode is
+ * losing the console is not one to leave behind a toggle, so the guard, the
+ * columns and the editor are gone rather than guarded more carefully. Restrict
+ * by network at the load balancer, where being locked out does not also mean
+ * being unable to undo it.
  */
 /** The one Organization row every policy lives on. */
 const SINGLETON_ID = 'singleton';
 
 const DEFAULT_POLICY: SecurityPolicy = {
   requireMfa: false,
-  ipAllowlistEnabled: false,
-  ipAllowlist: [],
   allowOauthSignIn: true,
 };
 
@@ -79,8 +77,6 @@ export class SecurityPostureService {
       where: { id: SINGLETON_ID },
       select: {
         requireMfa: true,
-        ipAllowlistEnabled: true,
-        ipAllowlist: true,
         allowOauthSignIn: true,
       },
     });
@@ -92,39 +88,8 @@ export class SecurityPostureService {
     dto: UpdateSecurityPolicyDto,
     ipAddress?: string,
   ): Promise<{ policy: SecurityPolicy; controls: SecurityControl[] }> {
-    const current = await this.policy();
-
-    // Validated here rather than only in the DTO, because a syntactically fine
-    // string can still be a range that matches nothing, and an entry that never
-    // matches is indistinguishable from an allowlist that is simply wrong.
-    if (dto.ipAllowlist) {
-      const bad = dto.ipAllowlist.filter((entry) => !isValidEntry(entry));
-      if (bad.length > 0) {
-        throw new BadRequestException(
-          `Not an address or CIDR range: ${bad.join(', ')}`,
-        );
-      }
-    }
-
-    const nextEnabled = dto.ipAllowlistEnabled ?? current.ipAllowlistEnabled;
-    const nextList = dto.ipAllowlist ?? current.ipAllowlist;
-    // Refused rather than silently allowed: switching the allowlist on with
-    // nothing in it reads as "restricted" on the page while the guard, quite
-    // correctly, lets everything through. The two must not disagree.
-    if (nextEnabled && nextList.length === 0) {
-      throw new BadRequestException(
-        'Add at least one address or range before switching the allowlist on.',
-      );
-    }
-
     const data = {
       ...(dto.requireMfa !== undefined ? { requireMfa: dto.requireMfa } : {}),
-      ...(dto.ipAllowlistEnabled !== undefined
-        ? { ipAllowlistEnabled: dto.ipAllowlistEnabled }
-        : {}),
-      ...(dto.ipAllowlist !== undefined
-        ? { ipAllowlist: dto.ipAllowlist.map((entry) => entry.trim()) }
-        : {}),
       ...(dto.allowOauthSignIn !== undefined
         ? { allowOauthSignIn: dto.allowOauthSignIn }
         : {}),
@@ -152,10 +117,8 @@ export class SecurityPostureService {
   /**
    * Everything the settings page needs in one read.
    *
-   * The same shape `update` answers with. It used to return the controls alone,
-   * so the approved-networks editor had nothing to open with: the ranges came
-   * back only on the next save, and a workspace that already had some was shown
-   * an empty box.
+   * The same shape `update` answers with, so a save and a first load leave the
+   * page holding the same thing.
    */
   async posture(): Promise<{ policy: SecurityPolicy; controls: SecurityControl[] }> {
     return { policy: await this.policy(), controls: await this.list() };
@@ -167,7 +130,6 @@ export class SecurityPostureService {
       this.passwordPolicy(),
       this.sessionLifetime(),
       this.multiFactor(policy),
-      this.ipAllowlist(policy),
       this.oauthSignIn(policy),
       ...this.singleSignOn(),
       this.saml(),
@@ -230,22 +192,6 @@ export class SecurityPostureService {
       configuredBy: 'This page',
       setting: 'requireMfa',
       enabled: policy.requireMfa,
-    };
-  }
-
-  /** Enforced by IpAllowlistGuard on every request except the health probes. */
-  private ipAllowlist(policy: SecurityPolicy): SecurityControl {
-    const count = policy.ipAllowlist.length;
-    return {
-      id: 'ip-allowlist',
-      label: 'IP allowlist',
-      detail: policy.ipAllowlistEnabled
-        ? `Only requests from ${count} approved ${count === 1 ? 'range' : 'ranges'} are accepted. Health probes are always answered, so a wrong entry cannot take the service out of its load balancer.`
-        : 'The API accepts requests from any address that reaches it. Add ranges and switch this on to restrict it.',
-      state: policy.ipAllowlistEnabled ? 'enforced' : 'available',
-      configuredBy: 'This page',
-      setting: 'ipAllowlistEnabled',
-      enabled: policy.ipAllowlistEnabled,
     };
   }
 

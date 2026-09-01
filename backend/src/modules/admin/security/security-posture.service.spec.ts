@@ -6,17 +6,13 @@ import { SecurityPostureService } from './security-posture.service';
 /**
  * What GET /admin/security answers with.
  *
- * It used to return the controls alone. The approved-networks editor therefore
- * had nothing to open with: the stored ranges came back only in the reply to the
- * next save, so a workspace that already had some was shown an empty box and a
- * careless save would wipe them. It now answers with the same
- * { policy, controls } envelope PATCH does.
+ * It used to return the controls alone, so the page had to save once before it
+ * could show what was stored. It now answers with the same { policy, controls }
+ * envelope PATCH does.
  */
 
 const STORED = {
-  requireMfa: false,
-  ipAllowlistEnabled: true,
-  ipAllowlist: ['203.0.113.0/24', '2001:db8::/32'],
+  requireMfa: true,
   allowOauthSignIn: true,
 };
 
@@ -46,22 +42,25 @@ describe('the posture payload', () => {
     expect(Array.isArray(posture.controls)).toBe(true);
   });
 
-  it('includes the approved ranges, so the editor can open with them', async () => {
-    // The whole reason for the change.
+  it('describes the MFA control the page can still set', async () => {
     const { service } = buildService();
 
-    expect((await service.posture()).policy.ipAllowlist).toEqual([
-      '203.0.113.0/24',
-      '2001:db8::/32',
-    ]);
+    const control = (await service.posture()).controls.find((c) => c.id === 'mfa');
+
+    expect(control).toMatchObject({ setting: 'requireMfa', enabled: true });
   });
 
-  it('still describes the IP allowlist control', async () => {
+  it('offers no IP allowlist control, because there is no longer one', async () => {
+    // Withdrawn after a saved subnet mask locked the workspace out of its own
+    // console. A control the page cannot set must not appear as one it can.
     const { service } = buildService();
 
-    const control = (await service.posture()).controls.find((c) => c.id === 'ip-allowlist');
+    const { policy, controls } = await service.posture();
 
-    expect(control).toMatchObject({ setting: 'ipAllowlistEnabled', enabled: true });
+    expect(controls.find((c) => c.id === 'ip-allowlist')).toBeUndefined();
+    expect(controls.some((c) => c.setting === ('ipAllowlistEnabled' as never))).toBe(false);
+    expect(policy).not.toHaveProperty('ipAllowlistEnabled');
+    expect(policy).not.toHaveProperty('ipAllowlist');
   });
 
   it('answers the same shape as an update does', async () => {
@@ -75,13 +74,12 @@ describe('the posture payload', () => {
   });
 
   it('falls back to safe defaults when the workspace row is missing', async () => {
-    // Nothing enforced, nothing listed — never an allowlist switched on with an
-    // empty list, which would refuse every request.
+    // Nothing enforced that nobody asked for, and sign-in still possible.
     const { service } = buildService(null);
 
     const { policy } = await service.posture();
 
-    expect(policy.ipAllowlistEnabled).toBe(false);
-    expect(policy.ipAllowlist).toEqual([]);
+    expect(policy.requireMfa).toBe(false);
+    expect(policy.allowOauthSignIn).toBe(true);
   });
 });
