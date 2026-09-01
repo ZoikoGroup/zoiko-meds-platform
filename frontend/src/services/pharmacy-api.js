@@ -198,6 +198,24 @@ export const updateNotificationPreferences = (patch) =>
 
 // Shape a raw Pharmacy row (GET /pharmacies/:id) like the /pharmacies/me
 // payload, so the profile page renders identically from either source.
+/**
+ * Why an approved pharmacy is still not listed, or null.
+ *
+ * Mirrors participationBlockedReason on the API. Duplicated deliberately and
+ * only here: this whole function exists to shape an older API build's raw
+ * pharmacy row like the /pharmacies/me payload, and that build does not send
+ * the field. Every other path reads the server's own answer.
+ */
+const listingBlockedFor = (row) => {
+  if (row.verificationStatus !== 'VERIFIED') return null
+  if (row.latitude != null && row.longitude != null) return null
+  return (
+    'Verified, but not listed to patients yet: this pharmacy has no map location, ' +
+    'and every patient search is distance-bounded. It is listed automatically as ' +
+    'soon as a location is set.'
+  )
+}
+
 const toProfile = (row, email) => ({
   id: row.id,
   isDraft: false,
@@ -205,6 +223,7 @@ const toProfile = (row, email) => ({
   licenseNumber: row.licenseNumber || '',
   verificationStatus: row.verificationStatus || 'UNVERIFIED',
   isParticipating: !!row.isParticipating,
+  listingBlockedReason: listingBlockedFor(row),
   phone: row.phone || '',
   email: email || '',
   addressLine1: row.addressLine1 || '',
@@ -215,6 +234,10 @@ const toProfile = (row, email) => ({
   postalCode: row.postalCode || '',
   latitude: row.latitude ?? null,
   longitude: row.longitude ?? null,
+  // Null on an API build that predates the column, which the profile page reads
+  // as "not approximate" — the right way to be wrong here, since it only means
+  // a distance is shown precisely rather than rounded.
+  locationPrecision: row.locationPrecision ?? null,
   reliabilityScore: Math.round((row.reliabilityScore || 0) * 100),
   // Reviewer correspondence lives behind /pharmacies/me only.
   reviewStatus: null,
@@ -230,6 +253,8 @@ const emptyDraft = (email) => ({
   licenseNumber: '',
   verificationStatus: 'UNVERIFIED',
   isParticipating: false,
+  // Nothing to list yet, so nothing is being held back.
+  listingBlockedReason: null,
   phone: '',
   email: email || '',
   addressLine1: '',
@@ -240,6 +265,7 @@ const emptyDraft = (email) => ({
   postalCode: '',
   latitude: null,
   longitude: null,
+  locationPrecision: null,
   reliabilityScore: 0,
   reviewStatus: null,
   reviewedBy: null,

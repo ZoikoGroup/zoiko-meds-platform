@@ -398,3 +398,66 @@ describe('registering a pharmacy — locating it from its address', () => {
     expect(tx.pharmacy.create.mock.calls[0][0].data.latitude).toBeNull();
   });
 });
+
+/**
+ * Verifying a pharmacy and listing it to patients are separate answers.
+ *
+ * Approval no longer publishes a pharmacy that has no position, because such a
+ * record is returned by no distance-bounded search however verified it is. That
+ * leaves one obligation here: the operator's own save is where the missing half
+ * usually arrives, so it has to be what releases them.
+ */
+describe('setting a location lists an already-verified pharmacy', () => {
+  it('publishes the pharmacy on the save that gives it a pin', async () => {
+    const { service, prisma } = buildService({
+      existing: stored({
+        latitude: null,
+        longitude: null,
+        verificationStatus: 'VERIFIED',
+        isParticipating: false,
+      }),
+      neighbours: [],
+      geocode: { lat: 17.5878172, lng: 78.4236196, precise: true, granularity: 'ROOFTOP:premise' },
+    });
+
+    await service.updateProfile('ph_1', { addressLine1: 'Plot 42, Main Road' } as never, USER);
+
+    // Without this the operator pastes their maps link, saves, and stays
+    // invisible until an admin happens to touch the row - the one step that
+    // closes the loop, left to somebody else.
+    const { data } = prisma.pharmacy.update.mock.calls[0][0];
+    expect(data.latitude).toBe(17.5878172);
+    expect(data.isParticipating).toBe(true);
+  });
+
+  it('does not list a pharmacy whose address still cannot be located', async () => {
+    const { service, prisma } = buildService({
+      existing: stored({
+        latitude: null,
+        longitude: null,
+        verificationStatus: 'VERIFIED',
+        isParticipating: false,
+      }),
+      neighbours: [],
+      geocode: null,
+    });
+
+    await service.updateProfile('ph_1', { addressLine1: 'Somewhere unfindable' } as never, USER);
+
+    const { data } = prisma.pharmacy.update.mock.calls[0][0];
+    expect(data.latitude).toBeNull();
+    expect(data.isParticipating).toBe(false);
+  });
+
+  it('does not list a located pharmacy that has not been verified', async () => {
+    const { service, prisma } = buildService({
+      existing: stored({ verificationStatus: 'PENDING', isParticipating: false }),
+      neighbours: [],
+    });
+
+    await service.updateProfile('ph_1', { addressLine2: 'Near the metro' } as never, USER);
+
+    // A pin is not an approval. Only the Verification Center grants that.
+    expect(prisma.pharmacy.update.mock.calls[0][0].data.isParticipating).toBe(false);
+  });
+});

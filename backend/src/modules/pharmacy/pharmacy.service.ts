@@ -32,6 +32,7 @@ import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.serv
 import { assertLocationIsFree } from './location-identity';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { resolvePharmacyCoordinates } from './pharmacy-coordinates';
+import { canParticipate, participationBlockedReason } from './participation';
 import {
   NotificationCategory,
   NotificationPreferencesService,
@@ -316,6 +317,10 @@ export class PharmacyService {
       licenseNumber: pharmacy.licenseNumber || '',
       verificationStatus: pharmacy.verificationStatus,
       isParticipating: pharmacy.isParticipating,
+      // Null unless something is holding an approved pharmacy back. Verified
+      // and listed are separate answers now, and an operator who has been
+      // approved but cannot be found needs to be told which one is missing.
+      listingBlockedReason: participationBlockedReason(pharmacy),
       phone: pharmacy.phone || '',
       email: user?.email || '',
       addressLine1: pharmacy.addressLine1 || '',
@@ -389,6 +394,9 @@ export class PharmacyService {
       licenseNumber: '',
       verificationStatus: VerificationStatus.UNVERIFIED,
       isParticipating: false,
+      // No pharmacy record yet, so nothing is being held back — there is
+      // nothing to hold. Present for shape parity with a saved profile.
+      listingBlockedReason: null,
       phone: '',
       email: user?.email || '',
       addressLine1: '',
@@ -722,6 +730,20 @@ export class PharmacyService {
         latitude: nextLat,
         longitude: nextLng,
         locationPrecision: nextPrecision,
+        // Setting a location is what releases an already-verified pharmacy into
+        // patient search. Approval no longer publishes an unlocated record, so
+        // without this the operator would paste their Maps link, save, and stay
+        // invisible until an admin touched the row — the one step that closes
+        // the loop, left to somebody else.
+        //
+        // Read off `existing`, not off a fresh approval: this save cannot grant
+        // verification, and where it revokes it (an identity change) that is
+        // `submitForReview`'s write, which follows and sets both fields down.
+        isParticipating: canParticipate({
+          verificationStatus: existing.verificationStatus,
+          latitude: nextLat,
+          longitude: nextLng,
+        }),
         updatedAt: new Date(),
       },
     });

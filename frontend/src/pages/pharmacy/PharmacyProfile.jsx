@@ -615,6 +615,22 @@ export default function PharmacyProfile() {
         />
       )}
 
+      {/* Approved, and still not findable.
+          Verification and listing are separate now: a licence can be approved
+          while the record has no map position, and a pharmacy with no position
+          is returned by no patient search. Saying "Verified" and stopping there
+          would leave an operator believing patients could see them. */}
+      {profile.listingBlockedReason && (
+        <Notice
+          tone="warning"
+          title={t('notListedTitle', 'Verified, but patients cannot find you yet')}
+          body={t(
+            'notListedBody',
+            'Your licence is approved. Patient search only ever returns pharmacies within a distance of the person searching, so it cannot include you until your branch has a map position. Set your location below and you are listed straight away — no further review.',
+          )}
+        />
+      )}
+
       <div className="grid max-w-4xl grid-cols-1 gap-5">
         {/* Identity + verification */}
         <Card>
