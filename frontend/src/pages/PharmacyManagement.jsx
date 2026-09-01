@@ -26,8 +26,15 @@ import {
   AlertTriangle,
   ShieldCheck,
   ExternalLink,
+  MapPin,
+  MapPinOff,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
+import {
+  isShortMapsLink,
+  isValidCoordinate,
+  parseGoogleMapsUrl,
+} from '@/lib/google-maps-url'
 import {
   PHARMACY_STATUS_LABEL as STATUS_LABEL,
   PHARMACY_STATUS_VARIANT as STATUS_VARIANT,
@@ -50,6 +57,9 @@ export default function PharmacyManagement() {
   const [selectedPharmacy, setSelectedPharmacy] = useState(null)
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isAddOpen, setIsAddOpen] = useState(false)
+  // The coordinate editor in the details dialog, and what it last said.
+  const [pinInput, setPinInput] = useState('')
+  const [pinError, setPinError] = useState('')
 
   const [newForm, setNewForm] = useState({
     name: '',
@@ -246,6 +256,59 @@ export default function PharmacyManagement() {
     })
   }
 
+  /**
+   * Put a pharmacy on the map.
+   *
+   * A pharmacy with no coordinates passes every check this console displays and
+   * is still invisible to patients: distance-bounded search drops it before it
+   * is ranked. Correcting that needed a database client until now.
+   *
+   * Accepts either a "lat, lng" pair or a Google Maps URL with coordinates in
+   * it, because the second is what someone actually has to hand — you look the
+   * branch up on Maps, right-click the shopfront, and copy. Short goo.gl links
+   * carry no coordinates until their redirect is followed, so those are asked
+   * to be expanded first rather than silently failing.
+   */
+  const handleSetPin = async (pharmacy) => {
+    setPinError('')
+    const raw = pinInput.trim()
+    if (!raw) return
+
+    if (isShortMapsLink(raw)) {
+      setPinError(
+        'Short maps links (maps.app.goo.gl) do not carry coordinates. Open it in a ' +
+          'browser and paste the full URL, or paste the "lat, lng" pair.',
+      )
+      return
+    }
+
+    // Handles both forms already: a bare "lat, lng" pair and the coordinates
+    // embedded in a full Maps URL.
+    const parsed = parseGoogleMapsUrl(raw)
+
+    if (!parsed || !isValidCoordinate(parsed.latitude, parsed.longitude)) {
+      setPinError('Could not read a coordinate pair out of that. Paste "lat, lng" or a full Google Maps URL.')
+      return
+    }
+
+    try {
+      const updated = await admin.updatePharmacy(pharmacy.id, {
+        latitude: parsed.latitude,
+        longitude: parsed.longitude,
+      })
+      // The dialog is rendered from this object, so it has to carry the new pin
+      // or the panel keeps showing "not located" over a pharmacy that now is.
+      setSelectedPharmacy(updated)
+      setPinInput('')
+      window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
+      await load(true)
+    } catch (err) {
+      // The backend refuses a pin that sits in a different city from the
+      // address on the record; that message names the distance, so show it.
+      setPinError(err.message || 'Could not save that location.')
+    }
+  }
+
   const columns = [
     {
       key: 'select',
@@ -339,10 +402,39 @@ export default function PharmacyManagement() {
     {
       key: 'city',
       header: 'Location',
+      // The address AND whether the pharmacy is actually on the map.
+      //
+      // Every rule that hides a pharmacy from patient search reads latitude and
+      // longitude, and this console showed neither — so a pharmacy with no pin
+      // looked completely healthy here while being invisible to every patient,
+      // and there was no way to tell the two apart without querying the
+      // database. "Not located" is the single most common reason a verified,
+      // participating pharmacy returns no results.
       cell: (row) => (
-        <span className="text-muted-foreground">
-          {[row.addressLine1, row.city, row.region, row.postalCode, row.country].filter(Boolean).join(', ') || '—'}
-        </span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-muted-foreground">
+            {[row.addressLine1, row.city, row.region, row.postalCode, row.country].filter(Boolean).join(', ') || '—'}
+          </span>
+          {!row.located ? (
+            <Badge variant="destructive" className="w-fit gap-1">
+              <MapPinOff className="size-3" />
+              Not located — hidden from search
+            </Badge>
+          ) : row.locationPrecision === 'APPROXIMATE' ? (
+            <span
+              className="inline-flex w-fit items-center gap-1 text-[11px] text-warning"
+              title="Placed by geocoding the area, not the street address. Distances shown to patients are approximate."
+            >
+              <MapPin className="size-3" />
+              Approximate · {row.latitude.toFixed(4)}, {row.longitude.toFixed(4)}
+            </span>
+          ) : (
+            <span className="inline-flex w-fit items-center gap-1 text-[11px] text-muted-foreground tabular">
+              <MapPin className="size-3" />
+              {row.latitude.toFixed(4)}, {row.longitude.toFixed(4)}
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -540,6 +632,56 @@ export default function PharmacyManagement() {
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Headquarters Location</span>
                 <span className="text-right max-w-[240px] font-medium">{[selectedPharmacy.addressLine1, selectedPharmacy.city, selectedPharmacy.region, selectedPharmacy.postalCode, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
+              </div>
+              {/* Map position — the column patient search actually filters on. */}
+              <div className="flex flex-col gap-2 border-b pb-3">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Map position</span>
+                  {selectedPharmacy.located ? (
+                    <span className="text-right font-medium tabular">
+                      {selectedPharmacy.latitude.toFixed(5)}, {selectedPharmacy.longitude.toFixed(5)}
+                      {selectedPharmacy.locationPrecision === 'APPROXIMATE' && (
+                        <span className="ms-1 text-xs font-normal text-warning">(approximate)</span>
+                      )}
+                    </span>
+                  ) : (
+                    <Badge variant="destructive" className="gap-1">
+                      <MapPinOff className="size-3" />
+                      Not located
+                    </Badge>
+                  )}
+                </div>
+                {!selectedPharmacy.located && (
+                  <p className="text-xs text-muted-foreground">
+                    Patient search is distance-bounded, so this pharmacy is returned to
+                    nobody until it has a position — whatever its verification status says.
+                  </p>
+                )}
+                {selectedPharmacy.locationPrecision === 'APPROXIMATE' && (
+                  <p className="text-xs text-muted-foreground">
+                    Placed by geocoding the area rather than the street address. Patients
+                    see its distance as approximate; a precise pin replaces it.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    className="h-9 flex-1 rounded-md border border-border bg-background px-3 text-xs"
+                    placeholder='"28.6139, 77.2090" or a Google Maps URL'
+                    value={pinInput}
+                    onChange={(e) => setPinInput(e.target.value)}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9 text-xs"
+                    disabled={!pinInput.trim()}
+                    onClick={() => handleSetPin(selectedPharmacy)}
+                  >
+                    <MapPin className="size-3.5" />
+                    Set
+                  </Button>
+                </div>
+                {pinError && <p className="text-xs text-danger">{pinError}</p>}
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Availability Engine Score</span>

@@ -30,8 +30,10 @@ export class PatientSignalController {
 
   @Get('summary')
   @ApiOperation({ summary: 'ZoikoSignal summary counters' })
-  summary(@CurrentUser('id') userId: string) {
-    return this.signal.summary(userId);
+  summary(@CurrentUser('id') userId: string, @Query() query: SavedQueryDto) {
+    // Same location as saved-status: the counters describe the cards beneath
+    // them, so they have to be measured from the same place.
+    return this.signal.summary(userId, query);
   }
 
   @Get('digest')

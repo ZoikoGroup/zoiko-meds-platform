@@ -328,6 +328,10 @@ export class PharmacyService {
       // "not set yet" state from exactly that.
       latitude: pharmacy.latitude,
       longitude: pharmacy.longitude,
+      // APPROXIMATE means the pin came from geocoding an area — the middle of a
+      // city or a PIN code, not the shop. The portal tells the operator so, and
+      // asks for a maps link: only they know which building it is.
+      locationPrecision: pharmacy.locationPrecision,
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
       logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt),
       // Commercial standing, so the portal can show the plan without a second
@@ -395,6 +399,7 @@ export class PharmacyService {
       postalCode: '',
       latitude: null,
       longitude: null,
+      locationPrecision: null,
       reliabilityScore: 0,
       // Same shape as a saved profile: a draft simply has no logo yet.
       logoUrl: null,
@@ -505,6 +510,7 @@ export class PharmacyService {
           // patient search, however complete the rest of the profile is.
           latitude: coords?.latitude ?? null,
           longitude: coords?.longitude ?? null,
+          locationPrecision: coords?.precision ?? null,
           // Awaiting review — a self-declared pharmacy is never trusted on
           // submit, so it stays out of public results until an admin approves.
           verificationStatus: VerificationStatus.PENDING,
@@ -658,24 +664,32 @@ export class PharmacyService {
     const missingCoords = existing.latitude == null || existing.longitude == null;
     const suppliedPin = dto.latitude != null && dto.longitude != null;
 
-    const geocoded =
-      !suppliedPin && (addressChanged || missingCoords)
-        ? await resolvePharmacyCoordinates(this.nearby, {}, [
-            dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
-            dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
-            dto.city !== undefined ? dto.city : existing.city,
-            dto.region !== undefined ? dto.region : existing.region,
-            dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
-            country,
-          ])
+    // A supplied pin goes through the same resolver as a geocode rather than
+    // straight to the column. It still wins — the operator dropped it on their
+    // own branch, which beats any address lookup — but the resolver is also
+    // where a pin is checked against the address saved beside it, and a pin
+    // that skips that check is how a Delhi pharmacy came to be stored in
+    // Hyderabad with nothing to flag it.
+    const located =
+      suppliedPin || addressChanged || missingCoords
+        ? await resolvePharmacyCoordinates(
+            this.nearby,
+            suppliedPin ? { latitude: dto.latitude, longitude: dto.longitude } : {},
+            [
+              dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
+              dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
+              dto.city !== undefined ? dto.city : existing.city,
+              dto.region !== undefined ? dto.region : existing.region,
+              dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
+              country,
+            ],
+          )
         : null;
 
-    // An explicit pin always wins over a geocode: the operator dropped it on
-    // their own branch, which is more precise than anything an address lookup
-    // can return. Geocoding only ever fills a gap, and never overwrites a pin
-    // that is already stored.
-    const nextLat = suppliedPin ? dto.latitude! : geocoded?.latitude ?? existing.latitude;
-    const nextLng = suppliedPin ? dto.longitude! : geocoded?.longitude ?? existing.longitude;
+    // Geocoding only ever fills a gap; it never overwrites a pin already stored.
+    const nextLat = located?.latitude ?? existing.latitude;
+    const nextLng = located?.longitude ?? existing.longitude;
+    const nextPrecision = located?.precision ?? existing.locationPrecision;
 
     // A profile edit can move the pin. Moving it onto another pharmacy's
     // premises creates the same duplicate a second registration would; itself
@@ -707,6 +721,7 @@ export class PharmacyService {
           dto.postalCode !== undefined ? dto.postalCode.trim() || null : existing.postalCode,
         latitude: nextLat,
         longitude: nextLng,
+        locationPrecision: nextPrecision,
         updatedAt: new Date(),
       },
     });

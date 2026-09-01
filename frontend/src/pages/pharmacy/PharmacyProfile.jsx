@@ -158,7 +158,7 @@ function Field({ label, value, onChange, id, required, placeholder, hint }) {
  * pair is shown for confirmation and stored by the normal profile save, so a
  * mis-pasted link cannot silently move a pharmacy.
  */
-function MapsLocationField({ latitude, longitude, onDetected, t }) {
+function MapsLocationField({ latitude, longitude, precision, onDetected, t }) {
   const [link, setLink] = useState('')
   const [error, setError] = useState(null)
   const [detected, setDetected] = useState(null)
@@ -290,6 +290,19 @@ function MapsLocationField({ latitude, longitude, onDetected, t }) {
         </span>
       )}
 
+      {/* An area-level pin found you a place on the map, which is what gets the
+          pharmacy into search at all — but it is the middle of a district, not
+          the shop, and only the operator can say which building it is. */}
+      {stored && precision === 'APPROXIMATE' && (
+        <span className="flex items-start gap-1.5 text-[11px] text-warning">
+          <AlertCircle className="mt-0.5 size-3 shrink-0" />
+          {t(
+            'approximateLocation',
+            'This is an approximate position worked out from your city and postcode, so patients see your distance rounded. Paste a Maps link to your shopfront to place it exactly.',
+          )}
+        </span>
+      )}
+
       <span className="text-[11px] text-muted-foreground">
         {t(
           'mapsLocationHelp',
@@ -348,7 +361,11 @@ export default function PharmacyProfile() {
    * location" would tell the operator their pharmacy has moved when nothing has
    * been saved yet — and the patient search would still be using the old point.
    */
-  const [savedCoords, setSavedCoords] = useState({ latitude: null, longitude: null })
+  const [savedCoords, setSavedCoords] = useState({
+    latitude: null,
+    longitude: null,
+    precision: null,
+  })
 
   // A ref, not state: the background refresh below reads it from inside a
   // listener registered once, where a state value would be captured stale.
@@ -364,7 +381,11 @@ export default function PharmacyProfile() {
       // coming back would otherwise overwrite the edit buffer and silently
       // discard the location just detected.
       setProfile((current) => (current && dirtyRef.current ? current : p))
-      setSavedCoords({ latitude: p.latitude ?? null, longitude: p.longitude ?? null })
+      setSavedCoords({
+        latitude: p.latitude ?? null,
+        longitude: p.longitude ?? null,
+        precision: p.locationPrecision ?? null,
+      })
       setLoadError(null)
     } catch (err) {
       console.error('Failed to load profile', err)
@@ -504,6 +525,7 @@ export default function PharmacyProfile() {
         setSavedCoords({
           latitude: updated.latitude ?? null,
           longitude: updated.longitude ?? null,
+          precision: updated.locationPrecision ?? null,
         })
       }
       dirtyRef.current = false
@@ -835,6 +857,7 @@ export default function PharmacyProfile() {
               key={`${savedCoords.latitude},${savedCoords.longitude}`}
               latitude={savedCoords.latitude}
               longitude={savedCoords.longitude}
+              precision={savedCoords.precision}
               onDetected={({ latitude, longitude }) => {
                 markDirty()
                 setProfile((prev) => ({ ...prev, latitude, longitude }))

@@ -24,10 +24,15 @@ export const SAFETY_TYPES = ['recall', 'safety']
  * measuring from a fixed point.
  */
 export function listSavedStatus() {
+  return apiFetch(`/me/signal/saved-status${locationQuery()}`)
+}
+
+/** The stored location as a query string, or '' when none is set. */
+function locationQuery() {
   const params = new URLSearchParams(
     Object.entries(userLocationParams()).map(([k, v]) => [k, String(v)]),
   ).toString()
-  return apiFetch(`/me/signal/saved-status${params ? `?${params}` : ''}`)
+  return params ? `?${params}` : ''
 }
 
 export function listNotifications() {
@@ -39,8 +44,16 @@ export function listActiveAlerts() {
   return apiFetch('/me/signal/alerts')
 }
 
+/**
+ * The counters above the saved-medicine cards.
+ *
+ * Sent with the same location as the cards themselves: "running low" counts the
+ * medicines those cards band, and both are scoped to the patient's radius. Sent
+ * without it, the tile counted every saved medicine low anywhere in the network
+ * and disagreed with the list right underneath it.
+ */
 export function getSignalSummary() {
-  return apiFetch('/me/signal/summary')
+  return apiFetch(`/me/signal/summary${locationQuery()}`)
 }
 
 // Lightweight, fast summary for the sidebar unread badge + home widget.

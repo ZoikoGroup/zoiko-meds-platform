@@ -305,7 +305,7 @@ describe('registering a pharmacy — locating it from its address', () => {
     expect(data.longitude).toBe(78.4236196);
   });
 
-  it('stores no coordinates when the address only resolves to a city centroid', async () => {
+  it('stores a city centroid, marked APPROXIMATE', async () => {
     const { service, tx, prisma } = buildService({
       neighbours: [],
       geocode: { lat: 17.385, lng: 78.4867, precise: false, granularity: 'APPROXIMATE:locality' },
@@ -314,22 +314,76 @@ describe('registering a pharmacy — locating it from its address', () => {
 
     await service.saveMyProfile(USER, BY_ADDRESS as never);
 
-    // "Not located yet" is true and fixable. A city centre is false, and it
-    // would read on a patient's screen as this branch's own position.
+    // The centroid is not where the shop is, and storing nothing was the
+    // honest way to say so — but it also made the pharmacy invisible to every
+    // patient in its own city, which is the worse falsehood. It is stored and
+    // labelled instead, and every surface that prints its distance says the
+    // distance is rough.
     const { data } = tx.pharmacy.create.mock.calls[0][0];
-    expect(data.latitude).toBeNull();
-    expect(data.longitude).toBeNull();
+    expect(data.latitude).toBe(17.385);
+    expect(data.longitude).toBe(78.4867);
+    expect(data.locationPrecision).toBe('APPROXIMATE');
   });
 
-  it('keeps the operator pin and does not geocode when one was supplied', async () => {
-    const { service, tx, geocode, prisma } = buildService({ neighbours: [] });
+  it('marks a street-level geocode EXACT', async () => {
+    const { service, tx, prisma } = buildService({
+      neighbours: [],
+      geocode: { lat: 17.5878172, lng: 78.4236196, precise: true, granularity: 'ROOFTOP:premise' },
+    });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await service.saveMyProfile(USER, BY_ADDRESS as never);
+
+    expect(tx.pharmacy.create.mock.calls[0][0].data.locationPrecision).toBe('EXACT');
+  });
+
+  it('keeps the operator pin over a geocode of the same place', async () => {
+    const { service, tx, prisma } = buildService({
+      neighbours: [],
+      // The area the address names — near the pin, so the two agree.
+      geocode: { lat: 17.385, lng: 78.4867, precise: false, granularity: 'APPROXIMATE:locality' },
+    });
     prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
 
     await service.saveMyProfile(USER, NEW_PHARMACY as never);
 
-    expect(geocode).not.toHaveBeenCalled();
+    // The operator dropped this on their own branch; no address lookup beats
+    // that, and it is EXACT however coarse the address behind it was.
     const { data } = tx.pharmacy.create.mock.calls[0][0];
     expect(data.latitude).toBe(NEW_PHARMACY.latitude);
+    expect(data.longitude).toBe(NEW_PHARMACY.longitude);
+    expect(data.locationPrecision).toBe('EXACT');
+  });
+
+  it('refuses a pin in a different city from the address beside it', async () => {
+    // The defect this exists for: a pharmacy whose address read "Delhi,
+    // 110006" was stored with a pin in Hyderabad. Both halves were
+    // well-formed, so nothing questioned either, and because the address was
+    // area-level no later geocode could overwrite the pin. Patients in Delhi
+    // were told nothing was near them.
+    const { service, tx, prisma } = buildService({
+      neighbours: [],
+      geocode: { lat: 28.6139, lng: 77.209, precise: false, granularity: 'APPROXIMATE:locality' },
+    });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await expect(
+      service.saveMyProfile(USER, { ...NEW_PHARMACY, city: 'Delhi' } as never),
+    ).rejects.toThrow(/km from the address/i);
+    // Refused outright rather than stored with one half quietly dropped: only
+    // a person can say which of the two is the mistake.
+    expect(tx.pharmacy.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a pin when the address cannot be geocoded at all', async () => {
+    const { service, tx, prisma } = buildService({ neighbours: [], geocode: null });
+    prisma.pharmacy.findUnique.mockResolvedValue(stored({ id: 'ph_new' }));
+
+    await service.saveMyProfile(USER, NEW_PHARMACY as never);
+
+    // Nothing to contradict it. A geocoder that is down or has never heard of
+    // the street must not cost an operator their own pin.
+    expect(tx.pharmacy.create.mock.calls[0][0].data.latitude).toBe(NEW_PHARMACY.latitude);
   });
 
   it('registration is still accepted when geocoding fails outright', async () => {

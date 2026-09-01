@@ -274,6 +274,22 @@ model IdentifierMapping {
 // Pharmacy verification & participation
 // ---------------------------------------------------------------------------
 
+/// How precisely a pharmacy's stored pin describes where the shop actually is.
+///
+/// EXACT is a street-level geocode or a pin the operator dropped on their own
+/// branch. APPROXIMATE is an area centroid — a city, a district or a PIN code —
+/// which is the middle of a region, not the shop.
+///
+/// The distinction is stored rather than inferred because the two are used
+/// differently: an approximate pharmacy is still worth returning from a search
+/// (it is genuinely somewhere in that area, and being invisible helps nobody),
+/// but its distance is a rough figure and every patient surface has to say so
+/// rather than print "3.2 km" for a point nobody has actually located.
+enum LocationPrecision {
+  EXACT
+  APPROXIMATE
+}
+
 enum VerificationStatus {
   UNVERIFIED
   PENDING
@@ -302,6 +318,9 @@ model Pharmacy {
   postalCode         String?
   latitude           Float?
   longitude          Float?
+  /// How precisely `latitude`/`longitude` locate this branch. Null exactly when
+  /// there are no coordinates at all.
+  locationPrecision  LocationPrecision?
   phone              String?
   verificationStatus VerificationStatus @default(UNVERIFIED)
   reliabilityScore   Float              @default(0) // 0..1, drives ZoikoAvail confidence

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   AvailabilityConfidence,
+  LocationPrecision,
   MedicinePriority,
   Prisma,
   SignalNotification,
@@ -151,7 +152,21 @@ export class PatientSignalService {
     return rows.map((n) => this.toNotificationDto(n));
   }
 
-  async summary(userId: string) {
+  /**
+   * The counters above the ZoikoSignal page.
+   *
+   * Takes the caller's location for the same reason the cards below it do: the
+   * "running low" tile counts the same medicines those cards band, and a tile
+   * counting every saved medicine low ANYWHERE sat above a list of cards that
+   * had each been scoped to the patient's own radius.
+   */
+  async summary(userId: string, query: SavedQueryDto = {}) {
+    const origin = await this.nearby.resolveOrigin({
+      lat: query.lat,
+      lng: query.lng,
+      city: query.city,
+    });
+    const maxDistance = query.maxDistance ?? DEFAULT_RADIUS_KM;
     await this.regenerate(userId);
     const [saved, notifs] = await Promise.all([
       this.loadSavedWithSignals(userId),
@@ -160,7 +175,7 @@ export class PatientSignalService {
       }),
     ]);
     const runningLow = saved.filter((s) => {
-      const st = this.statusFor(s);
+      const st = this.statusFor(s, origin, maxDistance);
       return st === 'running-low' || st === 'out-of-stock';
     }).length;
     return {
@@ -401,8 +416,16 @@ export class PatientSignalService {
       case SignalNotificationType.RUNNING_LOW:
         return {
           title: `${medicineName} is running low`,
+          // Notifications are generated without a location — `regenerate` runs
+          // on every read of this surface, including the ones that carry no
+          // query at all — so this copy cannot claim proximity. It said
+          // "decreasing near your location" about pharmacies that were, in the
+          // case that surfaced it, 1,200 km away, on a page whose own card for
+          // the same medicine said no nearby pharmacy had it. Search is where
+          // the patient finds out what is actually within reach, and that is
+          // what the action offers.
           description:
-            'Availability is decreasing near your location. Purchase soon before nearby pharmacies run out.',
+            'Availability is decreasing across the verified network. Check what is in stock near you before it runs out.',
           actionLabel: 'Find Pharmacy',
           actionKind: 'find',
           actionQuery: medicineName,
@@ -410,7 +433,7 @@ export class PatientSignalService {
       case SignalNotificationType.BACK_IN_STOCK:
         return {
           title: `${medicineName} is back in stock`,
-          description: `This medicine is available again${nearest ? ` at ${nearest}` : ' at nearby pharmacies'}.`,
+          description: `This medicine is available again${nearest ? ` at ${nearest}` : ' at a verified pharmacy'}.`,
           actionLabel: 'View Pharmacies',
           actionKind: 'view',
           actionQuery: medicineName,
@@ -426,8 +449,13 @@ export class PatientSignalService {
       case SignalNotificationType.NEARBY_RESTOCK:
       default:
         return {
-          title: `A nearby pharmacy restocked ${medicineName}`,
-          description: `${nearest ?? 'A nearby pharmacy'} just refreshed its availability signal for this medicine.`,
+          // Named rather than called "nearby": generation has no location, so
+          // whether this pharmacy is near the patient is not something it can
+          // assert. The name is a fact; the proximity was a guess.
+          title: nearest
+            ? `${nearest} restocked ${medicineName}`
+            : `${medicineName} was restocked`,
+          description: `${nearest ?? 'A verified pharmacy'} just refreshed its availability signal for this medicine.`,
           actionLabel: 'View Pharmacies',
           actionKind: 'view',
           actionQuery: medicineName,
@@ -463,8 +491,16 @@ export class PatientSignalService {
     origin: { lat: number; lng: number } | null,
     maxDistance: number,
   ) {
-    const status = this.statusFor(s);
-    const best = this.bestSignal(s.medicine.availabilitySignals ?? [], origin);
+    // One set of signals answers every field on this card, so the band, the
+    // named pharmacy, the estimate and the timestamp can no longer disagree
+    // about which pharmacies they are describing.
+    const inRange = this.signalsInRange(
+      s.medicine.availabilitySignals ?? [],
+      origin,
+      maxDistance,
+    );
+    const status = this.statusFor(s, origin, maxDistance);
+    const best = this.bestSignal(inRange, origin);
     const pharmacy = best?.signal.pharmacy;
     const generic = s.medicine.genericName ?? s.medicine.canonicalName;
     const alternatives = (genericIndex.get(generic.toLowerCase()) ?? [])
@@ -478,7 +514,6 @@ export class PatientSignalService {
     // Out of range means there is no nearest, and null is what the client
     // renders as "none nearby".
     const distance = this.distanceFor(pharmacy, origin);
-    const inRange = origin == null || (distance != null && distance <= maxDistance);
 
     return {
       id: s.medicineId,
@@ -489,10 +524,14 @@ export class PatientSignalService {
       priority: s.priority.toLowerCase(),
       updated: best ? this.relativeTime(best.signal.computedAt) : 'No recent signal',
       nearest:
-        pharmacy && inRange && status !== 'out-of-stock'
+        pharmacy && status !== 'out-of-stock'
           ? {
               name: pharmacy.name,
               distance,
+              // An area-level pin makes `distance` a rough figure, and the card
+              // shows it as "~4 km" rather than quoting a tenth of a kilometre
+              // for a point nobody has actually located.
+              approximate: pharmacy.locationPrecision === LocationPrecision.APPROXIMATE,
               open: pharmacy.isParticipating || pharmacy.verificationStatus === 'VERIFIED',
               is24x7: pharmacy.reliabilityScore >= 0.9,
             }
@@ -569,10 +608,50 @@ export class PatientSignalService {
     return index;
   }
 
-  private statusFor(s: SavedWithSignals): PatientStatus {
-    const best = this.bestSignal(s.medicine.availabilitySignals ?? []);
+  /**
+   * The availability band this patient should be shown for a saved medicine.
+   *
+   * Scoped to the signals within reach of them, because the card states the
+   * band and "no nearby pharmacy has this" side by side, and unbounded they
+   * contradicted each other: a medicine stocked only in Hyderabad read
+   * "Running Low - 2-3 days" to a patient in Delhi whose pharmacy list beneath
+   * it was empty. Stock 1,200 km away is not stock the patient can act on, and
+   * an estimate of how long it will last there is not information about them.
+   *
+   * With no location shared, or no radius to apply, every signal is in scope -
+   * the same fallback the pharmacy list uses, and the same reason: nothing can
+   * be excluded for being far away when there is nothing to measure from.
+   */
+  private statusFor(
+    s: SavedWithSignals,
+    origin?: { lat: number; lng: number } | null,
+    maxDistance?: number,
+  ): PatientStatus {
+    const best = this.bestSignal(
+      this.signalsInRange(s.medicine.availabilitySignals ?? [], origin, maxDistance),
+      origin,
+    );
     if (!best) return 'out-of-stock';
     return CONFIDENCE_TO_STATUS[best.signal.confidence];
+  }
+
+  /**
+   * The signals a patient at `origin` could actually reach.
+   *
+   * A pharmacy with no coordinates is out of range rather than in it: nobody
+   * knows where it is, so it cannot be claimed as near anyone. Without an
+   * origin there is no range to be outside of and every signal is returned.
+   */
+  private signalsInRange(
+    signals: SignalWithPharmacy[],
+    origin?: { lat: number; lng: number } | null,
+    maxDistance?: number,
+  ): SignalWithPharmacy[] {
+    if (!origin || maxDistance == null) return signals;
+    return signals.filter((signal) => {
+      const distance = this.distanceFor(signal.pharmacy, origin);
+      return distance != null && distance <= maxDistance;
+    });
   }
 
   /**
