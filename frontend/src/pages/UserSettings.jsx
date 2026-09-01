@@ -5,20 +5,37 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { useLanguage, LANG_NAMES } from '@/providers/language-provider'
+import { applyPreferences, readPreferences, savePreferences } from '@/lib/a11y-preferences'
 import { Globe, Eye, Trash2, CheckCircle2 } from 'lucide-react'
 
 export default function UserSettings() {
   const [flashMsg, flash] = useFlash()
   const { language, setLanguage, t } = useLanguage()
   const [selectedLang, setSelectedLang] = useState(language)
-  const [prefs, setPrefs] = useState({ largeText: false, reduceMotion: false })
+  const [prefs, setPrefs] = useState(readPreferences)
   const [locationCleared, setLocationCleared] = useState(false)
 
   useEffect(() => {
     setSelectedLang(language)
   }, [language])
 
-  const toggle = (key) => setPrefs((prev) => ({ ...prev, [key]: !prev[key] }))
+  // The boot script in index.html already put these on <html> before paint.
+  // Re-applying on mount keeps the switches honest anywhere that script did not
+  // run — a test harness, or an embedded render.
+  useEffect(() => {
+    applyPreferences(prefs)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Each switch is persisted and applied on the spot — there is no save button
+  // here, and an accessibility setting that only lasts until the next reload is
+  // not an accessibility setting.
+  const toggle = (key) =>
+    setPrefs((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      savePreferences(next)
+      return next
+    })
 
   const handleApplyLanguage = () => {
     setLanguage(selectedLang)
@@ -93,36 +110,22 @@ export default function UserSettings() {
                 <span className="text-sm font-semibold text-foreground">{t('largerText', 'Larger text')}</span>
                 <span className="text-xs text-muted-foreground">{t('largerTextDesc', 'Increase label and body text size.')}</span>
               </div>
-              <div className="flex items-center gap-3">
-                {prefs.largeText && (
-                  <span className="text-xs font-semibold text-teal dark:text-emerald-400 bg-teal/10 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-teal/20 dark:border-emerald-800/40 transition-all duration-200">
-                    Coming soon
-                  </span>
-                )}
-                <Switch
-                  checked={prefs.largeText}
-                  onCheckedChange={() => toggle('largeText')}
-                  aria-label="Larger text"
-                />
-              </div>
+              <Switch
+                checked={prefs.largeText}
+                onCheckedChange={() => toggle('largeText')}
+                aria-label="Larger text"
+              />
             </div>
             <div className="flex items-center justify-between py-4">
               <div className="flex flex-col gap-0.5">
                 <span className="text-sm font-semibold text-foreground">{t('reduceMotion', 'Reduce motion')}</span>
                 <span className="text-xs text-muted-foreground">{t('reduceMotionDesc', 'Minimize animations and transitions.')}</span>
               </div>
-              <div className="flex items-center gap-3">
-                {prefs.reduceMotion && (
-                  <span className="text-xs font-semibold text-teal dark:text-emerald-400 bg-teal/10 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-teal/20 dark:border-emerald-800/40 transition-all duration-200">
-                    Coming soon
-                  </span>
-                )}
-                <Switch
-                  checked={prefs.reduceMotion}
-                  onCheckedChange={() => toggle('reduceMotion')}
-                  aria-label="Reduce motion"
-                />
-              </div>
+              <Switch
+                checked={prefs.reduceMotion}
+                onCheckedChange={() => toggle('reduceMotion')}
+                aria-label="Reduce motion"
+              />
             </div>
           </CardContent>
         </Card>

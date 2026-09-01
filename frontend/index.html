@@ -33,6 +33,23 @@
           root.classList.add(isDark ? 'dark' : 'light')
         } catch (e) {}
       })()
+
+      // Apply saved accessibility preferences before paint too, so larger text
+      // does not reflow the page a moment after it has been read. Mirrors
+      // src/lib/a11y-preferences.js — change both together.
+      ;(function () {
+        try {
+          var raw = localStorage.getItem('zoiko-a11y')
+          var prefs = raw ? JSON.parse(raw) : null
+          var reduceDefault = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          var root = document.documentElement
+          root.classList.toggle('a11y-large-text', !!(prefs && prefs.largeText))
+          root.classList.toggle(
+            'a11y-reduce-motion',
+            prefs ? !!prefs.reduceMotion : reduceDefault
+          )
+        } catch (e) {}
+      })()
     </script>
   </head>
   <body>
