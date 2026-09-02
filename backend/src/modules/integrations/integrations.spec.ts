@@ -97,6 +97,28 @@ describe('IntegrationsService — the real dependencies, not a catalogue of name
       expect(row.detail).toMatch(/40 delivered and 2 failed/);
     });
 
+    // NotificationDelivery is the template library's audit trail, and nothing
+    // else writes to it. The welcome, reset, invite and credentials mail that
+    // actually leaves this deployment goes out through MailService and records
+    // no row — so a count presented as all outbound email reads as an outage on
+    // any week the library happened not to fire.
+    it('says which mail the count covers, on both branches', async () => {
+      const idle = await find({ deliveries: { sent: 0, failed: 0 } }, 'smtp');
+      const busy = await find({ deliveries: { sent: 40, failed: 2 } }, 'smtp');
+
+      for (const row of [idle, busy]) {
+        expect(row.detail).toMatch(/template[ -]library/i);
+        expect(row.detail).toMatch(/sends directly and is not counted here/i);
+      }
+    });
+
+    it('never claims that no email at all has been sent', async () => {
+      // The old wording, which was false on any week that reset one password.
+      const row = await find({ deliveries: { sent: 0, failed: 0 } }, 'smtp');
+
+      expect(row.detail).not.toMatch(/nothing has been sent/i);
+    });
+
     it('is degraded when failures are not the minority', async () => {
       const row = await find({ deliveries: { sent: 1, failed: 9 } }, 'smtp');
 
@@ -113,7 +135,7 @@ describe('IntegrationsService — the real dependencies, not a catalogue of name
     it('does not imply health from an idle week', async () => {
       const row = await find({ deliveries: { sent: 0, failed: 0 } }, 'smtp');
 
-      expect(row.detail).toMatch(/Nothing has been sent/i);
+      expect(row.detail).toMatch(/No template-library mail in the last seven days/i);
     });
   });
 
