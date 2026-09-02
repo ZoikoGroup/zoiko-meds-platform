@@ -4,6 +4,7 @@ import {
   LocationPrecision,
   MedicinePriority,
   Prisma,
+  SafetyAlertKind,
   SignalNotification,
   SignalNotificationPreference,
   SignalNotificationType,
@@ -375,6 +376,11 @@ export class PatientSignalService {
     userId: string,
     prefs: SignalNotificationPreference,
   ): Promise<void> {
+    // The recipient group is applied first, and it is applied here: ALL_USERS is
+    // the only target that addresses patients, so a safety alert sent to
+    // pharmacy managers, enterprise admins or government partners reaches no
+    // patient however their toggles are set. Each user's own preference is then
+    // checked below, per broadcast.
     const broadcasts = await this.prisma.notification.findMany({
       where: {
         status: 'DISPATCHED',
@@ -386,9 +392,7 @@ export class PatientSignalService {
     });
 
     for (const b of broadcasts) {
-      const type = /recall/i.test(b.title)
-        ? SignalNotificationType.RECALL
-        : SignalNotificationType.SAFETY;
+      const type = this.safetyTypeOf(b);
       const dedupeKey = `broadcast:${b.id}`;
       if (!this.allows(prefs, type)) {
         await this.prisma.signalNotification.deleteMany({ where: { userId, dedupeKey } });
@@ -413,6 +417,35 @@ export class PatientSignalService {
         },
       });
     }
+  }
+
+  /**
+   * Which of the patient's two safety categories a broadcast belongs to.
+   *
+   * The administrator dispatching it says so, on the Safety Alert Type field
+   * the compose dialog requires for an emergency alert. Before that field
+   * existed this was `/recall/i` against the title, which made the wording of a
+   * heading decide which of a patient's toggles governed the broadcast: "Urgent
+   * product withdrawal" reached them as a government advisory, and a recall
+   * drill announcement reached them as a recall.
+   *
+   * The title test survives only as the reading for records filed before the
+   * column existed. They keep a null `safetyKind` and are classified the way
+   * they always were rather than being rewritten.
+   */
+  private safetyTypeOf(broadcast: {
+    title: string;
+    safetyKind: SafetyAlertKind | null;
+  }): SignalNotificationType {
+    if (broadcast.safetyKind === SafetyAlertKind.MEDICINE_RECALL) {
+      return SignalNotificationType.RECALL;
+    }
+    if (broadcast.safetyKind === SafetyAlertKind.GOVERNMENT_SAFETY) {
+      return SignalNotificationType.SAFETY;
+    }
+    return /recall/i.test(broadcast.title)
+      ? SignalNotificationType.RECALL
+      : SignalNotificationType.SAFETY;
   }
 
   /**

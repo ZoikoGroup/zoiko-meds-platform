@@ -137,6 +137,16 @@ export const updateVerification = (id, body) =>
 // --- Notifications -------------------------------------------------------
 export const listNotifications = () => apiFetch('/admin/notifications')
 
+/**
+ * Verification submissions waiting on a reviewer.
+ *
+ * The console bell read only the broadcast outbox above, so a pharmacy that
+ * uploaded its licence and submitted for verification notified nobody. Derived
+ * from the review queue, so it holds one entry per request needing review and
+ * cannot be duplicated by repeated saves.
+ */
+export const listAdminInbox = () => apiFetch('/admin/notifications/inbox')
+
 export const createNotification = (body) =>
   apiFetch('/admin/notifications', { method: 'POST', body })
 

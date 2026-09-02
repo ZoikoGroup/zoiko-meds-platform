@@ -14,6 +14,7 @@ import { NotificationController } from './notification/notification.controller';
 import { NotificationService } from './notification/notification.service';
 import { ReportsController } from './reports/reports.controller';
 import { ReportsService } from './reports/reports.service';
+import { ReportDataService } from './reports/report-data.service';
 import { OrganizationService } from './organization/organization.service';
 import { SecurityPostureService } from './security/security-posture.service';
 import { HelpResourcesService } from './help/help-resources.service';
@@ -48,6 +49,7 @@ import { GatewayTelemetryInterceptor } from './telemetry/gateway-telemetry.inter
     VerificationService,
     NotificationService,
     ReportsService,
+    ReportDataService,
     OrganizationService,
     SecurityPostureService,
     HelpResourcesService,

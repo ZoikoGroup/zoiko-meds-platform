@@ -4,6 +4,7 @@ import { ReportFormat, ReportScope, ReportStatus, ReportType } from '@prisma/cli
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { ReportsService, safeFilename } from './reports.service';
+import { ReportDataService } from './report-data.service';
 
 /**
  * The text a PDF actually draws.
@@ -66,14 +67,61 @@ const report = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function buildService(row: Record<string, unknown> = report()) {
-  const prisma = {
-    report: { findUnique: jest.fn().mockResolvedValue(row) },
+/**
+ * A database holding a small, known estate.
+ *
+ * The real ReportDataService runs against this rather than a stub, so these
+ * tests exercise the aggregate path the download actually takes — a stub would
+ * pass whatever the renderer did with the figures.
+ */
+function buildPrisma(row: Record<string, unknown>) {
+  return {
+    report: {
+      findUnique: jest.fn().mockResolvedValue(row),
+      count: jest.fn().mockResolvedValue(8),
+    },
+    availabilitySignal: {
+      count: jest.fn().mockResolvedValue(12),
+      groupBy: jest.fn(async ({ by }: any) => {
+        if (by[0] === 'confidence') {
+          return [
+            { confidence: 'HIGH', _count: { _all: 6 } },
+            { confidence: 'MODERATE', _count: { _all: 3 } },
+            { confidence: 'LOW', _count: { _all: 2 } },
+            { confidence: 'SUPPRESSED', _count: { _all: 1 } },
+          ];
+        }
+        // Distinct medicine / pharmacy ids: the row count is the answer.
+        return by[0] === 'medicineId'
+          ? [{ medicineId: 'm1' }, { medicineId: 'm2' }, { medicineId: 'm3' }]
+          : [{ pharmacyId: 'p1' }, { pharmacyId: 'p2' }];
+      }),
+      aggregate: jest.fn().mockResolvedValue({
+        _min: { computedAt: new Date('2026-08-20T09:00:00Z') },
+        _max: { computedAt: new Date('2026-09-02T11:30:00Z') },
+      }),
+    },
+    medicineEntity: { count: jest.fn().mockResolvedValue(74) },
+    pharmacy: { count: jest.fn().mockResolvedValue(8) },
+    verificationRequest: { count: jest.fn().mockResolvedValue(2) },
+    jurisdiction: { count: jest.fn().mockResolvedValue(0) },
+    signalEvent: {
+      groupBy: jest.fn().mockResolvedValue([
+        { type: 'SEARCH', _count: { _all: 40 } },
+        { type: 'ZERO_RESULT', _count: { _all: 5 } },
+      ]),
+    },
+    auditLog: { count: jest.fn().mockResolvedValue(311) },
   };
+}
+
+function buildService(row: Record<string, unknown> = report()) {
+  const prisma = buildPrisma(row);
   const audit = { write: jest.fn() };
   const service = new ReportsService(
     prisma as unknown as PrismaService,
     audit as unknown as AuditWriter,
+    new ReportDataService(prisma as unknown as PrismaService),
   );
   return { service, prisma, audit };
 }
@@ -177,7 +225,9 @@ describe('the other formats still work', () => {
     const { body } = await download(report({ format: ReportFormat.CSV }));
     const text = body.toString('utf8');
 
-    expect(text.split('\n')[0]).toBe('Field,Value');
+    // Section is now a column, so the sheet stays flat enough to filter or
+    // pivot while carrying the aggregate blocks as well as the report's facts.
+    expect(text.split('\n')[0]).toBe('Section,Field,Value');
     expect(text).toContain('Data quality report');
     expect(text).toContain('Executive Briefing');
   });

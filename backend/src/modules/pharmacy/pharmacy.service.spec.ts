@@ -108,9 +108,17 @@ describe('PharmacyService self-service profile onboarding', () => {
       notification: { findMany: jest.fn().mockResolvedValue([]) },
       verificationRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn(),
+        // Prisma's create returns the row it created; the submission reads the
+        // new request's id from it to attach the licence document.
+        create: jest.fn(async ({ data }: any) => ({ id: 'req_new', ...data })),
         update: jest.fn(),
         updateMany: jest.fn(),
+      },
+      verificationDocument: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+        upsert: jest.fn(),
       },
       jurisdiction: {
         upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN', name: 'India' }),

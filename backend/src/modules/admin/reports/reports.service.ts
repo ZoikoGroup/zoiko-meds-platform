@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, NotImplementedException } from '@nestjs/common';
 import { Report, ReportFormat, ReportScope, ReportStatus } from '@prisma/client';
 import { renderReportPdf, humanise } from './report-pdf';
+import { ReportContent, ReportDataService } from './report-data.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { CreateReportDto } from './dto/create-report.dto';
@@ -42,6 +43,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditWriter,
+    private readonly data: ReportDataService,
   ) {}
 
   async list() {
@@ -153,6 +155,13 @@ export class ReportsService {
     );
 
     const base = safeFilename(report.name);
+
+    // The same aggregate figures behind every format, so a PDF and the CSV of
+    // the same report cannot state different numbers. Computed once, after the
+    // audit entry, and only for the formats that carry it.
+    const content =
+      report.format === ReportFormat.XLSX ? null : await this.data.build(report);
+
     switch (report.format) {
       case ReportFormat.PDF:
         return {
@@ -161,7 +170,11 @@ export class ReportsService {
           body: Buffer.from(
             await renderReportPdf(report, {
               generatedAt,
-              metrics: [],
+              purpose: content!.purpose,
+              summary: content!.summary,
+              keyMetrics: content!.keyMetrics,
+              sections: content!.sections,
+              unavailable: content!.unavailable,
               governance: GOVERNANCE_STATEMENT,
             }),
           ),
@@ -171,7 +184,7 @@ export class ReportsService {
         return {
           filename: `${base}.csv`,
           contentType: 'text/csv; charset=utf-8',
-          body: Buffer.from(this.summaryCsv(report, generatedAt), 'utf8'),
+          body: Buffer.from(this.summaryCsv(report, generatedAt, content!), 'utf8'),
         };
 
       case ReportFormat.JSON:
@@ -179,7 +192,7 @@ export class ReportsService {
           filename: `${base}.json`,
           contentType: 'application/json; charset=utf-8',
           body: Buffer.from(
-            JSON.stringify(this.envelope(report, generatedAt), null, 2),
+            JSON.stringify(this.envelope(report, generatedAt, content!), null, 2),
             'utf8',
           ),
         };
@@ -194,33 +207,80 @@ export class ReportsService {
     }
   }
 
-  /** The report's own facts, as a spreadsheet-readable summary. */
-  private summaryCsv(report: Report, generatedAt: Date): string {
-    const rows: [string, string][] = [
-      ['Report', report.name],
-      ['Generated (UTC)', generatedAt.toISOString()],
-      ['Type', humanise(report.type)],
-      ['Scope', humanise(report.scope)],
-      ['Owner', report.owner],
-      ['Status', humanise(report.status)],
-      ...GOVERNANCE_STATEMENT.map((line): [string, string] => ['Governance', line]),
+  /**
+   * The report's facts and figures, as a spreadsheet-readable summary.
+   *
+   * Section is a column rather than a header row, so the file stays a flat
+   * key/value sheet a filter or pivot can read — which is what a CSV export of
+   * a report is for.
+   */
+  private summaryCsv(report: Report, generatedAt: Date, content: ReportContent): string {
+    const rows: [string, string, string][] = [
+      ['Report details', 'Report', report.name],
+      ['Report details', 'Generated (UTC)', generatedAt.toISOString()],
+      ['Report details', 'Type', humanise(report.type)],
+      ['Report details', 'Scope', humanise(report.scope)],
+      ['Report details', 'Owner', report.owner],
+      ['Report details', 'Status', humanise(report.status)],
+      ...content.purpose.map((line, i): [string, string, string] => [
+        'Purpose / intended use',
+        `Paragraph ${i + 1}`,
+        line,
+      ]),
+      ...content.summary.map((line, i): [string, string, string] => [
+        'Executive summary',
+        `Paragraph ${i + 1}`,
+        line,
+      ]),
+      ...content.keyMetrics.map((m): [string, string, string] => [
+        'Key metrics',
+        m.label,
+        m.value,
+      ]),
+      ...content.sections.flatMap((section) =>
+        section.metrics.map((m): [string, string, string] => [
+          section.heading,
+          m.label,
+          m.value,
+        ]),
+      ),
+      ...(content.unavailable
+        ? ([['Detailed analytics', 'Availability', content.unavailable]] as [
+            string,
+            string,
+            string,
+          ][])
+        : []),
+      ...GOVERNANCE_STATEMENT.map((line): [string, string, string] => [
+        'Governance',
+        'Rule',
+        line,
+      ]),
     ];
     const escape = (value: string) =>
       /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-    return ['Field,Value', ...rows.map(([k, v]) => `${escape(k)},${escape(v)}`)].join('\n');
+    return [
+      'Section,Field,Value',
+      ...rows.map(([s, k, v]) => `${escape(s)},${escape(k)},${escape(v)}`),
+    ].join('\n');
   }
 
   /** The payload a JSON export carries. */
-  private envelope(report: Report, generatedAt: Date) {
+  private envelope(report: Report, generatedAt: Date, content: ReportContent) {
     return {
       report: this.toDto(report),
       generatedAt: generatedAt.toISOString(),
+      purpose: content.purpose,
+      summary: content.summary,
+      keyMetrics: content.keyMetrics,
+      sections: content.sections,
+      ...(content.unavailable ? { detailedAnalytics: content.unavailable } : {}),
       governance: {
         aggregateOnly: true,
         containsPhi: false,
         containsExactStock: false,
+        statement: GOVERNANCE_STATEMENT,
       },
-      data: [],
     };
   }
 
