@@ -1,4 +1,9 @@
-import { AvailabilityConfidence, Prisma, VerificationStatus } from '@prisma/client';
+import {
+  AvailabilityConfidence,
+  CommercialClassification,
+  Prisma,
+  VerificationStatus,
+} from '@prisma/client';
 
 /**
  * ZoikoAvail™ — the single rule that decides which availability records a
@@ -17,6 +22,28 @@ import { AvailabilityConfidence, Prisma, VerificationStatus } from '@prisma/clie
  * into identities; availability is only ever looked up by identity id.
  */
 
+/**
+ * Classifications that mean somebody runs this pharmacy on ZoikoMeds.
+ *
+ * An allowlist rather than a list of exclusions: the enum gains values over
+ * time, and a new one — another sandbox, another billing state — should have to
+ * be named here before patients are shown it, not become visible by default.
+ *
+ * Left out on purpose:
+ *   DIRECTORY_UNCLAIMED     preloaded record; nobody has claimed it
+ *   CLAIMED_PENDING         claimed, but the claimant's authority is unproven
+ *   VERIFICATION_IN_REVIEW  still being decided
+ *   INTERNAL / DEMO / QA / STAGING / PARTNER_SANDBOX   not a real pharmacy
+ *   SUSPENDED_COMPLIANCE / REJECTED / CLOSED           no longer trading here
+ */
+export const PATIENT_VISIBLE_CLASSIFICATIONS: CommercialClassification[] = [
+  CommercialClassification.VERIFIED_NETWORK_CORE,
+  CommercialClassification.PRO_EVALUATION,
+  CommercialClassification.PRO_ACTIVE,
+  CommercialClassification.ENTERPRISE_CONTRACT_ACTIVE,
+  CommercialClassification.PILOT_NON_BILLABLE,
+];
+
 /** A pharmacy whose signals may be shown publicly. */
 export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
   // Not yet verified, rejected or suspended: not part of the verified network,
@@ -25,6 +52,14 @@ export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
   // A pharmacy that has left the network keeps its rows (it may come back) but
   // stops speaking to patients — otherwise its last signal reads as current.
   isParticipating: true,
+  // Claiming and verification answer different questions, and this rule needs
+  // both. Approving a licence says the pharmacy is real; it does not say anyone
+  // has taken responsibility for what it reports. A preloaded directory record
+  // that a reviewer approved was appearing in patient search as though its
+  // operator were standing behind the stock levels, when nobody had claimed it
+  // at all (MSA-54). Approval deliberately does not promote the classification,
+  // so the claim has to happen on its own.
+  commercialClassification: { in: PATIENT_VISIBLE_CLASSIFICATIONS },
 };
 
 /**

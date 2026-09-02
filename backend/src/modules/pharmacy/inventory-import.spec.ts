@@ -66,6 +66,9 @@ function build() {
       deleteMany: jest.fn(),
     },
     pharmacy: {
+      // Reporting stock promotes an unclaimed directory record; the write is
+      // conditional, so it no-ops for a pharmacy that is already claimed.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       findUnique: jest.fn().mockResolvedValue({ name: 'Apollo Pharmacy', jurisdictionId: 'jur_in' }),
     },
   };
