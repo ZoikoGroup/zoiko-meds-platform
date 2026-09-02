@@ -197,275 +197,292 @@ export default function VerificationCenter() {
           <Loader2 className="size-4 animate-spin" /> Loading verification queue…
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* Left: queue + tab filters */}
-          <div className="lg:col-span-5 flex flex-col gap-4">
-            <Card className="border-border/70 bg-card flex-1">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base font-semibold">Verification Queue</CardTitle>
-                  <Badge variant="outline" className="text-xs font-medium">
-                    {counts.PENDING} Pending
-                  </Badge>
-                </div>
-                <CardDescription>Filter requests by compliance status</CardDescription>
-
-                {/* Queue Filter Tabs */}
-                <div className="flex flex-wrap gap-1 pt-3 border-t mt-2">
-                  <button
-                    onClick={() => setQueueTab('PENDING')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                      queueTab === 'PENDING'
-                        ? 'bg-primary text-white'
-                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
-                    }`}
-                  >
-                    <Clock className="size-3" />
-                    Pending ({counts.PENDING})
-                  </button>
-                  <button
-                    onClick={() => setQueueTab('APPROVED')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                      queueTab === 'APPROVED'
-                        ? 'bg-success text-white'
-                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
-                    }`}
-                  >
-                    <CheckCircle className="size-3" />
-                    Approved ({counts.APPROVED})
-                  </button>
-                  <button
-                    onClick={() => setQueueTab('REJECTED')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                      queueTab === 'REJECTED'
-                        ? 'bg-danger text-white'
-                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
-                    }`}
-                  >
-                    <XCircle className="size-3" />
-                    Rejected ({counts.REJECTED})
-                  </button>
-                  <button
-                    onClick={() => setQueueTab('ALL')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                      queueTab === 'ALL'
-                        ? 'bg-foreground text-background'
-                        : 'bg-muted/60 text-muted-foreground hover:bg-muted'
-                    }`}
-                  >
-                    <ListFilter className="size-3" />
-                    All ({counts.ALL})
-                  </button>
-                </div>
-              </CardHeader>
-
-              <CardContent className="flex flex-col gap-2 p-3 max-h-[600px] overflow-y-auto">
-                {filteredRequests.length === 0 ? (
-                  <div className="p-8 text-sm text-muted-foreground text-center flex flex-col items-center justify-center gap-2">
-                    <CheckCircle className="size-8 text-success/70" />
-                    <span>No {queueTab.toLowerCase()} verification requests.</span>
+        <div className="@container">
+          {/*
+            Two columns only once the workspace column can actually hold the
+            review actions on one line. `lg:grid-cols-12` was keyed to the
+            viewport, so the 20rem Live Telemetry panel narrowed the col-span-7
+            workspace to ~306px at 1280px without moving the breakpoint — and
+            the three action buttons, which together need about 500px and are
+            all `whitespace-nowrap shrink-0`, ran out of the card's left edge
+            into the queue column. 60rem is the width at which col-span-7
+            clears 550px.
+          */}
+          <div className="grid grid-cols-1 gap-6 @min-[60rem]:grid-cols-12">
+            {/* Left: queue + tab filters */}
+            <div className="@min-[60rem]:col-span-5 flex min-w-0 flex-col gap-4">
+              <Card className="border-border/70 bg-card flex-1">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-semibold">Verification Queue</CardTitle>
+                    <Badge variant="outline" className="text-xs font-medium">
+                      {counts.PENDING} Pending
+                    </Badge>
                   </div>
-                ) : (
-                  filteredRequests.map((r) => {
-                    const isActive = r.id === activeId
-                    return (
-                      <button
-                        key={r.id}
-                        onClick={() => {
-                          setActiveId(r.id)
-                          setReviewNote('')
-                        }}
-                        className={`w-full text-left rounded-lg p-3.5 border transition-all flex flex-col gap-1.5 ${
-                          isActive
-                            ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                            : 'border-border/80 hover:bg-accent/50'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-sm text-foreground truncate max-w-[180px]">
-                            {r.pharmacy}
-                          </span>
-                          <Badge variant={STATUS_VARIANT[r.status] || 'secondary'}>
-                            {STATUS_LABEL[r.status] || r.status}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>License: {r.licenseNumber}</span>
-                          <span>{new Date(r.date).toLocaleDateString()}</span>
-                        </div>
-                      </button>
-                    )
-                  })
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                  <CardDescription>Filter requests by compliance status</CardDescription>
 
-          {/* Right: workspace */}
-          <div className="lg:col-span-7">
-            {activeRequest ? (
-              <Card className="border-border/70 bg-card h-full flex flex-col justify-between">
-                <div>
-                  <CardHeader className="border-b pb-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <CardTitle className="text-lg font-semibold">{activeRequest.pharmacy}</CardTitle>
-                          <Badge variant={STATUS_VARIANT[activeRequest.status] || 'secondary'}>
-                            {STATUS_LABEL[activeRequest.status] || activeRequest.status}
-                          </Badge>
-                        </div>
-                        <CardDescription>License validation request #{activeRequest.id.slice(-6)}</CardDescription>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="h-fit">
-                          Assigned: {activeRequest.reviewer || 'Unassigned'}
-                        </Badge>
-                        {/* The governance record this decision writes to. */}
-                        {activeRequest.pharmacyId && (
-                          <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
-                            <Link to={pharmacyRecordPath(activeRequest.pharmacyId)}>
-                              <Building2 className="size-3.5" />
-                              View pharmacy record
-                            </Link>
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="pt-6 flex flex-col gap-5 text-sm">
-                    <div className="grid grid-cols-2 gap-4 border-b pb-5">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs text-muted-foreground">Submitting Executive</span>
-                        <span className="font-semibold text-foreground flex items-center gap-1">
-                          <User className="size-4 text-muted-foreground shrink-0" />
-                          {activeRequest.submittedBy}
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs text-muted-foreground">License Registration</span>
-                        <code className="text-xs font-semibold bg-muted px-1.5 py-0.5 rounded w-fit">
-                          {activeRequest.licenseNumber}
-                        </code>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2.5 border-b pb-5">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                        <MapPin className="size-3.5" /> Pharmacy Profile Address
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-muted/20 p-3.5 rounded-lg border border-border/80">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-muted-foreground">Address Line</span>
-                          <span className="font-medium text-foreground">{activeRequest.addressLine1 || '—'}</span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-muted-foreground">City</span>
-                          <span className="font-medium text-foreground">{activeRequest.city || '—'}</span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-muted-foreground">State / Region</span>
-                          <span className="font-medium text-foreground">{activeRequest.region || '—'}</span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-muted-foreground">Postal Code</span>
-                          <span className="font-medium text-foreground">{activeRequest.postalCode || '—'}</span>
-                        </div>
-                        <div className="flex flex-col gap-0.5 sm:col-span-2">
-                          <span className="text-muted-foreground">Country</span>
-                          <span className="font-medium text-foreground">{activeRequest.country || '—'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Uploaded Documents</h4>
-                      <div className="flex items-center justify-between rounded-lg border border-border/80 bg-muted/20 p-3">
-                        <div className="flex items-center gap-2.5">
-                          <FileText className="size-5 text-primary shrink-0" />
-                          <div className="flex flex-col">
-                            <span className="font-medium text-xs text-foreground">
-                              {activeRequest.docName || 'No document'}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground">
-                              {activeRequest.docName
-                                ? 'Uploaded by the pharmacy · type verified from the file itself'
-                                : 'The pharmacy has not attached a document to this request'}
-                            </span>
-                          </div>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs flex gap-1"
-                          disabled={!activeRequest.docName || openingDoc}
-                          onClick={() => openDocument(activeRequest)}
-                        >
-                          <Paperclip className="size-3.5" />
-                          View File
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Current Reviewer Notes</h4>
-                      <p className="rounded-lg bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-line">
-                        {activeRequest.notes || 'No notes yet.'}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-2 pt-2">
-                      <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                        <MessageSquare className="size-4" />
-                        Add Reviewer Action Note
-                      </label>
-                      <Input
-                        value={reviewNote}
-                        onChange={(e) => setReviewNote(e.target.value)}
-                        placeholder="Add compliance notes, clarification inquiries, or boarding details..."
-                        className="text-xs py-2 h-9"
-                      />
-                    </div>
-                  </CardContent>
-                </div>
-
-                <CardHeader className="border-t pt-4">
-                  <div className="flex items-center justify-end gap-3.5">
-                    <Button
-                      variant="outline"
-                      disabled={busy || activeRequest.status === 'REJECTED'}
-                      className="border-danger/30 text-danger hover:bg-danger/5"
-                      onClick={() => handleAction('REJECTED')}
+                  {/* Queue Filter Tabs */}
+                  <div className="flex flex-wrap gap-1 pt-3 border-t mt-2">
+                    <button
+                      onClick={() => setQueueTab('PENDING')}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                        queueTab === 'PENDING'
+                          ? 'bg-primary text-white'
+                          : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                      }`}
                     >
-                      <X className="size-4 shrink-0" />
-                      Reject Application
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      className="border-warning/30 text-warning hover:bg-warning/5"
-                      onClick={() => handleAction('REQUEST_INFO')}
+                      <Clock className="size-3" />
+                      Pending ({counts.PENDING})
+                    </button>
+                    <button
+                      onClick={() => setQueueTab('APPROVED')}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                        queueTab === 'APPROVED'
+                          ? 'bg-success text-white'
+                          : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                      }`}
                     >
-                      <AlertCircle className="size-4 shrink-0" />
-                      Request Info
-                    </Button>
-                    <Button
-                      className="bg-success text-white hover:bg-success/95"
-                      disabled={busy || activeRequest.status === 'APPROVED'}
-                      onClick={() => handleAction('APPROVED')}
+                      <CheckCircle className="size-3" />
+                      Approved ({counts.APPROVED})
+                    </button>
+                    <button
+                      onClick={() => setQueueTab('REJECTED')}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                        queueTab === 'REJECTED'
+                          ? 'bg-danger text-white'
+                          : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                      }`}
                     >
-                      {busy ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 shrink-0" />}
-                      Approve Pharmacy
-                    </Button>
+                      <XCircle className="size-3" />
+                      Rejected ({counts.REJECTED})
+                    </button>
+                    <button
+                      onClick={() => setQueueTab('ALL')}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                        queueTab === 'ALL'
+                          ? 'bg-foreground text-background'
+                          : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <ListFilter className="size-3" />
+                      All ({counts.ALL})
+                    </button>
                   </div>
                 </CardHeader>
+
+                <CardContent className="flex flex-col gap-2 p-3 max-h-[600px] overflow-y-auto">
+                  {filteredRequests.length === 0 ? (
+                    <div className="p-8 text-sm text-muted-foreground text-center flex flex-col items-center justify-center gap-2">
+                      <CheckCircle className="size-8 text-success/70" />
+                      <span>No {queueTab.toLowerCase()} verification requests.</span>
+                    </div>
+                  ) : (
+                    filteredRequests.map((r) => {
+                      const isActive = r.id === activeId
+                      return (
+                        <button
+                          key={r.id}
+                          onClick={() => {
+                            setActiveId(r.id)
+                            setReviewNote('')
+                          }}
+                          className={`w-full text-left rounded-lg p-3.5 border transition-all flex flex-col gap-1.5 ${
+                            isActive
+                              ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                              : 'border-border/80 hover:bg-accent/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-sm text-foreground truncate max-w-[180px]">
+                              {r.pharmacy}
+                            </span>
+                            <Badge variant={STATUS_VARIANT[r.status] || 'secondary'}>
+                              {STATUS_LABEL[r.status] || r.status}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>License: {r.licenseNumber}</span>
+                            <span>{new Date(r.date).toLocaleDateString()}</span>
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
+                </CardContent>
               </Card>
-            ) : (
-              <div className="h-full flex items-center justify-center border border-dashed rounded-lg p-10 text-muted-foreground">
-                Select an application record to review compliance files.
-              </div>
-            )}
+            </div>
+
+            {/* Right: workspace */}
+            <div className="min-w-0 @min-[60rem]:col-span-7">
+              {activeRequest ? (
+                <Card className="border-border/70 bg-card h-full flex flex-col justify-between">
+                  <div>
+                    <CardHeader className="border-b pb-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <CardTitle className="text-lg font-semibold">{activeRequest.pharmacy}</CardTitle>
+                            <Badge variant={STATUS_VARIANT[activeRequest.status] || 'secondary'}>
+                              {STATUS_LABEL[activeRequest.status] || activeRequest.status}
+                            </Badge>
+                          </div>
+                          <CardDescription>License validation request #{activeRequest.id.slice(-6)}</CardDescription>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="h-fit">
+                            Assigned: {activeRequest.reviewer || 'Unassigned'}
+                          </Badge>
+                          {/* The governance record this decision writes to. */}
+                          {activeRequest.pharmacyId && (
+                            <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                              <Link to={pharmacyRecordPath(activeRequest.pharmacyId)}>
+                                <Building2 className="size-3.5" />
+                                View pharmacy record
+                              </Link>
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="pt-6 flex flex-col gap-5 text-sm">
+                      <div className="grid grid-cols-2 gap-4 border-b pb-5">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs text-muted-foreground">Submitting Executive</span>
+                          <span className="font-semibold text-foreground flex items-center gap-1">
+                            <User className="size-4 text-muted-foreground shrink-0" />
+                            {activeRequest.submittedBy}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs text-muted-foreground">License Registration</span>
+                          <code className="text-xs font-semibold bg-muted px-1.5 py-0.5 rounded w-fit">
+                            {activeRequest.licenseNumber}
+                          </code>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2.5 border-b pb-5">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <MapPin className="size-3.5" /> Pharmacy Profile Address
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-muted/20 p-3.5 rounded-lg border border-border/80">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-muted-foreground">Address Line</span>
+                            <span className="font-medium text-foreground">{activeRequest.addressLine1 || '—'}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-muted-foreground">City</span>
+                            <span className="font-medium text-foreground">{activeRequest.city || '—'}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-muted-foreground">State / Region</span>
+                            <span className="font-medium text-foreground">{activeRequest.region || '—'}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-muted-foreground">Postal Code</span>
+                            <span className="font-medium text-foreground">{activeRequest.postalCode || '—'}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5 sm:col-span-2">
+                            <span className="text-muted-foreground">Country</span>
+                            <span className="font-medium text-foreground">{activeRequest.country || '—'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Uploaded Documents</h4>
+                        <div className="flex items-center justify-between rounded-lg border border-border/80 bg-muted/20 p-3">
+                          <div className="flex items-center gap-2.5">
+                            <FileText className="size-5 text-primary shrink-0" />
+                            <div className="flex flex-col">
+                              <span className="font-medium text-xs text-foreground">
+                                {activeRequest.docName || 'No document'}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {activeRequest.docName
+                                  ? 'Uploaded by the pharmacy · type verified from the file itself'
+                                  : 'The pharmacy has not attached a document to this request'}
+                              </span>
+                            </div>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs flex gap-1"
+                            disabled={!activeRequest.docName || openingDoc}
+                            onClick={() => openDocument(activeRequest)}
+                          >
+                            <Paperclip className="size-3.5" />
+                            View File
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Current Reviewer Notes</h4>
+                        <p className="rounded-lg bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-line">
+                          {activeRequest.notes || 'No notes yet.'}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-2 pt-2">
+                        <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <MessageSquare className="size-4" />
+                          Add Reviewer Action Note
+                        </label>
+                        <Input
+                          value={reviewNote}
+                          onChange={(e) => setReviewNote(e.target.value)}
+                          placeholder="Add compliance notes, clarification inquiries, or boarding details..."
+                          className="text-xs py-2 h-9"
+                        />
+                      </div>
+                    </CardContent>
+                  </div>
+
+                  <CardHeader className="border-t pt-4">
+                    {/*
+                      Wraps. Every Button is `whitespace-nowrap shrink-0`, so with
+                      no wrap the row could only overflow — and `justify-end` sent
+                      the overflow out of the left edge, over the queue column.
+                    */}
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <Button
+                        variant="outline"
+                        disabled={busy || activeRequest.status === 'REJECTED'}
+                        className="border-danger/30 text-danger hover:bg-danger/5"
+                        onClick={() => handleAction('REJECTED')}
+                      >
+                        <X className="size-4 shrink-0" />
+                        Reject Application
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        className="border-warning/30 text-warning hover:bg-warning/5"
+                        onClick={() => handleAction('REQUEST_INFO')}
+                      >
+                        <AlertCircle className="size-4 shrink-0" />
+                        Request Info
+                      </Button>
+                      <Button
+                        className="bg-success text-white hover:bg-success/95"
+                        disabled={busy || activeRequest.status === 'APPROVED'}
+                        onClick={() => handleAction('APPROVED')}
+                      >
+                        {busy ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 shrink-0" />}
+                        Approve Pharmacy
+                      </Button>
+                    </div>
+                  </CardHeader>
+                </Card>
+              ) : (
+                <div className="h-full flex items-center justify-center border border-dashed rounded-lg p-10 text-muted-foreground">
+                  Select an application record to review compliance files.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -36,9 +36,16 @@ export const FORM_RE = new RegExp(`\\b(?:${FORM_WORDS})\\b\\.?`, 'i')
 /** A dosage form used as a leading prefix — a strong medicine signal. */
 const FORM_PREFIX_RE = new RegExp(`^\\s*(?:${FORM_WORDS})\\b\\.?`, 'i')
 
-/** Numeric strength with a unit, or a ratio such as 250/5. */
+/**
+ * Numeric strength with a unit, a percentage, or a ratio such as 250/5.
+ *
+ * The percentage arm carries its optional w/w, w/v or v/v tail. Without it
+ * "Zimig 1% w/w Cream" matched only "1%": the tail then survived the strip that
+ * removes strength from the name, lost its slash to the punctuation pass, and
+ * the medicine came out as "Zimig w w" with no strength at all.
+ */
 export const STRENGTH_RE =
-  /(\b\d+(?:\.\d+)?\s*(?:mg|mcg|ug|g|gm|kg|ml|l|iu|u|%)\b)|(\(\s*\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\s*\))|(\b\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g)\b)/i
+  /(\b\d+(?:\.\d+)?\s*(?:mg|mcg|ug|g|gm|iu|u)\s*\/\s*(?:\d+(?:\.\d+)?\s*)?(?:ml|l|g|kg|dose|doses|puff|puffs|tab|tablet|actuation)\b)|(\b\d+(?:\.\d+)?\s*%(?:\s*(?:w\s*\/\s*w|w\s*\/\s*v|v\s*\/\s*v))?)|(\b\d+(?:\.\d+)?\s*(?:mg|mcg|ug|g|gm|kg|ml|l|iu|u)\b)|(\(\s*\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\s*\))|(\b\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g)\b)/i
 
 /** Latin and numeric dosing frequencies. 1-0-1 is the numeric convention. */
 export const FREQUENCY_RE =
@@ -263,7 +270,70 @@ const CLOCK_RE = /\b\d{1,2}\s*[:.]\s*\d{2}\s*(?:am|pm|hrs)?\b/i
 
 /** Non-medicine clinical section headings. */
 const CLINICAL_SECTION_RE =
-  /^\s*(diagnosis|dx|complaints?|c\/o|chief\s+complaints?|history|h\/o|examination|o\/e|findings?|investigations?|labs?|vitals?|allergies|impression|plan|follow[\s-]?up|review|remarks?|notes?|instructions?)\b\s*[:.\-–]?/i
+  /^\s*(diagnosis|dx|complaints?|c\/o|chief\s+complaints?|symptoms?|hopi|history|h\/o|examination|o\/e|findings?|investigations?|labs?|lab\s+tests?|vitals?|allergies|impression|plan|follow[\s-]?up|review|remarks?|notes?|precautions?|side\s+effects?|(?:general\s+)?instructions?|(?:general\s+)?advice)\b\s*[:.\-–]?/i
+
+// --- Prose that shares a prescription with the medicines --------------------
+
+/**
+ * Text that is about a medicine without being one.
+ *
+ * A prescription's instruction column, its symptom list and its investigations
+ * are all name-shaped: capitalised, short, no punctuation. The candidate tiers
+ * accepted them for exactly that reason — "Avoid alcohol", "Keep area dry",
+ * "Weekly once", "itching and redness" and "Kidney Function Test" all reached
+ * the confirmation card as medicines to check against the prescription.
+ *
+ * Recognised by structure rather than by a list of phrases: an instruction opens
+ * with an imperative, a schedule opens with a cadence word, an investigation
+ * ends in the name of a test. The vocabularies below are the words those shapes
+ * are built from, not an attempt to enumerate the sentences.
+ */
+
+/** An imperative opener — the grammar of an instruction. */
+const INSTRUCTION_VERB_RE =
+  /^\s*(?:apply|take|taken|avoid|keep|use|using|do\s+not|don'?t|continue|stop|drink|eat|rinse|gargle|shake|store|maintain|follow|report|repeat|check|monitor|consult|revisit|return|wash|clean|cover|elevate|rest|sip|swallow|chew|dissolve|inhale|instil|instill|massage|dab)\b/i
+
+/** Cadence words a schedule opens with. Fuzzy-matched for OCR slips. */
+const SCHEDULE_WORDS = [
+  'daily', 'weekly', 'monthly', 'nightly', 'morning', 'afternoon', 'evening',
+  'night', 'bedtime', 'once', 'twice', 'thrice', 'alternate', 'hourly',
+]
+
+/** The name of an investigation, which is what these lines end with. */
+const INVESTIGATION_RE =
+  /\b(?:function\s+tests?|tests?|profile|panel|scan|x-?ray|ultrasound|biopsy|culture|count|levels?|screening)\s*$/i
+
+/** Complaint vocabulary — a symptom line, not a product. */
+const SYMPTOM_RE =
+  /\b(?:itching|itch|redness|swelling|pain|fever|rash|burning|dryness|irritation|nausea|vomiting|cough|headache|dizziness|weakness|soreness|bleeding|discharge|inflammation)\b/i
+
+/** Is the first word a cadence word, allowing one OCR slip ("Daly")? */
+function opensWithSchedule(text) {
+  const first = (text.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '')
+  if (!first || first.length < 4) return false
+  return SCHEDULE_WORDS.some((word) => withinOneEdit(first, word))
+}
+
+/**
+ * Is this line prose about the treatment rather than a medicine in it?
+ *
+ * Guarded on dosage evidence: a line carrying a strength or a dosage form is a
+ * medicine line whatever else it says, so "Pain Relief Gel 30 g" and
+ * "Cough syrup 100ml" are never rejected here. Only text with no dosage
+ * evidence at all is judged on its grammar.
+ */
+export function isNonMedicineProse(line) {
+  const text = toAscii(line ?? '').trim()
+  if (!text) return false
+  if (STRENGTH_RE.test(text) || FORM_RE.test(text)) return false
+
+  return (
+    INSTRUCTION_VERB_RE.test(text) ||
+    opensWithSchedule(text) ||
+    INVESTIGATION_RE.test(text) ||
+    SYMPTOM_RE.test(text)
+  )
+}
 
 /** Headings that introduce the medicine list. */
 const MEDICINE_SECTION_RE =
@@ -354,6 +424,10 @@ export function scoreLine(line, { inMedicineSection = false } = {}) {
   if (hasFieldLabel(text)) score -= 5
   // A label with no colon carries the same weight as one with it.
   if (isFieldLabelLine(text)) score -= 5
+  // An instruction, a schedule, a symptom or an investigation. Weighted to
+  // outrun the +2 a line gets merely for sitting in the medicine section, which
+  // is what carried the instruction column into the results.
+  if (isNonMedicineProse(text)) score -= 6
   if (CREDENTIAL_RE.test(text)) score -= 4
   if (ORG_RE.test(text)) score -= 3
   if (DATE_RE.test(text)) score -= 3
@@ -405,6 +479,7 @@ export function isPlausibleMedicineName(line) {
   if (
     hasFieldLabel(line) ||
     isFieldLabelLine(line) ||
+    isNonMedicineProse(line) ||
     CREDENTIAL_RE.test(line) ||
     ORG_RE.test(line) ||
     ADDRESS_RE.test(line) ||
