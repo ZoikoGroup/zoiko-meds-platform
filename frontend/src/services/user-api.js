@@ -22,16 +22,38 @@ export const listNearbyPharmacies = (maxDistance) =>
 export const getUserOverview = () => apiFetch('/me/overview')
 
 // --- Saved medicines -----------------------------------------------------
-export const listSaved = () => apiFetch('/me/saved')
+/**
+ * The medicines this patient follows, each with the verified pharmacies near
+ * them that stock it. `params` carries the caller's location (lat/lng or city,
+ * plus a km radius) — without it the API returns the pharmacies with no
+ * distances rather than measuring from a fixed point.
+ */
+export const listSaved = (params) => apiFetch(`/me/saved${qs(params)}`)
 
-export const saveMedicine = (medicineId) =>
-  apiFetch('/me/saved', { method: 'POST', body: { medicineId } })
+/**
+ * Save a medicine.
+ *
+ * Accepts a bare MediBase id, or `{ id, name }` for a medicine the catalog does
+ * not hold yet — those are stored by name and linked to a governed identity the
+ * first time a verified pharmacy stocks them.
+ */
+export const saveMedicine = (medicine) => {
+  const body =
+    typeof medicine === 'string'
+      ? { medicineId: medicine }
+      : { medicineId: medicine?.id ?? undefined, name: medicine?.name }
+  return apiFetch('/me/saved', { method: 'POST', body })
+}
 
 export const updateSavedMedicineAlerts = (medicineId, alertsEnabled) =>
-  apiFetch(`/me/saved/${medicineId}/alerts`, { method: 'PATCH', body: { alertsEnabled } })
+  apiFetch(`/me/saved/${encodeURIComponent(medicineId)}/alerts`, {
+    method: 'PATCH',
+    body: { alertsEnabled },
+  })
 
-export const unsaveMedicine = (medicineId) =>
-  apiFetch(`/me/saved/${medicineId}`, { method: 'DELETE' })
+/** `key` is a MediBase id, or the medicine name for an off-catalog save. */
+export const unsaveMedicine = (key) =>
+  apiFetch(`/me/saved/${encodeURIComponent(key)}`, { method: 'DELETE' })
 
 // --- Alert preferences ---------------------------------------------------
 export const getAlertPreferences = () => apiFetch('/me/alerts')

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
@@ -11,6 +11,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { GatewayTelemetryInterceptor } from '../admin/telemetry/gateway-telemetry.interceptor';
 
 /**
  * ZoikoSignal™ intelligence surface. Contract-scoped: requires a valid JWT and
@@ -24,6 +25,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ENTERPRISE, UserRole.GOVERNMENT, UserRole.ADMIN)
+@UseInterceptors(GatewayTelemetryInterceptor)
 @Controller('signal')
 export class SignalController {
   constructor(private readonly signal: SignalService) {}

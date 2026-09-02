@@ -35,10 +35,12 @@ const ZoikoSignal = lazyImport(() => import('@/pages/ZoikoSignal'), 'ZoikoSignal
 const ZoikoAvail = lazyImport(() => import('@/pages/ZoikoAvail'), 'ZoikoAvail')
 const ZoikoAvailSandbox = lazyImport(() => import('@/pages/ZoikoAvailSandbox'), 'ZoikoAvailSandbox')
 const MediBase = lazyImport(() => import('@/pages/MediBase'), 'MediBase')
+const MediBaseReview = lazyImport(() => import('@/pages/MediBaseReview'), 'MediBaseReview')
 const Reports = lazyImport(() => import('@/pages/Reports'), 'Reports')
 const Notifications = lazyImport(() => import('@/pages/Notifications'), 'Notifications')
 const AuditLogs = lazyImport(() => import('@/pages/AuditLogs'), 'AuditLogs')
 const Settings = lazyImport(() => import('@/pages/Settings'), 'Settings')
+const Commercial = lazyImport(() => import('@/pages/Commercial'), 'Commercial')
 
 // User Portal page chunks
 const UserHome = lazyImport(() => import('@/pages/UserHome'), 'UserHome')
@@ -62,6 +64,7 @@ const PharmacyReports = lazyImport(() => import('@/pages/pharmacy/PharmacyReport
 const PharmacyNotifications = lazyImport(() => import('@/pages/pharmacy/PharmacyNotifications'), 'PharmacyNotifications')
 const PharmacyProfile = lazyImport(() => import('@/pages/pharmacy/PharmacyProfile'), 'PharmacyProfile')
 const PharmacySettings = lazyImport(() => import('@/pages/pharmacy/PharmacySettings'), 'PharmacySettings')
+const PharmacyBilling = lazyImport(() => import('@/pages/pharmacy/PharmacyBilling'), 'PharmacyBilling')
 
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
@@ -104,9 +107,11 @@ export const router = createBrowserRouter([
           { path: 'zoikoavail', element: <ZoikoAvail /> },
           { path: 'zoikoavail/sandbox', element: <ZoikoAvailSandbox /> },
           { path: 'medibase', element: <MediBase /> },
+          { path: 'medibase/review', element: <MediBaseReview /> },
           { path: 'reports', element: <Reports /> },
           { path: 'notifications', element: <Notifications /> },
           { path: 'audit-logs', element: <AuditLogs /> },
+          { path: 'commercial', element: <Commercial /> },
           { path: 'settings', element: <Settings /> },
         ],
       },
@@ -156,6 +161,7 @@ export const router = createBrowserRouter([
           { path: 'reports', element: <PharmacyReports /> },
           { path: 'notifications', element: <PharmacyNotifications /> },
           { path: 'profile', element: <PharmacyProfile /> },
+          { path: 'billing', element: <PharmacyBilling /> },
           { path: 'settings', element: <PharmacySettings /> },
         ],
       },

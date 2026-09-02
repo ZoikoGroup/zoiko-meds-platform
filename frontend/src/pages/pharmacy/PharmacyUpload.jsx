@@ -11,24 +11,11 @@ import {
 } from '@/components/ui/dialog'
 import { useEffect } from 'react'
 import { importCsv, getProfile } from '@/services/pharmacy-api'
+import { parseCsv } from './csv-import'
 import { cn } from '@/lib/utils'
 import { UploadCloud, FileText, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react'
 
-// Minimal CSV parse (comma-separated; first row = header).
-function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean)
-  if (lines.length === 0) return { headers: [], rows: [], error: 'The file is empty.' }
-  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase())
-  if (!headers.includes('name')) return { headers, rows: [], error: 'Missing required “name” column.' }
-  const rows = lines.slice(1).map((line) => {
-    const cells = line.split(',')
-    const row = {}
-    headers.forEach((h, i) => { row[h] = (cells[i] ?? '').trim() })
-    return row
-  })
-  return { headers, rows, error: null }
-}
-
+// CSV parser (comma-separated; first row = header).
 export default function PharmacyUpload() {
   const inputRef = useRef(null)
   const [profile, setProfile] = useState(null)
@@ -91,6 +78,7 @@ export default function PharmacyUpload() {
       setResult(r)
       setStatus('success')
       setShowConfirmModal(false)
+      window.dispatchEvent(new CustomEvent('pharmacy-inventory-updated'))
     } catch (err) {
       setErrorMsg(err.message || 'Upload failed. Please try again.')
       setStatus('error')
@@ -122,11 +110,21 @@ export default function PharmacyUpload() {
         <div className="flex items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 text-warning">
           <AlertTriangle className="size-5 shrink-0" />
           <div className="flex flex-col gap-0.5 text-xs">
-            <span className="font-bold text-sm">Pharmacy Verification Notice ({profile.verificationStatus})</span>
-            <span>
-              Your pharmacy identity <strong>{profile.name}</strong> ({profile.licenseNumber}) has status <strong>{profile.verificationStatus}</strong>.
-              {profile.verificationStatus === 'INFO_REQUESTED' ? ' Reviewer requested additional information. Please check your Pharmacy Profile.' : ' Verification must be active for public availability signals.'}
+            <span className="font-bold text-sm">
+              Pharmacy Verification Notice{profile.isDraft ? '' : ` (${profile.verificationStatus})`}
             </span>
+            {profile.isDraft ? (
+              <span>
+                We do not have your pharmacy details yet. Add your name, licence number and
+                address on the Pharmacy Profile page to submit for verification — verification
+                must be active for public availability signals.
+              </span>
+            ) : (
+              <span>
+                Your pharmacy identity <strong>{profile.name}</strong> ({profile.licenseNumber}) has status <strong>{profile.verificationStatus}</strong>.
+                {profile.verificationStatus === 'INFO_REQUESTED' ? ' Reviewer requested additional information. Please check your Pharmacy Profile.' : ' Verification must be active for public availability signals.'}
+              </span>
+            )}
           </div>
         </div>
       )}

@@ -5,52 +5,82 @@ import { Button } from '@/components/ui/button'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { PageHeader } from '@/components/shared/page-header'
 import { Seo } from '@/components/shared/seo'
-import { AVAILABILITY, byConfidence, CONFIRM_NOTE, SCOPE_NOTE } from '@/lib/availability'
+import { AVAILABILITY, byConfidence } from '@/lib/availability'
 import { useLanguage } from '@/providers/language-provider'
 
 const LEVELS = Object.keys(AVAILABILITY).sort(byConfidence)
 
-const HOW_UPDATES_ITEMS = [
-  { icon: Building2, titleKey: 'verifiedPharmaciesOnly', titleDefault: 'Verified pharmacies only', textKey: 'verifiedPharmaciesOnlyDesc', textDefault: 'Signals come from pharmacies whose licences have been verified and who opt in to participate.' },
-  { icon: RefreshCw, titleKey: 'signalsNotStock', titleDefault: 'Signals, not stock counts', textKey: 'signalsNotStockDesc', textDefault: 'Pharmacies share availability signals — we never expose exact quantities on hand.' },
-  { icon: Clock, titleKey: 'freshnessWeighted', titleDefault: 'Freshness-weighted', textKey: 'freshnessWeightedDesc', textDefault: 'ZoikoAvail™ weights each signal by how recent it is and the pharmacy’s reliability, then derives a confidence band.' },
-]
-
-const WHY_CHANGES_ITEMS = [
-  { key: 'whyChange1', defaultText: 'Pharmacies dispense stock throughout the day, so what was available this morning may not be by evening.' },
-  { key: 'whyChange2', defaultText: 'New deliveries and restocks arrive on different schedules for each pharmacy.' },
-  { key: 'whyChange3', defaultText: 'Regional demand and supply pressure (e.g. seasonal illness) shifts availability quickly.' },
-  { key: 'whyChange4', defaultText: 'A signal ages: the longer since a pharmacy last confirmed, the lower our confidence.' },
-]
-
 export default function Availability() {
   const { t } = useLanguage()
 
-  const BAND_DETAIL = {
-    high: t('likelyAvailableNowDesc', 'A verified pharmacy shared a recent signal indicating this medicine is likely available now.'),
-    moderate: t('mayBeLimitedDesc', 'Signals suggest it may be available but could be limited. Confirm with the pharmacy before travelling.'),
-    low: t('notRecentlyConfirmedDesc', 'Availability has not been confirmed recently. Treat this as uncertain and call ahead.'),
-    unknown: t('noRecentSignalDesc', 'No recent signal from verified pharmacies nearby. We cannot indicate availability right now.'),
+  const bandDetails = {
+    high: {
+      title: t('likelyAvailableNow', 'Likely available now'),
+      desc: t('likelyAvailableNowDesc', 'A verified pharmacy shared a recent signal indicating this medicine is likely available now.'),
+    },
+    moderate: {
+      title: t('mayBeLimited', 'May be limited — confirm first'),
+      desc: t('mayBeLimitedDesc', 'Signals suggest it may be available but could be limited. Confirm with the pharmacy before travelling.'),
+    },
+    low: {
+      title: t('notRecentlyConfirmed', 'Not recently confirmed'),
+      desc: t('notRecentlyConfirmedDesc', 'Availability has not been confirmed recently. Treat this as uncertain and call ahead.'),
+    },
+    unknown: {
+      title: t('noRecentSignal', 'No recent signal'),
+      desc: t('noRecentSignalDesc', 'No recent signal from verified pharmacies nearby. We cannot indicate availability right now.'),
+    },
   }
 
-  const BAND_TITLE = {
-    high: t('likelyAvailableNow', 'Likely available now'),
-    moderate: t('mayBeLimited', 'May be limited — confirm first'),
-    low: t('notRecentlyConfirmed', 'Not recently confirmed'),
-    unknown: t('noRecentSignal', 'No recent signal'),
-  }
+  const whyChanges = [
+    t('whyChange1', 'Pharmacies dispense stock throughout the day, so what was available this morning may not be by evening.'),
+    t('whyChange2', 'New deliveries and restocks arrive on different schedules for each pharmacy.'),
+    t('whyChange3', 'Regional demand and supply pressure (e.g. seasonal illness) shifts availability quickly.'),
+    t('whyChange4', 'A signal ages: the longer since a pharmacy last confirmed, the lower our confidence.'),
+  ]
 
-  // FAQPage structured data (approved schema type — no Drug/Pharmacy/Offer).
+  const howUpdates = [
+    {
+      icon: Building2,
+      title: t('verifiedPharmaciesOnly', 'Verified pharmacies only'),
+      text: t('verifiedPharmaciesOnlyDesc', 'Signals come from pharmacies whose licences have been verified and who opt in to participate.'),
+    },
+    {
+      icon: RefreshCw,
+      title: t('signalsNotStock', 'Signals, not stock counts'),
+      text: t('signalsNotStockDesc', 'Pharmacies share availability signals — we never expose exact quantities on hand.'),
+    },
+    {
+      icon: Clock,
+      title: t('freshnessWeighted', 'Freshness-weighted'),
+      text: t('freshnessWeightedDesc', 'ZoikoAvail™ weights each signal by how recent it is and the pharmacy’s reliability, then derives a confidence band.'),
+    },
+  ]
+
   const faqLd = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
     mainEntity: [
-      { '@type': 'Question', name: 'What is ZoikoAvail™?', acceptedAnswer: { '@type': 'Answer', text: 'ZoikoAvail™ is ZoikoMeds’ availability confidence engine. It turns verified-pharmacy signals into a High/Moderate/Low/Unknown confidence band — never exact stock.' } },
-      { '@type': 'Question', name: 'Does availability mean the medicine is in stock?', acceptedAnswer: { '@type': 'Answer', text: CONFIRM_NOTE } },
+      {
+        '@type': 'Question',
+        name: t('whatIsZoikoAvail', 'What is ZoikoAvail™?'),
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: t('whatIsZoikoAvailDesc', 'ZoikoAvail™ is the availability confidence engine behind ZoikoMeds. It takes availability signals shared by verified pharmacies and turns them into a simple confidence band, so you can judge how likely a medicine is to be available before you travel. It never exposes exact stock counts, and it never lets you reserve or buy — it is intelligence only.'),
+        },
+      },
+      {
+        '@type': 'Question',
+        name: t('doesAvailabilityMeanInStock', 'Does availability mean the medicine is in stock?'),
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: t('confirmNote', 'Availability is a governed confidence signal from verified pharmacies — not exact stock. Please confirm with the pharmacy before visiting.'),
+        },
+      },
       ...LEVELS.map((level) => ({
         '@type': 'Question',
-        name: `What does "${AVAILABILITY[level].plain}" mean?`,
-        acceptedAnswer: { '@type': 'Answer', text: BAND_DETAIL[level] },
+        name: `What does "${bandDetails[level]?.title}" mean?`,
+        acceptedAnswer: { '@type': 'Answer', text: bandDetails[level]?.desc || '' },
       })),
     ],
   }
@@ -58,8 +88,8 @@ export default function Availability() {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 pb-8">
       <Seo
-        title="Understanding availability confidence — ZoikoMeds"
-        description="ZoikoAvail™ shows medicine availability as a governed confidence signal from verified pharmacies — never exact stock. Learn what High, Moderate, Low, and Unknown mean."
+        title={`${t('understandingAvailability', 'Understanding availability confidence')} — ZoikoMeds`}
+        description={t('availabilitySubtitle', 'How ZoikoMeds shows whether a medicine is likely available near you — as a governed confidence signal, never a stock guarantee.')}
         type="article"
         jsonLd={faqLd}
       />
@@ -68,7 +98,7 @@ export default function Availability() {
         eyebrow="ZoikoAvail™"
         title={t('understandingAvailability', 'Understanding availability confidence')}
         subtitle={t('availabilitySubtitle', 'How ZoikoMeds shows whether a medicine is likely available near you — as a governed confidence signal, never a stock guarantee.')}
-        breadcrumbs={[{ label: t('search', 'Search'), to: '/search' }, { label: t('availability', 'Availability') }]}
+        breadcrumbs={[{ label: t('search', 'Search'), to: '/search' }, { label: t('howAvailabilityWorks', 'Availability') }]}
       />
 
       {/* What ZoikoAvail is */}
@@ -83,17 +113,20 @@ export default function Availability() {
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-bold text-foreground">{t('confidenceLevels', 'Confidence levels')}</h2>
         <div className="flex flex-col gap-3">
-          {LEVELS.map((level) => (
-            <Card key={level} className="flex flex-col gap-2 p-5 sm:flex-row sm:items-start sm:gap-4">
-              <div className="shrink-0">
-                <ConfidenceBadge level={level} />
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-semibold text-foreground">{BAND_TITLE[level] || AVAILABILITY[level].plain}</span>
-                <span className="text-sm leading-relaxed text-muted-foreground">{BAND_DETAIL[level]}</span>
-              </div>
-            </Card>
-          ))}
+          {LEVELS.map((level) => {
+            const detail = bandDetails[level]
+            return (
+              <Card key={level} className="flex flex-col gap-2 p-5 sm:flex-row sm:items-start sm:gap-4">
+                <div className="shrink-0">
+                  <ConfidenceBadge level={level} />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-semibold text-foreground">{detail?.title}</span>
+                  <span className="text-sm leading-relaxed text-muted-foreground">{detail?.desc}</span>
+                </div>
+              </Card>
+            )
+          })}
         </div>
       </section>
 
@@ -101,10 +134,10 @@ export default function Availability() {
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-bold text-foreground">{t('whyAvailabilityChanges', 'Why medicine availability changes')}</h2>
         <ul className="flex flex-col gap-2.5">
-          {WHY_CHANGES_ITEMS.map((item) => (
-            <li key={item.key} className="flex items-start gap-2.5 text-sm leading-relaxed text-muted-foreground">
+          {whyChanges.map((tText) => (
+            <li key={tText} className="flex items-start gap-2.5 text-sm leading-relaxed text-muted-foreground">
               <ArrowRight className="mt-1 size-3.5 shrink-0 text-primary" />
-              {t(item.key, item.defaultText)}
+              {tText}
             </li>
           ))}
         </ul>
@@ -114,15 +147,15 @@ export default function Availability() {
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-bold text-foreground">{t('howPharmaciesKeepCurrent', 'How verified pharmacies keep it current')}</h2>
         <div className="grid gap-4 sm:grid-cols-3">
-          {HOW_UPDATES_ITEMS.map((h) => {
+          {howUpdates.map((h) => {
             const Icon = h.icon
             return (
-              <Card key={h.titleKey} className="flex flex-col gap-2 p-5">
+              <Card key={h.title} className="flex flex-col gap-2 p-5">
                 <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
                   <Icon className="size-5" />
                 </span>
-                <span className="text-sm font-semibold text-foreground">{t(h.titleKey, h.titleDefault)}</span>
-                <span className="text-xs leading-relaxed text-muted-foreground">{t(h.textKey, h.textDefault)}</span>
+                <span className="text-sm font-semibold text-foreground">{h.title}</span>
+                <span className="text-xs leading-relaxed text-muted-foreground">{h.text}</span>
               </Card>
             )
           })}
@@ -132,13 +165,16 @@ export default function Availability() {
       {/* Confirmation guidance */}
       <Card className="flex items-start gap-3 border-primary/20 bg-primary/5 p-5">
         <ShieldCheck className="mt-0.5 size-5 shrink-0 text-primary" />
-        <p className="text-sm leading-relaxed text-foreground">{t('confirmNote', CONFIRM_NOTE)}</p>
+        <p className="text-sm leading-relaxed text-foreground">
+          {t('confirmNote', 'Availability is a governed confidence signal from verified pharmacies — not exact stock. Please confirm with the pharmacy before visiting.')}
+        </p>
       </Card>
 
       {/* Disclaimer */}
       <p className="flex items-start gap-2 rounded-lg bg-muted/50 p-4 text-xs leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" />
-        {t('scopeNote', SCOPE_NOTE)}
+        {t('scopeNote', 'ZoikoMeds shows where medicines may be available. It is not a pharmacy, marketplace, dispensing, or delivery service and does not provide medical advice.')}{' '}
+        {t('disclaimerDetails', 'ZoikoMeds provides medicine availability intelligence only and does not guarantee that any medicine is in stock. Always confirm with the pharmacy before visiting.')}
       </p>
 
       {/* CTA back to search */}

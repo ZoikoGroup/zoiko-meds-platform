@@ -1,10 +1,11 @@
+import { useState, useEffect } from 'react'
 import {
   Activity,
   AlertTriangle,
   BookOpen,
   CheckCircle2,
   Gauge,
-  KeyRound,
+  Loader2,
   Terminal,
   Timer,
   Waves,
@@ -17,30 +18,16 @@ import { SectionHeading } from '@/components/shared/section-heading'
 import { StatTile } from '@/components/shared/stat-tile'
 import { ChartCard } from '@/components/shared/chart-card'
 import { ServiceStatusBadge } from '@/components/shared/status'
+import { ErrorState } from '@/components/shared/states'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { TrendChart } from '@/components/charts/trend-chart'
 import { cn } from '@/lib/utils'
-import { formatMs } from '@/utils/format'
+import { formatMs, formatNumber } from '@/utils/format'
 import { apiBaseUrl } from '@/lib/api-client'
-import {
-  apiHealth,
-  authSteps,
-  endpoints,
-  rateTiers,
-  requestThroughput,
-  responseTime,
-  securityStatus,
-} from '@/services/api-data'
+import { getZoikoAvailTelemetry } from '@/services/admin-api'
+import { authSteps } from '@/services/api-data'
 
 const METHOD_STYLE = {
   GET: 'bg-info/12 text-info',
@@ -60,17 +47,70 @@ function MethodTag({ method }) {
   )
 }
 
-const HEALTH = [
-  { label: 'Uptime (30d)', value: apiHealth.uptime, icon: Activity, severity: 'good' },
-  { label: 'p50 latency', value: apiHealth.p50, unit: 'ms', icon: Gauge, severity: 'good' },
-  { label: 'p99 latency', value: apiHealth.p99, unit: 'ms', icon: Timer, severity: 'good' },
-  { label: 'Requests (24h)', value: apiHealth.requests24h, icon: Webhook, severity: 'good' },
-  { label: 'Error rate', value: apiHealth.errorRate, icon: AlertTriangle, severity: 'good' },
-  { label: 'Rate ceiling', value: apiHealth.rateCeiling, icon: Waves, severity: 'good' },
-]
+const STATUS_SEVERITY = {
+  operational: 'good',
+  degraded: 'warning',
+  down: 'critical',
+  disabled: 'neutral',
+}
 
 export default function ZoikoAvail() {
   const navigate = useNavigate()
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    setError(false)
+    getZoikoAvailTelemetry()
+      .then(setData)
+      .catch(() => setError(true))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [])
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (error || !data) {
+    return (
+      <ErrorState
+        title="Couldn't load ZoikoAvail telemetry"
+        description="The gateway telemetry service could not be reached. Please try again."
+        onRetry={load}
+      />
+    )
+  }
+
+  const severity = STATUS_SEVERITY[data.health.status] ?? 'neutral'
+  const HEALTH = [
+    {
+      label: 'Uptime (30d)',
+      value: data.health.uptime != null ? `${data.health.uptime}%` : '—',
+      icon: Activity,
+    },
+    { label: 'p50 latency', value: String(data.health.p50 ?? '—'), unit: 'ms', icon: Gauge },
+    { label: 'p99 latency', value: String(data.health.p99 ?? '—'), unit: 'ms', icon: Timer },
+    {
+      label: 'Requests (24h)',
+      value: formatNumber(data.health.requests24h, { compact: true }),
+      icon: Webhook,
+    },
+    {
+      label: 'Error rate',
+      value: data.health.errorRate != null ? `${data.health.errorRate}%` : '—',
+      icon: AlertTriangle,
+    },
+    { label: 'Rate ceiling', value: data.health.rateCeiling, icon: Waves },
+  ]
+
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
@@ -81,12 +121,7 @@ export default function ZoikoAvail() {
           { label: 'ZoikoMeds', to: '/dashboard' },
           { label: 'ZoikoAvail™' },
         ]}
-        meta={
-          <Badge variant="success" size="sm">
-            <CheckCircle2 className="size-3.5" />
-            Sandbox {apiHealth.sandbox}
-          </Badge>
-        }
+        meta={<ServiceStatusBadge status={data.health.status} size="sm" />}
         actions={
           <>
             <Button
@@ -110,10 +145,10 @@ export default function ZoikoAvail() {
           <StatTile
             key={h.label}
             label={h.label}
-            value={String(h.value)}
+            value={h.value}
             unit={h.unit}
             icon={h.icon}
-            severity={h.severity}
+            severity={severity}
           />
         ))}
       </div>
@@ -125,31 +160,39 @@ export default function ZoikoAvail() {
           description="p50 and p99 latency across the last 24 hours (ms)."
           index={0}
         >
-          <TrendChart
-            data={responseTime}
-            xKey="date"
-            type="line"
-            valueFormatter={formatMs}
-            series={[
-              { key: 'p50', label: 'p50' },
-              { key: 'p99', label: 'p99', color: 'var(--chart-3)' },
-            ]}
-          />
+          {data.responseTime.length > 0 ? (
+            <TrendChart
+              data={data.responseTime}
+              xKey="date"
+              type="line"
+              valueFormatter={formatMs}
+              series={[
+                { key: 'p50', label: 'p50' },
+                { key: 'p99', label: 'p99', color: 'var(--chart-3)' },
+              ]}
+            />
+          ) : (
+            <p className="py-12 text-center text-sm text-muted-foreground">
+              No requests recorded in the last 24 hours.
+            </p>
+          )}
         </ChartCard>
         <ChartCard
           title="Request Throughput"
-          description="Governed vs sandbox requests per hour (thousands)."
+          description="Governed API requests per hour, last 24 hours."
           index={1}
         >
-          <TrendChart
-            data={requestThroughput}
-            xKey="date"
-            unit="K"
-            series={[
-              { key: 'production', label: 'Production' },
-              { key: 'sandbox', label: 'Sandbox' },
-            ]}
-          />
+          {data.throughput.length > 0 ? (
+            <TrendChart
+              data={data.throughput}
+              xKey="date"
+              series={[{ key: 'requests', label: 'Requests' }]}
+            />
+          ) : (
+            <p className="py-12 text-center text-sm text-muted-foreground">
+              No requests recorded in the last 24 hours.
+            </p>
+          )}
         </ChartCard>
       </div>
 
@@ -160,7 +203,7 @@ export default function ZoikoAvail() {
           description="Governed REST endpoints with live status and latency."
         />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {endpoints.map((e, i) => (
+          {data.endpoints.map((e, i) => (
             <motion.div
               key={e.id}
               initial={{ opacity: 0, y: 12 }}
@@ -187,13 +230,13 @@ export default function ZoikoAvail() {
                   <span>
                     p50{' '}
                     <span className="font-medium text-foreground tabular">
-                      {e.p50}ms
+                      {e.p50 != null ? `${e.p50}ms` : '—'}
                     </span>
                   </span>
                   <span>
                     p99{' '}
                     <span className="font-medium text-foreground tabular">
-                      {e.p99}ms
+                      {e.p99 != null ? `${e.p99}ms` : '—'}
                     </span>
                   </span>
                   <Badge variant="outline" size="sm" className="ml-auto">
@@ -206,11 +249,11 @@ export default function ZoikoAvail() {
         </div>
       </section>
 
-      {/* Security, auth flow, rate limits */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
-        <ChartCard title="Security Status" description="Gateway posture and controls." index={0}>
+      {/* Security posture + auth flow */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
+        <ChartCard title="Security Status" description="Gateway posture and controls, as they actually stand." index={0}>
           <ul className="flex flex-col gap-3">
-            {securityStatus.map((s) => (
+            {data.security.map((s) => (
               <li key={s.label} className="flex items-start gap-3">
                 {s.status === 'ok' ? (
                   <CheckCircle2 className="mt-0.5 size-4.5 shrink-0 text-success" />
@@ -228,7 +271,7 @@ export default function ZoikoAvail() {
 
         <ChartCard
           title="Authentication Flow"
-          description="OAuth 2.0 client credentials + mTLS."
+          description="OAuth 2.0 client credentials + mTLS (target design — see Security Status for what's enforced today)."
           index={1}
         >
           <ol className="relative flex flex-col gap-5 pl-2">
@@ -247,34 +290,6 @@ export default function ZoikoAvail() {
               </li>
             ))}
           </ol>
-        </ChartCard>
-
-        <ChartCard title="Rate Limits" description="Per-tier request ceilings." index={2}>
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Tier</TableHead>
-                <TableHead className="text-right">Limit</TableHead>
-                <TableHead className="text-right">Burst</TableHead>
-                <TableHead className="text-right">Conc.</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rateTiers.map((t) => (
-                <TableRow key={t.tier}>
-                  <TableCell className="font-medium">
-                    <span className="flex items-center gap-2">
-                      <KeyRound className="size-3.5 text-muted-foreground" />
-                      {t.tier}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right tabular">{t.limit}</TableCell>
-                  <TableCell className="text-right tabular">{t.burst}</TableCell>
-                  <TableCell className="text-right tabular">{t.concurrency}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
         </ChartCard>
       </div>
     </div>

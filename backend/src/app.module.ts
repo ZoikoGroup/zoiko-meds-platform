@@ -17,6 +17,9 @@ import { SignalModule } from './modules/signal/signal.module';
 import { SearchModule } from './modules/search/search.module';
 import { PharmacyModule } from './modules/pharmacy/pharmacy.module';
 import { EnterpriseModule } from './modules/enterprise/enterprise.module';
+import { CommercialModule } from './modules/commercial/commercial.module';
+import { ScanModule } from './modules/scan/scan.module';
+import { IntegrationsModule } from './modules/integrations/integrations.module';
 
 @Module({
   imports: [
@@ -41,6 +44,9 @@ import { EnterpriseModule } from './modules/enterprise/enterprise.module';
     SearchModule, // Public medicine search
     PharmacyModule, // Pharmacy verification & participation
     EnterpriseModule, // Enterprise inquiries / lead capture
+    CommercialModule, // ZM-COM-BILL-001 billing, subscriptions & participation
+    ScanModule, // Prescription scan — AI/Vision fallback (OCR runs in-browser)
+    IntegrationsModule, // External-dependency status for the admin console
   ],
   providers: [
     // Enforce the configured rate limit globally. Without this the

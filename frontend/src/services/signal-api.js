@@ -7,6 +7,7 @@
 // ZoikoSignal page, home widget and cards render.
 
 import { apiFetch } from '@/lib/api-client'
+import { userLocationParams } from '@/lib/user-location'
 
 // Which notification types count as "safety" for the filter tab.
 export const SAFETY_TYPES = ['recall', 'safety']
@@ -14,8 +15,24 @@ export const SAFETY_TYPES = ['recall', 'safety']
 // ---------------------------------------------------------------------------
 // Read APIs
 // ---------------------------------------------------------------------------
+/**
+ * Saved medicines with their current availability status.
+ *
+ * The caller's location goes with the request: each row names the nearest
+ * pharmacy, and "nearest" is only meaningful relative to the patient. Without a
+ * stored location the API names the pharmacy and omits the distance rather than
+ * measuring from a fixed point.
+ */
 export function listSavedStatus() {
-  return apiFetch('/me/signal/saved-status')
+  return apiFetch(`/me/signal/saved-status${locationQuery()}`)
+}
+
+/** The stored location as a query string, or '' when none is set. */
+function locationQuery() {
+  const params = new URLSearchParams(
+    Object.entries(userLocationParams()).map(([k, v]) => [k, String(v)]),
+  ).toString()
+  return params ? `?${params}` : ''
 }
 
 export function listNotifications() {
@@ -27,8 +44,16 @@ export function listActiveAlerts() {
   return apiFetch('/me/signal/alerts')
 }
 
+/**
+ * The counters above the saved-medicine cards.
+ *
+ * Sent with the same location as the cards themselves: "running low" counts the
+ * medicines those cards band, and both are scoped to the patient's radius. Sent
+ * without it, the tile counted every saved medicine low anywhere in the network
+ * and disagreed with the list right underneath it.
+ */
 export function getSignalSummary() {
-  return apiFetch('/me/signal/summary')
+  return apiFetch(`/me/signal/summary${locationQuery()}`)
 }
 
 // Lightweight, fast summary for the sidebar unread badge + home widget.

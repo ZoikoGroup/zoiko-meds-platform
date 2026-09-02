@@ -26,8 +26,39 @@ export function formatCurrency(value) {
 export function formatMs(value) {
     return `${value.toFixed(0)}ms`;
 }
-/** "2h ago" style relative label from an ISO-ish string is provided directly in
- *  mock data; this keeps deterministic display without Date.now(). */
+const RELATIVE_UNITS = [
+    ['year', 365 * 24 * 60 * 60],
+    ['month', 30 * 24 * 60 * 60],
+    ['day', 24 * 60 * 60],
+    ['hour', 60 * 60],
+    ['minute', 60],
+    ['second', 1],
+];
+const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+/**
+ * "6 minutes ago" / "in 54 minutes" from a real timestamp.
+ *
+ * Server timestamps arrive as ISO strings; anything unparseable answers null so
+ * the caller can render an em dash rather than "Invalid Date". Sub-minute gaps
+ * round to "now": a sync that finished four seconds ago is not usefully
+ * described as four seconds ago, and the number would be stale on sight.
+ */
+export function formatRelative(iso, now = Date.now()) {
+    if (!iso)
+        return null;
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then))
+        return null;
+    const seconds = Math.round((then - now) / 1000);
+    if (Math.abs(seconds) < 45)
+        return 'just now';
+    for (const [unit, size] of RELATIVE_UNITS) {
+        if (Math.abs(seconds) >= size || unit === 'second') {
+            return relative.format(Math.round(seconds / size), unit);
+        }
+    }
+    return null;
+}
 export function initials(name) {
     return name
         .split(' ')

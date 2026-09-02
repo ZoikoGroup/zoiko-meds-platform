@@ -8,6 +8,10 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
+import { resolveCountryAlpha2 } from '../../../common/countries';
+import { resolveJurisdictionId } from '../../../common/jurisdiction';
+import { allowsCategory } from '../../pharmacy/notification-preferences.service';
+import { canParticipate } from '../../pharmacy/participation';
 import { CreateVerificationDto } from './dto/create-verification.dto';
 import { UpdateVerificationDto } from './dto/update-verification.dto';
 
@@ -18,83 +22,33 @@ export class VerificationService {
     private readonly audit: AuditWriter,
   ) {}
 
-  private async syncUnlinkedPharmacyUsers() {
-    const unlinked = await this.prisma.user.findMany({
-      where: {
-        role: { in: ['PHARMACY_ADMIN', 'PHARMACY_STAFF'] },
-        pharmacyId: null,
-      },
+  /**
+   * The licence document attached to a request.
+   *
+   * Read straight out of the row and handed to the caller — the controller that
+   * exposes it is SUPER_ADMIN-only, so there is no public URL, nothing signed to
+   * expire, and nothing that outlives the reviewer's session.
+   */
+  async getDocument(requestId: string) {
+    const document = await this.prisma.verificationDocument.findUnique({
+      where: { verificationRequestId: requestId },
+      select: { filename: true, mimeType: true, data: true },
     });
-
-    for (const user of unlinked) {
-      const userEmail = user.email.toLowerCase();
-      const defaultLicense = `LIC-${user.id.slice(-6).toUpperCase()}`;
-
-      let pharmacy = await this.prisma.pharmacy.findFirst({
-        where: {
-          OR: [
-            { name: `${user.fullName} Pharmacy` },
-            { licenseNumber: defaultLicense },
-          ],
-        },
-      });
-
-      if (!pharmacy) {
-        pharmacy = await this.prisma.pharmacy.create({
-          data: {
-            name: `${user.fullName} Pharmacy`,
-            licenseNumber: defaultLicense,
-            verificationStatus: VerificationStatus.PENDING,
-            isParticipating: false,
-            reliabilityScore: 0.8,
-            addressLine1: 'Main Branch Address',
-            city: 'Main City',
-            country: 'India',
-          },
-        });
-      }
-
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { pharmacyId: pharmacy.id },
-      });
-
-      const existing = await this.prisma.verificationRequest.findFirst({
-        where: {
-          OR: [
-            { pharmacyId: pharmacy.id },
-            { submittedBy: { contains: userEmail, mode: 'insensitive' } },
-            { licenseNumber: defaultLicense },
-          ],
-        },
-      });
-
-      if (existing) {
-        await this.prisma.verificationRequest.update({
-          where: { id: existing.id },
-          data: {
-            pharmacyId: pharmacy.id,
-            pharmacyName: pharmacy.name,
-            licenseNumber: pharmacy.licenseNumber || defaultLicense,
-          },
-        });
-      } else {
-        await this.prisma.verificationRequest.create({
-          data: {
-            pharmacyId: pharmacy.id,
-            pharmacyName: pharmacy.name,
-            licenseNumber: pharmacy.licenseNumber || defaultLicense,
-            submittedBy: `${user.fullName} (${user.email})`,
-            status: VerificationRequestStatus.PENDING,
-            notes: 'Automated pending verification request created for pharmacy user.',
-          },
-        });
-      }
+    if (!document) {
+      throw new NotFoundException('No document has been uploaded for this verification request.');
     }
+    return document;
   }
 
   async list() {
-    await this.syncUnlinkedPharmacyUsers();
+    // NOTE: pharmacy records are no longer fabricated for unlinked pharmacy
+    // users here. This used to invent a "<Full Name> Pharmacy" at "Main Branch
+    // Address, Main City" plus a PENDING request the operator never filed, so a
+    // reviewer saw placeholder text as if it were submitted detail, and the
+    // pharmacy's own profile page opened pre-filled with that invented address
+    // instead of a blank form. Onboarding now runs the other way round: the
+    // pharmacy fills in its profile (PATCH /pharmacies/me) and that submission
+    // creates the record and the request that lands in this queue.
     await this.prisma.pharmacy.updateMany({
       where: {
         country: 'US',
@@ -113,7 +67,7 @@ export class VerificationService {
     return rows.map((r) => this.toDto(r));
   }
 
-  async create(actorId: string, dto: CreateVerificationDto) {
+  async create(actorId: string, dto: CreateVerificationDto, ipAddress?: string) {
     let pharmacyId = dto.pharmacyId || null;
     if (!pharmacyId && dto.licenseNumber) {
       const match = await this.prisma.pharmacy.findFirst({
@@ -138,11 +92,17 @@ export class VerificationService {
       'VerificationRequest',
       req.id,
       { pharmacy: req.pharmacyName },
+      ipAddress,
     );
     return this.toDto(req);
   }
 
-  async update(actorId: string, id: string, dto: UpdateVerificationDto) {
+  async update(
+    actorId: string,
+    id: string,
+    dto: UpdateVerificationDto,
+    ipAddress?: string,
+  ) {
     const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.verificationRequest.findUnique({
         where: { id },
@@ -172,6 +132,14 @@ export class VerificationService {
 
       let pharmacyId = existing.pharmacyId;
 
+      // Does this member still want to hear about verification changes? Asked
+      // once, inside the transaction, and before any of the branches below
+      // create a notification — a switch that is only honoured on the way out
+      // is not honoured at all.
+      const wantsVerificationUpdates = targetUser
+        ? await allowsCategory(tx, targetUser.id, 'verification')
+        : false;
+
       if (!pharmacyId && targetUser?.pharmacyId) {
         pharmacyId = targetUser.pharmacyId;
       }
@@ -191,16 +159,22 @@ export class VerificationService {
       }
 
       if (!pharmacyId) {
+        // No address is invented for it. This row exists only because a
+        // verification request arrived without one, and "Primary Location, Main
+        // City, India" is not where the pharmacy is — it was shown to patients
+        // as the branch's address, and it geocodes (or fails to) somewhere that
+        // has nothing to do with the shop. Nulls are the true answer; the
+        // operator fills them in from the portal, which geocodes on save.
         const newPharmacy = await tx.pharmacy.create({
           data: {
             name: existing.pharmacyName,
             licenseNumber: existing.licenseNumber || `LIC-${Date.now().toString(36).toUpperCase()}`,
             verificationStatus: VerificationStatus.PENDING,
             isParticipating: false,
-            reliabilityScore: 0.8,
-            addressLine1: 'Primary Location',
-            city: 'Main City',
-            country: 'India',
+            // Nothing has been reported yet, so nothing has been reported
+            // promptly. 0.8 was a score this pharmacy never earned, and it
+            // feeds the ZoikoAvail confidence band patients are shown.
+            reliabilityScore: 0,
           },
         });
         pharmacyId = newPharmacy.id;
@@ -216,16 +190,34 @@ export class VerificationService {
       }
 
       if (dto.status === VerificationRequestStatus.APPROVED) {
+        // Approving the licence and publishing the pharmacy used to be the same
+        // write. They answer different questions, and fusing them listed
+        // pharmacies that no patient could ever be shown: a request that
+        // arrives without a pharmacy row creates one with no address and no
+        // coordinates, and this marked it participating. Every distance-bounded
+        // search then dropped it, so it was simultaneously part of the verified
+        // network and absent from it.
+        //
+        // The licence is approved either way. Listing waits for a location and
+        // starts by itself the moment the operator or a reviewer sets one.
+        const approved = await tx.pharmacy.findUnique({
+          where: { id: pharmacyId },
+          select: { latitude: true, longitude: true },
+        });
         await tx.pharmacy.update({
           where: { id: pharmacyId },
           data: {
             verificationStatus: VerificationStatus.VERIFIED,
-            isParticipating: true,
+            isParticipating: canParticipate({
+              verificationStatus: VerificationStatus.VERIFIED,
+              latitude: approved?.latitude ?? null,
+              longitude: approved?.longitude ?? null,
+            }),
             updatedAt: new Date(),
           },
         });
 
-        if (targetUser) {
+        if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
             data: {
               userId: targetUser.id,
@@ -248,7 +240,7 @@ export class VerificationService {
           },
         });
 
-        if (targetUser) {
+        if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
             data: {
               userId: targetUser.id,
@@ -271,7 +263,7 @@ export class VerificationService {
           },
         });
 
-        if (targetUser) {
+        if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
             data: {
               userId: targetUser.id,
@@ -310,6 +302,7 @@ export class VerificationService {
       'VerificationRequest',
       id,
       { pharmacy: result.pharmacyName, status: result.status },
+      ipAddress,
     );
     return this.toDto(result);
   }

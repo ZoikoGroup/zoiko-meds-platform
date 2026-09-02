@@ -6,22 +6,115 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/deploy.yml'
+  # Lets you re-run a release without pushing an empty commit — useful while the
+  # SSH reachability below is being sorted out.
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # The VM runs Node under pm2/systemd, not docker compose. This calls the
+      # committed deploy script so the CI path and a manual run on the box do
+      # exactly the same thing (install -> generate -> migrate -> build ->
+      # restart -> health check) instead of drifting apart.
+      #
+      # NOTE: every run of this workflow failed between 2026-07-29 and 2026-08-17 —
+      # first "ssh: handshake failed: unable to authenticate", then
+      # "dial tcp ***:22: i/o timeout" — which is why the API served a build from
+      # before 2026-08-07 while main moved on. GitHub-hosted runners connect from
+      # rotating public IPs, so a firewall rule that allows a fixed office IP will
+      # still drop them.
+      #
+      # If it regresses, the durable fix is an IAP tunnel rather than widening the
+      # firewall: authenticate with google-github-actions/auth (Workload Identity
+      # Federation, no long-lived key), then reach the VM with
+      #     gcloud compute ssh "$INSTANCE" --zone "$ZONE" --tunnel-through-iap \
+      #       --command 'bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh'
+      # which needs only ingress from Google's IAP range 35.235.240.0/20 on tcp:22
+      # — narrower than an office CIDR, and never 0.0.0.0/0. Allowing GitHub's own
+      # ranges (https://api.github.com/meta) on tcp:22 also works, but is wider.
+      #
+      # A manual release from the VM is always available as a fallback:
+      #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+      #
+      # The migration ledger is printed before and after the deploy, because this
+      # log is the only view of the database for anyone without VM access. On
+      # 2026-08-17 the API served code whose migration had never been applied:
+      # every SavedMedicine query failed while the workflow was green, and nothing
+      # in the pipeline output would have shown why. `migrate status` also names
+      # the datasource host it is talking to, which is what catches migrations
+      # being applied to a different database than the API reads.
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USER }}
           key: ${{ secrets.GCP_VM_SSH_KEY }}
+          command_timeout: 15m
           script: |
             set -e
-            cd /var/www/zoiko-meds-platform
-            git pull origin main
-            cd backend
-            docker compose up -d --build
-            docker compose exec -T api npx prisma migrate deploy
+            cd /var/www/zoiko-meds-platform/backend
 
+            echo "::group::Migration ledger before deploy (host)"
+            npx prisma migrate status || true
+            echo "::endgroup::"
+
+            # The API runs in a container whose DATABASE_URL may differ from the
+            # host's .env. Never fatal: the service name is not guaranteed here.
+            echo "::group::Migration ledger before deploy (API container)"
+            docker compose exec -T api npx prisma migrate status 2>/dev/null || \
+              echo "(could not reach the API container; skipping)"
+            echo "::endgroup::"
+
+            bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+
+            echo "::group::Migration ledger after deploy"
+            npx prisma migrate status || true
+            echo "::endgroup::"
+
+      # A green tick must mean the new code is actually serving. Without this the
+      # workflow could pass while the API still ran the previous build — which is
+      # how the drift went unnoticed for eleven days.
+      - name: Verify the release is live
+        run: |
+          set -e
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+              -H 'Content-Type: application/json' -d '{}' \
+              https://get.zoikomeds.com/api/pharmacies/me || echo 000)
+            # 401 = route present and guarded. 404 = still the old build.
+            if [ "$code" = "401" ]; then
+              echo "PATCH /api/pharmacies/me -> 401: new build is live."
+              exit 0
+            fi
+            echo "attempt $i: got $code, waiting..."
+            sleep 5
+          done
+          echo "Release did not become live: PATCH /api/pharmacies/me never returned 401." >&2
+          exit 1
+
+      # The release being live says nothing about the database it is live
+      # against. This is the check that would have caught 2026-08-17: the code
+      # was current, the workflow was green, and every SavedMedicine query
+      # failed because its migration had never been applied. The API reports its
+      # own ledger, so this sees the database the API actually reads — not the
+      # one whichever shell ran `migrate deploy` happened to be pointed at.
+      - name: Verify the served schema is up to date
+        run: |
+          set -e
+          body=$(curl -fsS https://get.zoikomeds.com/api/health/schema)
+          echo "$body"
+          case "$body" in
+            *'"status":"ok"'*) echo "Schema is up to date." ;;
+            *)
+              echo "The deployed API is running against a schema that is not up to date." >&2
+              echo "The 'detail' field above says what will reconcile it:" >&2
+              echo "  behind - migrations went to a different database than the API reads;" >&2
+              echo "           compare the datasource above with the VM's DATABASE_URL." >&2
+              echo "  drift  - the ledger is complete but the tables are not, which is what" >&2
+              echo "           'migrate resolve --applied' leaves behind. 'migrate deploy'" >&2
+              echo "           will report nothing to do; reconcile with 'migrate diff'." >&2
+              exit 1
+              ;;
+          esac

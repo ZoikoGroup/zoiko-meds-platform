@@ -18,6 +18,12 @@ import {
 } from './identifier-systems';
 import { assertTransition, isSuppressedState } from './quality-state';
 import {
+  BRAND_ROWS,
+  CLASSIFIED_CATALOG,
+  GovernanceState,
+  tierFor,
+} from './catalog-classification';
+import {
   expandVariants,
   parseDosageForm,
   parseStrength,
@@ -185,6 +191,215 @@ export class MedibaseService {
 
   // === Admin / curation surface ===========================================
 
+  /**
+   * Catalog-wide governance statistics for the MediBase admin dashboard.
+   *
+   * One round trip. Every figure is a live aggregate over MedicineEntity —
+   * counts and percentages alike — so the donut, the tier bars, the governance
+   * tiles and the identifier-mapping row can never drift apart or from the
+   * identity table beneath them.
+   *
+   * Suppressed identities are counted. The Governance panel shows them as
+   * their own tile, so excluding them would make the tiles fail to sum to the
+   * catalog total they are quoted as a percentage of.
+   */
+  async catalogOverview() {
+    const [row] = await this.prisma.$queryRaw<
+      {
+        total: number;
+        brands: number;
+        generics: number;
+        strengths: number;
+        forms: number;
+        markets: number;
+        identifiers: number;
+        governed: number;
+        inReview: number;
+        restricted: number;
+        suppressed: number;
+        normalized: number;
+        pending: number;
+        conflict: number;
+      }[]
+    >(Prisma.sql`
+      WITH classified AS (${CLASSIFIED_CATALOG}),
+      brand_rows AS (${BRAND_ROWS})
+      SELECT
+        COUNT(*)::int AS total,
+        (SELECT COUNT(DISTINCT brand) FROM brand_rows)::int AS brands,
+        COUNT(DISTINCT generic)::int AS generics,
+        COUNT(DISTINCT NULLIF(btrim(strength), ''))::int AS strengths,
+        COUNT(DISTINCT NULLIF(btrim("dosageForm"), ''))::int AS forms,
+        (SELECT COUNT(*) FROM "Jurisdiction")::int AS markets,
+        (SELECT COUNT(*) FROM "IdentifierMapping")::int AS identifiers,
+        COUNT(*) FILTER (WHERE governance = 'governed')::int AS "governed",
+        COUNT(*) FILTER (WHERE governance = 'in-review')::int AS "inReview",
+        COUNT(*) FILTER (WHERE governance = 'restricted')::int AS "restricted",
+        COUNT(*) FILTER (WHERE governance = 'suppressed')::int AS "suppressed",
+        COUNT(*) FILTER (WHERE normalization = 'normalized')::int AS "normalized",
+        COUNT(*) FILTER (WHERE normalization = 'pending')::int AS "pending",
+        COUNT(*) FILTER (WHERE normalization = 'conflict')::int AS "conflict"
+      FROM classified
+    `);
+
+    // The graph in the header illustrates one governed root. Pick the identity
+    // the catalog knows best — most trade names — rather than a fixed name.
+    const [top] = await this.listIdentities({ page: 1, pageSize: 1 }).then((r) => r.items);
+
+    const total = row?.total ?? 0;
+    return {
+      total,
+      identifierMapping: {
+        brands: row?.brands ?? 0,
+        generics: row?.generics ?? 0,
+        strengths: row?.strengths ?? 0,
+        dosageForms: row?.forms ?? 0,
+        markets: row?.markets ?? 0,
+        identifiers: row?.identifiers ?? 0,
+      },
+      normalization: {
+        normalized: row?.normalized ?? 0,
+        pending: row?.pending ?? 0,
+        conflict: row?.conflict ?? 0,
+      },
+      governance: {
+        governed: row?.governed ?? 0,
+        inReview: row?.inReview ?? 0,
+        restricted: row?.restricted ?? 0,
+        suppressed: row?.suppressed ?? 0,
+      },
+      // Tier is derived from governance (see catalog-classification), so the
+      // tiers are the governance counts regrouped — never an independent stat.
+      quality: {
+        A: row?.governed ?? 0,
+        B: row?.inReview ?? 0,
+        C: (row?.restricted ?? 0) + (row?.suppressed ?? 0),
+      },
+      topIdentity: top ?? null,
+    };
+  }
+
+  /**
+   * Generic identities — the catalog grouped by its generic root, which is the
+   * unit the admin table lists (one row per generic, with the brand / strength
+   * / form / market fan-out counted beneath it).
+   *
+   * Grouping happens in SQL: the table shows a page at a time, and pulling the
+   * catalog into memory to group it would not survive a real catalog. Search
+   * matches the generic root or any of its trade names, and the counts stay
+   * whole when it does — searching a brand narrows which identities are listed,
+   * not what each one is made of.
+   */
+  async listIdentities(query: { search?: string; page?: number; pageSize?: number }) {
+    const page = Math.max(1, query.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, query.pageSize ?? DEFAULT_PAGE_SIZE));
+    const search = (query.search ?? '').trim();
+    // A typed % or _ is a literal character in a medicine name ("Betadine 10%"),
+    // not a wildcard. Unescaped, "50%" matched six unrelated identities and a
+    // lone "_" matched the entire catalog.
+    // Backslash is PostgreSQL's default LIKE escape character, so prefixing is
+    // all that is needed for the pattern to treat them as literals.
+    const like = `%${search.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+
+    // Shared by the page query and the out-of-range count below, so both
+    // apply exactly the same filter.
+    const prelude = Prisma.sql`
+      WITH classified AS (${CLASSIFIED_CATALOG}),
+      brand_rows AS (${BRAND_ROWS}),
+      grouped AS (
+        SELECT
+          c.generic,
+          COUNT(*)::int AS entities,
+          COUNT(DISTINCT NULLIF(btrim(c.strength), ''))::int AS strengths,
+          COUNT(DISTINCT NULLIF(btrim(c."dosageForm"), ''))::int AS forms,
+          COUNT(DISTINCT c."jurisdictionId")::int AS markets,
+          -- Share of this identity's records that carry a resolved mapping.
+          ROUND(
+            100.0 * COUNT(*) FILTER (WHERE c.normalization = 'normalized') / COUNT(*)
+          )::int AS normalization,
+          -- Weakest link: an identity is only "governed" when all of its
+          -- records are, and any suppressed or controlled record surfaces.
+          CASE
+            WHEN bool_or(c.governance = 'suppressed') THEN 'suppressed'
+            WHEN bool_or(c.governance = 'restricted') THEN 'restricted'
+            WHEN bool_and(c.governance = 'governed') THEN 'governed'
+            ELSE 'in-review'
+          END AS governance
+        FROM classified c
+        GROUP BY c.generic
+      ),
+      counted AS (
+        SELECT
+          g.*,
+          COALESCE(b.brands, 0)::int AS brands
+        FROM grouped g
+        LEFT JOIN (
+          SELECT generic, COUNT(*)::int AS brands FROM brand_rows GROUP BY generic
+        ) b ON b.generic = g.generic
+        WHERE
+          ${search === '' ? Prisma.sql`TRUE` : Prisma.sql`(
+            g.generic ILIKE ${like}
+            OR EXISTS (
+              SELECT 1 FROM brand_rows br
+              WHERE br.generic = g.generic AND br.brand ILIKE ${like}
+            )
+          )`}
+      )
+    `;
+
+    const rows = await this.prisma.$queryRaw<
+      {
+        generic: string;
+        entities: number;
+        brands: number;
+        strengths: number;
+        forms: number;
+        markets: number;
+        normalization: number;
+        governance: GovernanceState;
+        total: number;
+      }[]
+    >(Prisma.sql`
+      ${prelude}
+      SELECT
+        generic, entities, brands, strengths, forms, markets, normalization, governance,
+        COUNT(*) OVER ()::int AS total
+      FROM counted
+      ORDER BY brands DESC, entities DESC, generic ASC
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `);
+
+    // The window count rides along on the returned rows, so a page past the end
+    // yields no rows and therefore no count. Ask for the match count separately
+    // in that case rather than reporting zero for a query that did match.
+    let total = rows[0]?.total ?? 0;
+    if (rows.length === 0 && page > 1) {
+      const [counts] = await this.prisma.$queryRaw<{ total: number }[]>(
+        Prisma.sql`${prelude} SELECT COUNT(*)::int AS total FROM counted`,
+      );
+      total = counts?.total ?? 0;
+    }
+    return {
+      items: rows.map((r) => ({
+        // Stable across pages and searches: the generic root is the identity.
+        id: r.generic,
+        generic: r.generic,
+        entities: r.entities,
+        brands: r.brands,
+        strengths: r.strengths,
+        dosageForms: r.forms,
+        markets: r.markets,
+        normalization: r.normalization,
+        governance: r.governance,
+        quality: tierFor(r.governance),
+      })),
+      total,
+      page,
+      pageSize,
+      pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
   async listForAdmin(query: ListMedicinesQuery) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -223,6 +438,15 @@ export class MedibaseService {
       pageSize,
       pageCount: Math.max(1, Math.ceil(total / pageSize)),
     };
+  }
+
+  /**
+   * Jurisdictions available to assign to a medicine identity during curation.
+   * An empty list is a real, distinct answer (MSA-35): it means no jurisdiction
+   * has ever been created in this deployment, not that the request failed.
+   */
+  async listJurisdictions() {
+    return this.prisma.jurisdiction.findMany({ orderBy: { code: 'asc' } });
   }
 
   async getForAdmin(id: string) {

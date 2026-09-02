@@ -255,6 +255,33 @@
     scroll-behavior: smooth;
   }
 
+  /*
+   * Accessibility preferences (Settings -> Accessibility), applied as classes
+   * on <html> by src/lib/a11y-preferences.js and by the boot script in
+   * index.html so neither one flashes before React mounts.
+   */
+
+  /* Larger text. The root font size is the one lever that moves every label,
+     because the whole design system sizes in rem — bumping a few text classes
+     would leave the fields and buttons around them at their old height. */
+  html.a11y-large-text {
+    font-size: 118.75%;
+  }
+
+  /* Reduce motion. Animations are collapsed rather than removed so anything
+     that waits on transitionend or animationend still gets its event. */
+  html.a11y-reduce-motion,
+  html.a11y-reduce-motion *,
+  html.a11y-reduce-motion *::before,
+  html.a11y-reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
   body {
     margin: 0;
     min-height: 100vh;
@@ -318,6 +345,38 @@
 /* ================================================================== */
 /*  UTILITIES                                                          */
 /* ================================================================== */
+@layer base {
+  /*
+   * Right-to-left support.
+   *
+   * Layout mirroring is handled by logical CSS utilities (ps/pe, ms/me,
+   * start/end, text-start) plus dir="rtl" on <html>, which the language
+   * provider sets. Only two things do not mirror on their own:
+   */
+
+  /* 1. Arrow glyphs. A "go forward" chevron points the way reading flows, so
+   *    it has to turn around in RTL. Scoped to arrows and chevrons by name so
+   *    no non-directional icon is ever mirrored. */
+  [dir='rtl'] .lucide-arrow-right,
+  [dir='rtl'] .lucide-arrow-left,
+  [dir='rtl'] .lucide-chevron-right,
+  [dir='rtl'] .lucide-chevron-left,
+  [dir='rtl'] .lucide-arrow-up-right,
+  [dir='rtl'] .lucide-arrow-right-left,
+  [dir='rtl'] .lucide-move-right,
+  [dir='rtl'] .lucide-corner-down-right {
+    transform: scaleX(-1);
+  }
+
+  /* 2. Latin-script runs inside Arabic — phone numbers, "10 MB", km values.
+   *    The browser's bidi algorithm orders these correctly on its own, but
+   *    isolating them stops a trailing digit or bracket from escaping into the
+   *    surrounding Arabic run. */
+  [dir='rtl'] .tabular {
+    unicode-bidi: isolate;
+  }
+}
+
 @layer utilities {
   /* Glassmorphism — used only for floating chrome (topbar, command bar) */
   .glass {

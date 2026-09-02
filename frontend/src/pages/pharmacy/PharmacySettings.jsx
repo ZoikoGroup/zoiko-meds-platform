@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -6,31 +6,135 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Flash, useFlash } from '@/components/shared/flash'
+import { CopyButton } from '@/components/shared/copy-button'
 import { useAuth } from '@/providers/auth-provider'
-import { User, KeyRound, Bell, Terminal, Copy, RefreshCw, Eye, EyeOff } from 'lucide-react'
+import {
+  getIntegration,
+  issueIntegrationKey,
+  getNotificationPreferences,
+  updateNotificationPreferences,
+} from '@/services/pharmacy-api'
+import { formatRelative } from '@/utils/format'
+// KeySquare rather than Terminal for API credentials: the terminal glyph is a
+// prompt caret and an underscore, which at 16px reads as stray punctuation
+// beside the title rather than as an icon (MP-20).
+import {
+  User, KeyRound, KeySquare, Bell, RefreshCw, Eye, EyeOff, Loader2, TriangleAlert,
+} from 'lucide-react'
 
+// `key` is the field the API stores this switch under. The labels and the order
+// are unchanged — only where the value lives has moved.
 const NOTIF_PREFS = [
-  { key: 'inventory', label: 'Inventory alerts', desc: 'When a medicine drops to out of stock.' },
-  { key: 'verification', label: 'Verification updates', desc: 'Licence and verification status changes.' },
-  { key: 'uploads', label: 'Upload results', desc: 'CSV import success or failures.' },
-  { key: 'system', label: 'System messages', desc: 'Maintenance and platform announcements.' },
+  { key: 'inventoryAlerts', label: 'Inventory alerts', desc: 'When a medicine drops to out of stock.' },
+  { key: 'verificationUpdates', label: 'Verification updates', desc: 'Licence and verification status changes.' },
+  { key: 'uploadResults', label: 'Upload results', desc: 'CSV import success or failures.' },
+  { key: 'systemMessages', label: 'System messages', desc: 'Maintenance and platform announcements.' },
 ]
 
 export default function PharmacySettings() {
   const { user, changePassword: doChangePassword } = useAuth()
   const [flashMsg, flash] = useFlash()
-  const [prefs, setPrefs] = useState({ inventory: true, verification: true, uploads: true, system: false })
+  // Null until the API answers. Rendering an assumed set first would show
+  // switches that reflect nothing stored — the exact bug this replaces, where
+  // every value was invented by the component.
+  const [prefs, setPrefs] = useState(null)
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
   const [showPwd, setShowPwd] = useState({ current: false, next: false, confirm: false })
-  const [apiKey] = useState('zk_live_9f2c…a71d')
+  // The integration is where the push key lives; settings reads the same record
+  // rather than inventing one. `null` until loaded, so the card can say
+  // "loading" instead of "no key issued yet" — those are different facts.
+  const [integration, setIntegration] = useState(null)
+  const [keyError, setKeyError] = useState('')
+  const [issuedKey, setIssuedKey] = useState('')
+  const [issuing, setIssuing] = useState(false)
+
+  // Issuing a key is PHARMACY_ADMIN-only on the API: it is a credential that
+  // writes this pharmacy's inventory with no user session behind it. Saying so
+  // here beats letting a pharmacist press the button and collect a 403.
+  const canIssueKey = user?.role === 'PHARMACY_ADMIN'
+
+  const loadIntegration = useCallback(async () => {
+    try {
+      setIntegration(await getIntegration())
+      setKeyError('')
+    } catch (err) {
+      // A pharmacy with no profile yet has no integration to read. That is not
+      // an error worth shouting about on a settings page.
+      setIntegration({ connected: false, apiKeyPrefix: null, apiKeyIssuedAt: null })
+      setKeyError(err?.message || '')
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadIntegration()
+  }, [loadIntegration])
+
+  const regenerateKey = async () => {
+    if (issuing) return
+    if (
+      integration?.apiKeyPrefix &&
+      !window.confirm(
+        'Generate a new key? The current key stops working immediately, and anything still using it will fail.',
+      )
+    ) return
+    setIssuing(true)
+    setKeyError('')
+    try {
+      const { apiKey, integration: refreshed } = await issueIntegrationKey()
+      setIssuedKey(apiKey)
+      setIntegration(refreshed)
+      flash('New API key issued — copy it now, it is not shown again')
+    } catch (err) {
+      // The API refuses a key before there is a feed to use it with, and says
+      // so; passing its message through is more use than a generic failure.
+      setKeyError(err?.message || 'Could not issue a key')
+    } finally {
+      setIssuing(false)
+    }
+  }
 
   const isPasswordTooShort = Boolean(pwd.next && pwd.next.length < 8)
   const passwordsMismatch = Boolean(pwd.confirm && pwd.next !== pwd.confirm)
   const isPasswordFormInvalid = !pwd.current || !pwd.next || !pwd.confirm || pwd.next !== pwd.confirm || pwd.next.length < 8
 
-  const toggle = (key) => {
-    setPrefs((p) => ({ ...p, [key]: !p[key] }))
-    flash('Notification preferences updated')
+  useEffect(() => {
+    let alive = true
+    getNotificationPreferences()
+      .then((saved) => alive && setPrefs(saved))
+      .catch(() => {
+        if (!alive) return
+        setPrefs(null)
+        flash('Could not load your notification preferences. Reload the page to try again.')
+      })
+    return () => {
+      alive = false
+    }
+    // `flash` is stable for the life of the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Flip one switch and save it.
+   *
+   * Optimistic, then reconciled with what the server actually stored: the
+   * switch moves immediately, and if the save fails it moves back. It must
+   * never rest in a state the backend did not accept — an operator who sees
+   * "off" is entitled to believe they will not be notified.
+   */
+  const toggle = async (key) => {
+    if (!prefs) return
+    const previous = prefs
+    const next = { ...prefs, [key]: !prefs[key] }
+    setPrefs(next)
+    try {
+      const saved = await updateNotificationPreferences({ [key]: next[key] })
+      // Render what was stored, not what was clicked.
+      setPrefs(saved && typeof saved === 'object' ? saved : next)
+      flash('Notification preferences updated')
+    } catch (err) {
+      setPrefs(previous)
+      flash(err?.message || 'Could not save that preference. Please try again.')
+    }
   }
 
   const [pwdError, setPwdError] = useState('')
@@ -182,7 +286,12 @@ export default function PharmacySettings() {
                   <span className="text-sm font-semibold text-foreground">{opt.label}</span>
                   <span className="text-xs text-muted-foreground">{opt.desc}</span>
                 </div>
-                <Switch checked={prefs[opt.key]} onCheckedChange={() => toggle(opt.key)} aria-label={opt.label} />
+                <Switch
+                  checked={Boolean(prefs?.[opt.key])}
+                  disabled={!prefs}
+                  onCheckedChange={() => toggle(opt.key)}
+                  aria-label={opt.label}
+                />
               </div>
             ))}
           </CardContent>
@@ -191,21 +300,70 @@ export default function PharmacySettings() {
         {/* API credentials */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Terminal className="size-4 text-primary" /> API credentials</CardTitle>
-            <CardDescription>Use this key to sync inventory from your POS / ERP.</CardDescription>
+            <CardTitle className="flex items-center gap-2"><KeySquare className="size-4 text-primary" /> API credentials</CardTitle>
+            <CardDescription>Use this key to push inventory from your POS / ERP.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5 pt-5">
-            <div className="flex items-center gap-2">
-              <Input value={apiKey} readOnly className="font-mono text-xs" />
-              <Button variant="outline" size="icon-sm" aria-label="Copy API key" onClick={() => flash('API key copied')}>
-                <Copy className="size-4" />
+            {/* What is stored, which is a prefix and a date — never the key.
+                It used to sit in a readonly Input beside a copy button, which
+                promised a value that could be copied back out. Only a hash is
+                kept, so there has never been anything there to copy (MP-20). */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/40 p-4">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-semibold text-foreground">Push key</span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {integration === null
+                    ? 'Loading…'
+                    : integration.apiKeyPrefix
+                      ? `${integration.apiKeyPrefix}… · issued ${formatRelative(integration.apiKeyIssuedAt) || 'recently'}`
+                      : 'No key issued yet'}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={regenerateKey}
+                disabled={issuing || integration === null || !canIssueKey}
+                title={canIssueKey ? undefined : 'Only a pharmacy manager can issue an API key.'}
+              >
+                {issuing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                {integration?.apiKeyPrefix ? 'Regenerate key' : 'Generate key'}
               </Button>
             </div>
-            {/* TODO(backend): POST /pharmacy/me/api-keys/rotate */}
-            <Button variant="outline" size="sm" className="w-fit" onClick={() => flash('A new key would be issued (backend TODO)')}>
-              <RefreshCw className="size-4" />
-              Regenerate key
-            </Button>
+
+            {!canIssueKey && (
+              <p className="text-xs text-muted-foreground">
+                Only a pharmacy manager can issue or rotate this key.
+              </p>
+            )}
+
+            {keyError && (
+              <p role="alert" className="flex items-start gap-2 text-xs font-medium text-danger">
+                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                {keyError}
+              </p>
+            )}
+
+            {/* The one moment the key exists in the open. The server keeps only
+                a hash, so this cannot be offered again on a later visit. */}
+            {issuedKey && (
+              <div className="flex flex-col gap-2 rounded-xl border border-warning/30 bg-warning/5 p-4">
+                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <TriangleAlert className="size-4 text-warning" aria-hidden />
+                  Copy this key now — it is not shown again
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                    {issuedKey}
+                  </code>
+                  <CopyButton value={issuedKey} label="Copy key" />
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  Only a hash is stored, so we cannot show it to you later. Lose it and you
+                  generate a new one.
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

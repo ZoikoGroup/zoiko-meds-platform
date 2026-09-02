@@ -98,6 +98,73 @@ export class AdminService {
     };
   }
 
+  /**
+   * Cross-entity quick search for the console's command palette (MSA-31). The
+   * palette advertised "pages, actions, and intelligence" but only ever
+   * matched the static nav labels — a real pharmacy, user, or medicine name
+   * always came back "No results found," regardless of how correctly it was
+   * typed. This is the "intelligence" half: a few of each match, each with
+   * enough on it for the palette to link straight to the record.
+   */
+  async globalSearch(q: string) {
+    const query = (q ?? '').trim();
+    if (query.length < 2) return { users: [], pharmacies: [], medicines: [] };
+
+    const [users, pharmacies, medicines] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          OR: [
+            { fullName: { contains: query, mode: 'insensitive' } },
+            { email: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, fullName: true, email: true, role: true },
+        take: 5,
+      }),
+      this.prisma.pharmacy.findMany({
+        where: {
+          OR: [
+            { name: { contains: query, mode: 'insensitive' } },
+            { licenseNumber: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, name: true, city: true, country: true },
+        take: 5,
+      }),
+      this.prisma.medicineEntity.findMany({
+        where: {
+          isSuppressed: false,
+          OR: [
+            { canonicalName: { contains: query, mode: 'insensitive' } },
+            { genericName: { contains: query, mode: 'insensitive' } },
+            { brandNames: { has: query } },
+          ],
+        },
+        select: { id: true, canonicalName: true, genericName: true, strength: true },
+        take: 5,
+      }),
+    ]);
+
+    return {
+      users: users.map((u) => ({
+        id: u.id,
+        label: u.fullName,
+        sublabel: u.email,
+        role: u.role,
+      })),
+      pharmacies: pharmacies.map((p) => ({
+        id: p.id,
+        label: p.name,
+        sublabel: [p.city, p.country].filter(Boolean).join(', '),
+      })),
+      medicines: medicines.map((m) => ({
+        id: m.id,
+        label: m.canonicalName,
+        sublabel: [m.genericName, m.strength].filter(Boolean).join(' · '),
+      })),
+    };
+  }
+
   // --- User management -----------------------------------------------------
 
   async listUsers(query: ListUsersQuery) {
@@ -139,7 +206,7 @@ export class AdminService {
     return this.toPublicUser(user);
   }
 
-  async createUser(actorId: string, dto: CreateUserDto) {
+  async createUser(actorId: string, dto: CreateUserDto, ipAddress?: string) {
     const email = this.normalizeEmail(dto.email);
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -187,15 +254,21 @@ export class AdminService {
       await this.ensurePharmacyVerificationRequest(user.id, actorId);
     }
 
-    await this.audit(actorId, 'admin.user.create', user.id, {
-      email: user.email,
-      role: user.role,
-      provisioned: useInvite ? 'invite' : 'credentials',
-    });
+    await this.audit(
+      actorId,
+      'admin.user.create',
+      user.id,
+      {
+        email: user.email,
+        role: user.role,
+        provisioned: useInvite ? 'invite' : 'credentials',
+      },
+      ipAddress,
+    );
     return { ...this.toPublicUser(user), invited: useInvite };
   }
 
-  async updateUser(actorId: string, id: string, dto: UpdateUserDto) {
+  async updateUser(actorId: string, id: string, dto: UpdateUserDto, ipAddress?: string) {
     const target = await this.requireUser(id);
     const data: Prisma.UserUpdateInput = {};
 
@@ -241,13 +314,11 @@ export class AdminService {
     ) {
       await this.ensurePharmacyVerificationRequest(user.id, actorId);
     }
-    await this.audit(actorId, 'admin.user.update', id, {
-      changed: Object.keys(data),
-    });
+    await this.audit(actorId, 'admin.user.update', id, { changed: Object.keys(data) }, ipAddress);
     return this.toPublicUser(user);
   }
 
-  async setRole(actorId: string, id: string, role: UserRole) {
+  async setRole(actorId: string, id: string, role: UserRole, ipAddress?: string) {
     const target = await this.requireUser(id);
     if (target.role === role) {
       if (
@@ -276,23 +347,20 @@ export class AdminService {
       await this.ensurePharmacyVerificationRequest(user.id, actorId);
     }
 
-    await this.audit(actorId, 'admin.user.role', id, {
-      from: target.role,
-      to: role,
-    });
+    await this.audit(actorId, 'admin.user.role', id, { from: target.role, to: role }, ipAddress);
     return this.toPublicUser(user);
   }
 
-  async resetPassword(actorId: string, id: string, password: string) {
+  async resetPassword(actorId: string, id: string, password: string, ipAddress?: string) {
     await this.requireUser(id);
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     await this.prisma.user.update({ where: { id }, data: { passwordHash } });
     // NEVER log the password itself.
-    await this.audit(actorId, 'admin.user.password_reset', id);
+    await this.audit(actorId, 'admin.user.password_reset', id, undefined, ipAddress);
     return { id, message: 'Password has been reset' };
   }
 
-  async setActive(actorId: string, id: string, isActive: boolean) {
+  async setActive(actorId: string, id: string, isActive: boolean, ipAddress?: string) {
     const target = await this.requireUser(id);
     if (!isActive) {
       this.assertNotSelf(actorId, id, 'deactivate');
@@ -309,21 +377,25 @@ export class AdminService {
       isActive ? 'admin.user.activate' : 'admin.user.deactivate',
       id,
       { email: user.email, isActive },
+      ipAddress,
     );
     return this.toPublicUser(user);
   }
 
-  async deleteUser(actorId: string, id: string) {
+  async deleteUser(actorId: string, id: string, ipAddress?: string) {
     const target = await this.requireUser(id);
     this.assertNotSelf(actorId, id, 'delete');
     if (target.role === UserRole.SUPER_ADMIN) {
       await this.assertNotLastSuperAdmin(target);
     }
     await this.prisma.user.delete({ where: { id } });
-    await this.audit(actorId, 'admin.user.delete', id, {
-      email: target.email,
-      role: target.role,
-    });
+    await this.audit(
+      actorId,
+      'admin.user.delete',
+      id,
+      { email: target.email, role: target.role },
+      ipAddress,
+    );
     return { id, deleted: true };
   }
 
@@ -593,8 +665,9 @@ export class AdminService {
     action: string,
     entityId: string,
     metadata?: Prisma.InputJsonValue,
+    ipAddress?: string,
   ) {
-    return this.auditWriter.write(actorId, action, 'User', entityId, metadata);
+    return this.auditWriter.write(actorId, action, 'User', entityId, metadata, ipAddress);
   }
 
   private tally<T extends Record<string, unknown>>(
@@ -612,15 +685,9 @@ export class AdminService {
     if (!user || user.pharmacyId) return;
 
     const userEmail = user.email.toLowerCase();
-    const defaultLicense = `LIC-${user.id.slice(-6).toUpperCase()}`;
 
     const existing = await this.prisma.verificationRequest.findFirst({
-      where: {
-        OR: [
-          { submittedBy: { contains: userEmail, mode: 'insensitive' } },
-          { licenseNumber: defaultLicense },
-        ],
-      },
+      where: { submittedBy: { contains: userEmail, mode: 'insensitive' } },
     });
 
     if (existing) {
@@ -636,14 +703,21 @@ export class AdminService {
         });
       }
     } else {
-      const pharmacyName = `${user.fullName} Pharmacy`;
+      // Placeholder row so reviewers can see the account is waiting to onboard.
+      // The licence is left blank rather than synthesised as "LIC-<user id>": a
+      // made-up value renders in the Verification Center exactly like a licence
+      // the pharmacy supplied, and it can never match the real one, which used
+      // to leave a second row behind once the operator submitted for real.
+      // PharmacyService.saveMyProfile adopts this row by submitter and fills in
+      // the true name and licence.
+      const pharmacyName = `${user.fullName} Pharmacy (awaiting details)`;
       const req = await this.prisma.verificationRequest.create({
         data: {
           pharmacyName,
-          licenseNumber: defaultLicense,
+          licenseNumber: '',
           submittedBy: `${user.fullName} (${user.email})`,
           status: VerificationRequestStatus.PENDING,
-          notes: `Automated pending verification request created upon role assignment to ${roleLabel(user.role)}.`,
+          notes: `Account given the ${roleLabel(user.role)} role. Awaiting the pharmacy's own details from the pharmacy portal profile.`,
         },
       });
 

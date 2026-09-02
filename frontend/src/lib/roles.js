@@ -34,9 +34,16 @@ export const ROLE_BADGE = {
 }
 
 // Ordered options for role <select> dropdowns.
+//
+// ADMIN is deliberately absent (MSA-34): it is a real backend authorization
+// tier (MediBase curation, commercial/billing routes, ...), but no frontend
+// portal or route guard was ever built for it — only SUPER_ADMIN is ever
+// routed into /admin. Assigning it here changed the account's role in the
+// database with no visible effect, since the person promoted still landed
+// on the ordinary patient dashboard and was bounced out of /admin like any
+// other non-admin account.
 export const ROLE_OPTIONS = [
   ROLES.SUPER_ADMIN,
-  ROLES.ADMIN,
   ROLES.PHARMACY_ADMIN,
   ROLES.PHARMACY_STAFF,
   ROLES.ENTERPRISE,

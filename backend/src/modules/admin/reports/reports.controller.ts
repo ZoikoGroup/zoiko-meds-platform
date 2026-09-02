@@ -3,11 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
+import { ApiBearerAuth, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { ReportsService } from './reports.service';
 import { CreateReportDto } from './dto/create-report.dto';
@@ -36,20 +39,46 @@ export class ReportsController {
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateReportDto,
+    @Ip() ipAddress: string,
   ) {
-    return this.reports.create(user.id, user.email, dto);
+    return this.reports.create(user.id, user.email, dto, ipAddress);
   }
 
   @Post(':id/duplicate')
   @ApiOperation({ summary: 'Duplicate an existing report' })
-  duplicate(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.reports.duplicate(user.id, user.email, id);
+  duplicate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.reports.duplicate(user.id, user.email, id, ipAddress);
   }
 
   @Get(':id/download')
-  @ApiOperation({ summary: 'Download a report as a governed export payload' })
-  download(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.reports.download(actorId, id);
+  @ApiOperation({
+    summary: 'Download a report as its stated format',
+    description:
+      'Answers with the artifact itself, not a description of one: a PDF report returns application/pdf, a CSV report text/csv. The format column and the downloaded file are decided together (MSA-53).',
+  })
+  @ApiProduces('application/pdf', 'text/csv', 'application/json')
+  async download(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+    @Res() res: Response,
+  ) {
+    const artifact = await this.reports.download(actorId, id, ipAddress);
+    res
+      .status(200)
+      .set({
+        'Content-Type': artifact.contentType,
+        'Content-Disposition': `attachment; filename="${artifact.filename}"`,
+        'Content-Length': String(artifact.body.length),
+        // An export is a point-in-time document; a cached copy would be a
+        // different report wearing the same URL.
+        'Cache-Control': 'no-store',
+      })
+      .send(artifact.body);
   }
 
   @Get(':id')
@@ -60,7 +89,11 @@ export class ReportsController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a report' })
-  remove(@CurrentUser('id') actorId: string, @Param('id') id: string) {
-    return this.reports.remove(actorId, id);
+  remove(
+    @CurrentUser('id') actorId: string,
+    @Param('id') id: string,
+    @Ip() ipAddress: string,
+  ) {
+    return this.reports.remove(actorId, id, ipAddress);
   }
 }

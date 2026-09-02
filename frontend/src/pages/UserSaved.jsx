@@ -3,16 +3,19 @@ import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { EmptyState } from '@/components/shared/states'
+import { EmptyState, ErrorState } from '@/components/shared/states'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Search, Trash2, Heart, ArrowRight } from 'lucide-react'
+import { Search, Trash2, Heart, ArrowRight, MapPin, Clock } from 'lucide-react'
+import { ConfidenceBadge } from '@/components/shared/status'
+import { AVAILABILITY, CONFIRM_NOTE, telHref } from '@/lib/availability'
+import { formatDistanceKm } from '@/lib/user-location'
 import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
 import { useLanguage } from '@/providers/language-provider'
 
 export default function UserSaved() {
   const { t } = useLanguage()
-  const { data: saved = [], isLoading } = useSavedMedicines()
+  const { data: saved = [], isLoading, isError, error, refetch } = useSavedMedicines()
   const unsaveMutation = useUnsaveMedicine()
   const toggleAlertsMutation = useToggleSavedAlerts()
   const [flashMsg, flash] = useFlash()
@@ -22,15 +25,15 @@ export default function UserSaved() {
     toggleAlertsMutation.mutate(
       { medicineId: id, alertsEnabled: !currentAlerts },
       {
-        onError: () => flash('Could not update alert preferences.'),
+        onError: () => flash(t('alertPrefsUpdateFailed', 'Could not update alert preferences.')),
       }
     )
   }
 
   const remove = (id, name) => {
     unsaveMutation.mutate(id, {
-      onSuccess: () => flash(`Removed ${name} from saved`),
-      onError: () => flash(`Could not remove ${name}`),
+      onSuccess: () => flash(t('savedRemovedNamed', 'Removed {name} from your saved medicines.', { name })),
+      onError: () => flash(t('savedRemoveFailedNamed', 'Could not remove {name}.', { name })),
     })
   }
 
@@ -59,7 +62,24 @@ export default function UserSaved() {
 
       {flashMsg && <Flash message={flashMsg} />}
 
-      {saved.length === 0 ? (
+      {isError ? (
+        // A failed load used to fall through to `saved = []` and render "No
+        // saved medicines yet" — the page told the patient their list was empty
+        // when it had never been read. Report the failure, and pass the API's
+        // own message through: it is what distinguishes a dead session from a
+        // migration the database has not been given yet.
+        <ErrorState
+          title={t('savedMedicinesLoadFailed', 'Could not load your saved medicines')}
+          description={
+            error?.message ||
+            t(
+              'savedMedicinesLoadFailedDesc',
+              'We could not reach your saved medicines just now. Please try again.',
+            )
+          }
+          onRetry={refetch}
+        />
+      ) : saved.length === 0 ? (
         <EmptyState
           icon={Heart}
           title={t('noSavedMedicinesYet', 'No saved medicines yet')}
@@ -74,7 +94,8 @@ export default function UserSaved() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {saved.map((med) => (
-            <Card key={med.id} className="transition-shadow hover:shadow-card">
+            // Off-catalog rows have no MediBase id; the name is their key.
+            <Card key={med.id ?? med.name} className="transition-shadow hover:shadow-card">
               <CardContent className="flex flex-col gap-4 py-5">
                 {/* Saved icon + name / generic · strength */}
                 <div className="flex items-start justify-between gap-2">
@@ -89,33 +110,119 @@ export default function UserSaved() {
                   </span>
                 </div>
 
+                {/* Availability confidence — the reason this page exists. The
+                    API already returns it per saved medicine; it was being
+                    discarded, leaving the page's own subtitle unfulfilled. */}
+                <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/40 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-muted-foreground">
+                      {t('availability', 'Availability')}
+                    </span>
+                    <ConfidenceBadge level={med.confidence ?? 'unknown'} size="sm" />
+                  </div>
+                  <span className="text-xs leading-relaxed text-foreground">
+                    {AVAILABILITY[med.confidence]?.plain ?? AVAILABILITY.unknown.plain}
+                  </span>
+                  {/* Every verified pharmacy near the patient that reports this
+                      medicine. The API used to send one — the strongest signal
+                      — so a patient with several pharmacies down the road was
+                      shown a single name and no way to reach the others. The
+                      one-line summary above it is the headline for this list,
+                      not a substitute for it. */}
+                  {(med.pharmacies?.length ?? 0) > 0 ? (
+                    <ul className="flex flex-col divide-y divide-border border-t border-border">
+                      {med.pharmacies.map((p) => (
+                        <li key={p.id} className="flex flex-col gap-1 pt-2 first:pt-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
+                              <MapPin className="size-3 shrink-0 text-muted-foreground" />
+                              <span className="truncate">{p.name}</span>
+                            </span>
+                            <ConfidenceBadge level={p.confidence ?? 'unknown'} size="sm" />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 ps-4 text-[11px] text-muted-foreground">
+                            {p.distance != null && <span>{formatDistanceKm(p.distance, p.approximate)}</span>}
+                            <span className="flex items-center gap-1">
+                              <Clock className="size-3 shrink-0" />
+                              {p.updated}
+                            </span>
+                            {/* Availability is a confidence signal, so the one
+                                action offered with it is to ring the branch and
+                                confirm. No number on the record, no dead link. */}
+                            {p.phone && (
+                              <a
+                                href={telHref(p.phone)}
+                                className="font-semibold text-primary hover:underline"
+                              >
+                                {t('call', 'Call')}
+                              </a>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    // Nothing in range. The summary line is safe to print here:
+                    // the API derives it from the same radius-bounded set as the
+                    // list, so with nothing nearby it says so rather than naming
+                    // the strongest pharmacy anywhere — which is how a patient in
+                    // Delhi was shown a Hyderabad pharmacy on a card whose own
+                    // radius had just excluded it.
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <MapPin className="size-3 shrink-0" />
+                        <span className="truncate">{med.pharmacy}</span>
+                        {med.distance != null && ` · ${formatDistanceKm(med.distance, med.approximate)}`}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="size-3 shrink-0" />
+                        {med.updated}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 {/* Alerts toggle */}
                 <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3">
                   <span className="text-sm font-medium text-foreground">{t('alertsEnabled', 'Alerts enabled')}</span>
                   <Switch
                     checked={med.alertsEnabled ?? true}
-                    onCheckedChange={() => toggleAlerts(med.id, med.alertsEnabled ?? true)}
+                    onCheckedChange={() => toggleAlerts(med.id ?? med.name, med.alertsEnabled ?? true)}
                     aria-label={`Toggle alerts for ${med.name}`}
                   />
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 border-t border-border pt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => navigate(`/medicine/${med.id}`)}
-                  >
-                    {t('viewDetails', 'View details')}
-                    <ArrowRight className="size-3.5" />
-                  </Button>
+                  {med.id ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => navigate(`/medicine/${med.id}`)}
+                    >
+                      {t('viewDetails', 'View details')}
+                      <ArrowRight className="size-3.5" />
+                    </Button>
+                  ) : (
+                    // No governed identity yet, so no detail page to open —
+                    // searching is still useful once a pharmacy adds it.
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => navigate(`/search?q=${encodeURIComponent(med.name)}`)}
+                    >
+                      {t('searchAgain', 'Search again')}
+                      <ArrowRight className="size-3.5" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     className="text-danger hover:bg-danger/5"
-                    aria-label={`Remove ${med.name} from saved`}
-                    onClick={() => remove(med.id, med.name)}
+                    aria-label={t('removeNamedFromSaved', 'Remove {name} from saved', { name: med.name })}
+                    onClick={() => remove(med.id ?? med.name, med.name)}
                     disabled={unsaveMutation.isPending}
                   >
                     <Trash2 className="size-4" />
@@ -125,6 +232,10 @@ export default function UserSaved() {
             </Card>
           ))}
         </div>
+      )}
+
+      {!isError && saved.length > 0 && (
+        <p className="text-xs leading-relaxed text-muted-foreground">{CONFIRM_NOTE}</p>
       )}
     </div>
   )

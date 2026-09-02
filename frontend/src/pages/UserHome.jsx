@@ -230,7 +230,7 @@ export default function UserHome() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
     if (!SpeechRecognition) {
-      setVoiceError('Speech recognition is not supported in this browser. Please type your search.')
+      setVoiceError(t('voiceUnsupported', 'Speech recognition is not supported in this browser. Please type your search.'))
       setIsListening(true)
       return
     }
@@ -280,7 +280,7 @@ export default function UserHome() {
 
       recognition.onerror = (event) => {
         if (event.error !== 'no-speech') {
-          setVoiceError(`Voice error (${event.error}). Please try again or type medicine name.`)
+          setVoiceError(t('voiceErrorNamed', 'Voice error ({error}). Please try again or type medicine name.', { error: event.error }))
         }
       }
 
@@ -291,7 +291,7 @@ export default function UserHome() {
       recognition.start()
       setIsListening(true)
     } catch (_err) {
-      setVoiceError('Could not access microphone. Please check permissions or type medicine name.')
+      setVoiceError(t('microphoneAccessFailed', 'Could not access microphone. Please check permissions or type medicine name.'))
       setIsListening(true)
     }
   }
@@ -334,7 +334,7 @@ export default function UserHome() {
       />
 
       <Dialog open={isListening} onOpenChange={(open) => { if (!open) stopVoice() }}>
-        <DialogContent className="sm:max-w-[420px] p-6">
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[420px] p-6">
           <DialogHeader className="items-center text-center flex flex-col gap-2">
             <div className={cn(
               "mx-auto flex size-14 items-center justify-center rounded-2xl transition-all",
@@ -358,7 +358,7 @@ export default function UserHome() {
             </div>
             <DialogTitle className="text-lg font-bold">
               {voiceError
-                ? 'Voice Search Error'
+                ? t('voiceSearchError', 'Voice Search Error')
                 : voiceMode === 'review' && mediBaseMatch === false
                 ? 'Unrecognized Medicine'
                 : voiceMode === 'review'
@@ -369,8 +369,8 @@ export default function UserHome() {
               {voiceError
                 ? voiceError
                 : voiceMode === 'review'
-                ? 'Review or edit the captured medicine name before searching:'
-                : 'Say a medicine name clearly — e.g. "Paracetamol", "Azithromycin", or "Cetirizine"'}
+                ? t('reviewCapturedName', 'Review or edit the captured medicine name before searching:')
+                : t('sayMedicineClearly', 'Say a medicine name clearly — e.g. “Paracetamol”, “Azithromycin”, or “Cetirizine”')}
             </DialogDescription>
           </DialogHeader>
 
@@ -378,7 +378,7 @@ export default function UserHome() {
           {voiceMode === 'review' && !voiceError && (
             <div className="mt-3 flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
-                <label htmlFor="voice-edit-input" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground text-left">
+                <label htmlFor="voice-edit-input" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground text-start">
                   Edit Medicine Name
                 </label>
                 {checkingMediBase ? (
@@ -413,9 +413,9 @@ export default function UserHome() {
                       goSearch(val)
                     }
                   }}
-                  placeholder="Type or edit medicine name..."
+                  placeholder={t('typeOrEditMedicineName', 'Type or edit medicine name...')}
                   className={cn(
-                    "h-11 rounded-xl text-sm font-semibold pl-3.5 pr-10 border transition-colors",
+                    "h-11 rounded-xl text-sm font-semibold ps-3.5 pe-10 border transition-colors",
                     mediBaseMatch === false && voiceTranscript.trim()
                       ? "border-danger focus-visible:ring-danger/20 bg-danger/5"
                       : mediBaseMatch === true
@@ -423,12 +423,12 @@ export default function UserHome() {
                       : "border-primary/30 focus-visible:ring-primary/20"
                   )}
                 />
-                <Edit3 className="absolute right-3.5 size-4 text-muted-foreground pointer-events-none" />
+                <Edit3 className="absolute end-3.5 size-4 text-muted-foreground pointer-events-none" />
               </div>
 
               {/* Invalid Medicine Warning Banner */}
               {mediBaseMatch === false && !checkingMediBase && voiceTranscript.trim() && (
-                <div className="flex items-start gap-2 rounded-xl bg-danger/10 p-2.5 text-xs text-danger border border-danger/20 leading-snug text-left mt-1">
+                <div className="flex items-start gap-2 rounded-xl bg-danger/10 p-2.5 text-xs text-danger border border-danger/20 leading-snug text-start mt-1">
                   <AlertCircle className="size-4 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-bold">Invalid Medicine:</span> &ldquo;{voiceTranscript}&rdquo; is not listed in the MediBase™ catalog. Please check the spelling or brand name.
@@ -438,7 +438,7 @@ export default function UserHome() {
 
               {/* Valid Medicine Match Indicator */}
               {mediBaseMatch === true && matchedName && !checkingMediBase && (
-                <div className="flex items-center gap-1.5 text-xs text-success font-medium text-left px-1 mt-0.5">
+                <div className="flex items-center gap-1.5 text-xs text-success font-medium text-start px-1 mt-0.5">
                   <ShieldCheck className="size-3.5 text-teal shrink-0" />
                   <span>Found in MediBase™: <strong className="font-semibold">{matchedName}</strong></span>
                 </div>
@@ -446,12 +446,14 @@ export default function UserHome() {
             </div>
           )}
 
-          <DialogFooter className="mt-5 flex flex-wrap gap-2 sm:justify-end">
+          {/* The footer stacks (flex-col-reverse) below sm:. The buttons must size
+                themselves on that vertical axis — see the note on each one. */}
+          <DialogFooter className="mt-5 flex flex-wrap gap-2.5 sm:gap-2 sm:justify-end">
             <Button
               variant="outline"
               size="sm"
               onClick={stopVoice}
-              className="rounded-xl text-xs flex-1 sm:flex-none"
+              className="h-11 w-full rounded-xl text-sm sm:h-8 sm:w-auto sm:text-xs"
             >
               Cancel
             </Button>
@@ -462,7 +464,7 @@ export default function UserHome() {
                   variant="outline"
                   size="sm"
                   onClick={triggerVoice}
-                  className="rounded-xl text-xs gap-1.5 flex-1 sm:flex-none"
+                  className="h-11 w-full gap-1.5 rounded-xl text-sm sm:h-8 sm:w-auto sm:text-xs"
                 >
                   <RotateCcw className="size-3.5" />
                   Speak again
@@ -476,7 +478,7 @@ export default function UserHome() {
                     stopVoice()
                     if (term) goSearch(term)
                   }}
-                  className="rounded-xl text-xs font-semibold gap-1.5 flex-1 sm:flex-none"
+                  className="h-11 w-full gap-1.5 rounded-xl text-sm font-semibold sm:h-8 sm:w-auto sm:text-xs"
                 >
                   <Search className="size-3.5" />
                   Search
@@ -488,7 +490,7 @@ export default function UserHome() {
                   variant="ghost"
                   size="sm"
                   disabled
-                  className="rounded-xl text-xs opacity-60 flex-1 sm:flex-none"
+                  className="h-11 w-full rounded-xl text-sm opacity-60 sm:h-8 sm:w-auto sm:text-xs"
                 >
                   Listening...
                 </Button>
@@ -501,10 +503,20 @@ export default function UserHome() {
       {/* ---------------------------------------------------------------- */}
       {/*  Hero                                                           */}
       {/* ---------------------------------------------------------------- */}
-      <section className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft">
-        <div className="absolute inset-0 bg-grid opacity-60" aria-hidden />
-        <div className="absolute -right-24 -top-24 size-72 rounded-full bg-primary/15 blur-3xl" aria-hidden />
-        <div className="absolute -left-20 top-1/2 size-56 rounded-full bg-teal/10 blur-3xl" aria-hidden />
+      {/* The card itself must not clip: the search suggestions open downward out
+          of it, and `overflow-hidden` here cut the list off at the card's edge —
+          one row on desktop, where the hero is shortest below the input. The
+          decoration still needs clipping (two of the blobs are deliberately
+          outside the box), so it gets its own clipped layer instead. */}
+      <section className="relative rounded-2xl border border-border bg-card shadow-soft">
+        <div
+          className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
+          aria-hidden
+        >
+          <div className="absolute inset-0 bg-grid opacity-60" />
+          <div className="absolute -right-24 -top-24 size-72 rounded-full bg-primary/15 blur-3xl" />
+          <div className="absolute -left-20 top-1/2 size-56 rounded-full bg-teal/10 blur-3xl" />
+        </div>
 
         <div className="relative flex flex-col gap-6 p-6 sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -519,7 +531,7 @@ export default function UserHome() {
               >
                 <MapPin className="size-3.5 text-primary" />
                 <span>{location}</span>
-                <span className="text-primary font-bold ml-1">Change</span>
+                <span className="text-primary font-bold ms-1">Change</span>
               </button>
             ) : (
               <button
@@ -545,7 +557,7 @@ export default function UserHome() {
           <div className="relative max-w-2xl">
             <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
               <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
+                <Search className="pointer-events-none absolute start-3.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={query}
                   onChange={(e) => { setQuery(e.target.value); setShowSuggestions(true) }}
@@ -553,18 +565,18 @@ export default function UserHome() {
                   onBlur={() => setShowSuggestions(false)}
                   onKeyDown={onHeroKeyDown}
                   placeholder={t('searchPlaceholder', 'Search by medicine, brand, or generic — e.g. Dolo 650')}
-                  aria-label="Search medicines"
+                  aria-label={t('searchMedicines', 'Search medicines')}
                   autoComplete="off"
                   role="combobox"
                   aria-expanded={showSuggestions && (suggLoading || suggestions.length > 0)}
                   aria-controls="home-medicine-suggestions"
-                  className="h-12 rounded-xl pl-11 pr-11 text-sm"
+                  className="h-12 rounded-xl ps-11 pe-11 text-sm"
                 />
                 <button
                   type="button"
                   onClick={triggerVoice}
-                  aria-label="Voice search"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-primary"
+                  aria-label={t('voiceSearch', 'Voice search')}
+                  className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-primary"
                 >
                   <Mic className="size-5" />
                 </button>
@@ -613,7 +625,7 @@ export default function UserHome() {
             <button
               key={a.title}
               onClick={() => navigate(a.to)}
-              className="group flex items-start gap-3.5 rounded-2xl border border-border bg-card p-5 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
+              className="group flex items-start gap-3.5 rounded-2xl border border-border bg-card p-5 text-start shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
             >
               <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', a.gradient)}>
                 <Icon className="size-5" />
@@ -651,7 +663,7 @@ export default function UserHome() {
             <button
               key={s.key}
               onClick={() => navigate(s.to)}
-              className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+              className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 text-start shadow-soft transition-shadow hover:shadow-card"
             >
               <span className="flex size-9 items-center justify-center rounded-xl bg-teal/10 text-teal">
                 <Icon className="size-4.5" />
@@ -685,7 +697,7 @@ export default function UserHome() {
               <button
                 key={c.med}
                 onClick={() => goSearch(c.med)}
-                className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
+                className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-start shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card"
               >
                 <span className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
                   <Icon className="size-5" />
@@ -702,13 +714,13 @@ export default function UserHome() {
         <Card className="p-6 md:col-span-6">
           <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
             <Webhook className="size-4 text-teal" />
-            How availability works
+            {t('howAvailabilityWorksCaps', 'HOW AVAILABILITY WORKS')}
           </h3>
           <ul className="mt-4 flex flex-col gap-3">
             {[
-              { icon: Network, t: 'MediBase™ identifies the medicine', d: 'Brands, generics, and strengths map to one governed identity.' },
-              { icon: Webhook, t: 'ZoikoAvail™ scores confidence', d: 'Verified-pharmacy signals are weighted by freshness and reliability.' },
-              { icon: ShieldCheck, t: 'You confirm before visiting', d: 'We show confidence, never exact stock. Always confirm with the pharmacy.' },
+              { icon: Network, t: t('medibaseIdentifies', 'MediBase™ identifies the medicine'), d: t('medibaseDesc', 'Brands, generics, and strengths map to one governed identity.') },
+              { icon: Webhook, t: t('zoikoAvailScores', 'ZoikoAvail™ scores confidence'), d: t('zoikoAvailDescSummary', 'Verified-pharmacy signals are weighted by freshness and reliability.') },
+              { icon: ShieldCheck, t: t('confirmBeforeVisiting', 'You confirm before visiting'), d: t('confirmBeforeVisitingDesc', 'We show confidence, never exact stock. Always confirm with the pharmacy.') },
             ].map((row) => {
               const Icon = row.icon
               return (
@@ -735,12 +747,12 @@ export default function UserHome() {
       <section className="flex flex-col gap-4">
         <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
           <MapPin className="size-4 text-teal" />
-          Nearby verified pharmacies
+          {t('nearbyVerifiedPharmacies', 'NEARBY VERIFIED PHARMACIES')}
         </h3>
         <div className="grid grid-cols-1 gap-5 md:grid-cols-12">
           <Card className="overflow-hidden p-0 md:col-span-8">
             <div className="relative h-[380px] w-full bg-slate-100 dark:bg-slate-900">
-              <svg className="size-full" viewBox="0 0 400 400" role="img" aria-label="Map of nearby verified pharmacies">
+              <svg className="size-full" viewBox="0 0 400 400" role="img" aria-label={t('mapOfNearbyPharmacies', 'Map of nearby verified pharmacies')}>
                 <path d="M0 200 H400 M200 0 V400" stroke="var(--border)" strokeWidth="8" strokeOpacity="0.5" strokeLinecap="round" />
                 <path d="M0 90 L400 300" stroke="var(--border)" strokeWidth="5" strokeOpacity="0.35" strokeLinecap="round" />
                 <g transform="translate(200 200)">
@@ -768,9 +780,9 @@ export default function UserHome() {
                   )
                 })}
               </svg>
-              <div className="absolute bottom-3 left-3 flex items-center gap-3 rounded-xl border border-border bg-card/90 px-3 py-2 text-xs backdrop-blur-sm">
-                <span className="font-semibold text-muted-foreground">Confidence:</span>
-                {[['High', 'var(--success)'], ['Moderate', 'var(--info)'], ['Low', 'var(--warning)']].map(([l, c]) => (
+              <div className="absolute bottom-3 start-3 flex items-center gap-3 rounded-xl border border-border bg-card/90 px-3 py-2 text-xs backdrop-blur-sm">
+                <span className="font-semibold text-muted-foreground">{t('confidenceLabel', 'Confidence:')}</span>
+                {[[t('confidenceHigh', 'High'), 'var(--success)'], [t('confidenceModerate', 'Moderate'), 'var(--info)'], [t('confidenceLow', 'Low'), 'var(--warning)']].map(([l, c]) => (
                   <span key={l} className="flex items-center gap-1.5 text-muted-foreground">
                     <span className="size-2.5 rounded-full" style={{ background: c }} />{l}
                   </span>
@@ -792,21 +804,21 @@ export default function UserHome() {
                       <span className="text-xs text-muted-foreground">{active.address}</span>
                     </div>
                     <Badge variant={active.open ? 'success' : 'secondary'} size="sm">
-                      {active.open ? 'Open' : 'Closed'}
+                      {active.open ? t('openNow', 'Open') : t('closed', 'Closed')}
                     </Badge>
                   </div>
 
                   <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-muted/40 p-3.5 text-sm">
                     <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Availability</span>
+                      <span className="text-muted-foreground">{t('availability', 'Availability')}</span>
                       <ConfidenceBadge level={active.confidence} size="sm" />
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Distance</span>
+                      <span className="text-muted-foreground">{t('distance', 'Distance')}</span>
                       <span className="font-semibold text-foreground tabular">{active.distance} km · {active.eta}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Last confirmed</span>
+                      <span className="text-muted-foreground">{t('lastConfirmed', 'Last confirmed')}</span>
                       <span className="font-semibold text-foreground">{active.updated}</span>
                     </div>
                   </div>
@@ -835,7 +847,7 @@ export default function UserHome() {
       <section className="flex flex-col gap-4">
         <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
           <Pill className="size-4 text-teal" />
-          Featured medicines
+          {t('featuredMedicines', 'FEATURED MEDICINES')}
         </h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {featured.map((med) => (
@@ -856,9 +868,9 @@ export default function UserHome() {
                   <span className="font-semibold text-foreground tabular">{med.distance == null ? '—' : `${med.distance} km`}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1"><Clock className="size-3.5" />Confirmed {med.updated}</span>
+                  <span className="flex items-center gap-1"><Clock className="size-3.5" />{t('confirmed', 'Confirmed')} {med.updated}</span>
                   <button onClick={() => goSearch(med.name)} className="flex items-center gap-1 font-semibold text-primary hover:underline">
-                    Check availability <ArrowRight className="size-3.5" />
+                    {t('checkAvailability', 'Check availability')} <ArrowRight className="size-3.5" />
                   </button>
                 </div>
               </CardContent>
@@ -872,14 +884,14 @@ export default function UserHome() {
         <section className="flex flex-col gap-4">
           <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
             <Clock className="size-4 text-muted-foreground" />
-            Recent searches
+            {t('recentSearchesCaps', 'RECENT SEARCHES')}
           </h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {recent.map((r) => (
               <button
                 key={r.term}
                 onClick={() => goSearch(r.term)}
-                className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-left shadow-soft transition-shadow hover:shadow-card"
+                className="flex items-center justify-between rounded-2xl border border-border bg-card p-4 text-start shadow-soft transition-shadow hover:shadow-card"
               >
                 <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Search className="size-4 text-muted-foreground" />

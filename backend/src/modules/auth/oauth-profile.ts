@@ -4,12 +4,12 @@
  * upsert logic stays provider-agnostic.
  */
 export interface OAuthProfile {
-  provider: 'google' | 'microsoft';
+  provider: 'google';
   providerId: string;
   email: string;
   fullName: string;
 }
 
 /** Providers we support, for config lookups and clean error messages. */
-export const OAUTH_PROVIDERS = ['google', 'microsoft'] as const;
+export const OAUTH_PROVIDERS = ['google'] as const;
 export type OAuthProviderName = (typeof OAUTH_PROVIDERS)[number];

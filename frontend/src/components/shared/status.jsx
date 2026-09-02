@@ -1,5 +1,6 @@
 import { AlertCircle, AlertTriangle, Ban, CheckCircle2, CircleDashed, Clock, MinusCircle, ShieldCheck, Wrench, XCircle, } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useLanguage } from '@/providers/language-provider';
 const TONE = {
     good: { variant: 'success', Icon: CheckCircle2 },
     warning: { variant: 'warning', Icon: AlertTriangle },
@@ -21,6 +22,9 @@ const SERVICE = {
     degraded: { tone: 'warning', label: 'Degraded', Icon: AlertTriangle },
     maintenance: { tone: 'serious', label: 'Maintenance', Icon: Wrench },
     down: { tone: 'critical', label: 'Down', Icon: XCircle },
+    // Not configured on this deployment. A real state, and not a failure: an
+    // integration nobody has set up is neither operational nor down.
+    disabled: { tone: 'neutral', label: 'Not configured', Icon: XCircle },
 };
 export function ServiceStatusBadge({ status, ...props }) {
     const meta = SERVICE[status];
@@ -28,16 +32,18 @@ export function ServiceStatusBadge({ status, ...props }) {
       {meta.label}
     </StatusBadge>);
 }
+
 const CONFIDENCE = {
-    high: { tone: 'good', label: 'High' },
-    moderate: { tone: 'serious', label: 'Moderate' },
-    low: { tone: 'warning', label: 'Low' },
-    unknown: { tone: 'neutral', label: 'Unknown' },
+    high: { tone: 'good', labelKey: 'confidenceHigh', defaultLabel: 'High' },
+    moderate: { tone: 'serious', labelKey: 'confidenceModerate', defaultLabel: 'Moderate' },
+    low: { tone: 'warning', labelKey: 'confidenceLow', defaultLabel: 'Low' },
+    unknown: { tone: 'neutral', labelKey: 'confidenceUnknown', defaultLabel: 'Unknown' },
 };
 export function ConfidenceBadge({ level, ...props }) {
-    const meta = CONFIDENCE[level];
+    const { t } = useLanguage();
+    const meta = CONFIDENCE[level] || CONFIDENCE.unknown;
     return (<StatusBadge tone={meta.tone} {...props}>
-      {meta.label}
+      {t(meta.labelKey, meta.defaultLabel)}
     </StatusBadge>);
 }
 const GOVERNANCE = {

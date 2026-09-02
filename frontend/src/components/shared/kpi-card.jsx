@@ -31,7 +31,9 @@ export function KpiCard({ metric, icon: Icon, index = 0, className }) {
             <span className="text-2xl font-semibold tracking-tight">
               {metric.value}
             </span>
-            <TrendDelta trend={metric.trend} value={metric.delta} upIsGood={metric.upIsGood}/>
+            {/* No delta means no baseline to compare against — showing a bare
+                arrow would imply a movement that was never measured. */}
+            {metric.delta != null && metric.delta !== '' && (<TrendDelta trend={metric.trend} value={metric.delta} upIsGood={metric.upIsGood}/>)}
           </div>
         </div>
 

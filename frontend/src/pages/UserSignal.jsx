@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, Bell, TrendingDown, PackageCheck, Radar, Search, CheckCheck, Inbox,
+  AlertCircle,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
@@ -43,6 +44,8 @@ export default function UserSignal() {
   const [alerts, setAlerts] = useState([])
   const [notifications, setNotifications] = useState([])
   const [settings, setSettings] = useState({})
+  const [loadFailures, setLoadFailures] = useState([])
+  const [settingsUnavailable, setSettingsUnavailable] = useState(false)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [savedQuery, setSavedQuery] = useState('')
@@ -57,16 +60,40 @@ export default function UserSignal() {
 
   useEffect(() => {
     let alive = true
-    Promise.all([listSavedStatus(), listActiveAlerts(), listNotifications()])
-      .then(([s, a, n]) => {
+
+    // Settled, not all: with Promise.all a single failing endpoint discarded the
+    // results of the two that worked, so one broken call emptied the whole page
+    // and every section on it looked equally dead (MN-26).
+    Promise.allSettled([listSavedStatus(), listActiveAlerts(), listNotifications()])
+      .then(([savedResult, alertsResult, notificationsResult]) => {
         if (!alive) return
-        setSaved(s)
-        setAlerts(a)
-        setNotifications(n)
+        if (savedResult.status === 'fulfilled') setSaved(savedResult.value ?? [])
+        if (alertsResult.status === 'fulfilled') setAlerts(alertsResult.value ?? [])
+        if (notificationsResult.status === 'fulfilled') {
+          setNotifications(notificationsResult.value ?? [])
+        }
+
+        // Named rather than counted: "your saved medicines could not be loaded"
+        // is actionable, and an empty page with no explanation is not.
+        const broken = [
+          savedResult.status === 'rejected' && 'saved medicines',
+          alertsResult.status === 'rejected' && 'active alerts',
+          notificationsResult.status === 'rejected' && 'notifications',
+        ].filter(Boolean)
+        setLoadFailures(broken)
+        if (broken.length > 0) {
+          flash(`Could not load your ${broken.join(', ')}. Your settings below still work.`)
+        }
       })
-      .catch(() => alive && flash('Could not load your ZoikoSignal data'))
+      // Backstop only: the handler above reads allSettled results, so this fires
+      // if that handler itself throws rather than on a failed request.
+      .catch(() => alive && flash(t('signalLoadFailed', 'Could not load your ZoikoSignal™ data')))
       .finally(() => alive && setLoading(false))
-    getNotificationSettings().then((x) => alive && setSettings(x)).catch(() => {})
+
+    getNotificationSettings()
+      .then((x) => alive && setSettings(x))
+      .catch(() => alive && setSettingsUnavailable(true))
+
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -97,7 +124,7 @@ export default function UserSignal() {
 
   const handleAction = (item) => {
     if (item.action?.kind === 'read') {
-      flash('Opening advisory…')
+      flash(t('openingAdvisory', 'Opening advisory…'))
       return
     }
     if (item.action?.query) {
@@ -111,7 +138,7 @@ export default function UserSignal() {
     setNotifications((n) => n.map((x) => ({ ...x, read: true })))
     setAlerts([])
     try { await markAllRead() } catch { /* optimistic */ }
-    flash('All notifications marked as read')
+    flash(t('allMarkedRead', 'All notifications marked as read'))
   }
 
   const handleRead = async (id) => {
@@ -124,28 +151,28 @@ export default function UserSignal() {
   const handleArchive = async (id) => {
     setNotifications((n) => n.filter((x) => x.id !== id))
     try { await archiveNotification(id) } catch { /* optimistic */ }
-    flash('Notification archived')
+    flash(t('notificationArchived', 'Notification archived'))
   }
 
   const handleDismiss = async (id) => {
     setNotifications((n) => n.filter((x) => x.id !== id))
     setAlerts((a) => a.filter((x) => x.id !== id))
     try { await dismissNotification(id) } catch { /* optimistic */ }
-    flash('Notification deleted')
+    flash(t('notificationDeleted', 'Notification deleted'))
   }
 
   const handleDelete = async (id) => {
     setNotifications((n) => n.filter((x) => x.id !== id))
     setAlerts((a) => a.filter((x) => x.id !== id))
     try { await dismissNotification(id) } catch { /* optimistic */ }
-    flash('Notification deleted')
+    flash(t('notificationDeleted', 'Notification deleted'))
   }
 
   const handleCyclePriority = async (med) => {
     const next = PRIORITY_ORDER[(PRIORITY_ORDER.indexOf(med.priority) + 1) % PRIORITY_ORDER.length]
     setSaved((s) => s.map((m) => (m.id === med.id ? { ...m, priority: next } : m)))
     try { await setMedicinePriority(med.id, next) } catch { /* optimistic */ }
-    flash(`${med.name} set to ${next} priority`)
+    flash(t('prioritySetNamed', '{name} set to {priority} priority', { name: med.name, priority: next }))
   }
 
   const handleToggleSetting = async (key) => {
@@ -155,7 +182,7 @@ export default function UserSignal() {
       await updateNotificationSettings({ [key]: next })
     } catch {
       setSettings((s) => ({ ...s, [key]: !next }))
-      flash('Could not update preference')
+      flash(t('prefUpdateFailed', 'Could not update preference'))
     }
   }
 
@@ -266,13 +293,13 @@ export default function UserSignal() {
                 {t('mySavedMedicines', 'MY SAVED MEDICINES')}
               </h3>
               <div className="relative w-full max-w-xs">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={savedQuery}
                   onChange={(e) => setSavedQuery(e.target.value)}
                   placeholder={t('searchSavedPlaceholder', 'Search saved medicines...')}
-                  aria-label="Search saved medicines"
-                  className="h-9 rounded-lg pl-9"
+                  aria-label={t('searchSavedMedicinesLabel', 'Search saved medicines')}
+                  className="h-9 rounded-lg ps-9"
                 />
               </div>
             </div>
@@ -281,7 +308,7 @@ export default function UserSignal() {
                 {Array.from({ length: 3 }).map((_, i) => <SavedMedicineSkeleton key={i} />)}
               </div>
             ) : savedFiltered.length === 0 ? (
-              <EmptyState icon={Search} title="No matches" description="No saved medicines match your search." className="py-10" />
+              <EmptyState icon={Search} title={t('noMatches', 'No matches')} description={t('noSavedMatchSearch', 'No saved medicines match your search.')} className="py-10" />
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <AnimatePresence mode="popLayout">
@@ -338,7 +365,7 @@ export default function UserSignal() {
                 ))}
               </div>
             ) : filteredNotifications.length === 0 ? (
-              <EmptyState icon={Inbox} title="Nothing here" description="No notifications match this filter." className="py-10" />
+              <EmptyState icon={Inbox} title={t('nothingHere', 'Nothing here')} description={t('noNotificationsMatchFilter', 'No notifications match this filter.')} className="py-10" />
             ) : (
               <motion.div layout className="flex flex-col gap-2.5">
                 <AnimatePresence mode="popLayout">
@@ -361,7 +388,30 @@ export default function UserSignal() {
       )}
 
       {/* Notification settings */}
-      <div className="max-w-2xl">
+      <div className="flex max-w-2xl flex-col gap-3">
+        {loadFailures.length > 0 && (
+          <div role="alert" className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold">
+                {loadFailures.join(', ')} could not be loaded
+              </span>
+              <span className="text-xs leading-relaxed text-foreground/90">
+                This is a problem on our side rather than an empty list. The
+                preferences below are unaffected and still save.
+              </span>
+            </div>
+          </div>
+        )}
+        {settingsUnavailable && (
+          <div role="alert" className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <span className="text-xs leading-relaxed">
+              Your notification preferences could not be loaded, so the switches below
+              may not reflect what is stored. Reload before changing them.
+            </span>
+          </div>
+        )}
         <NotificationSettings settings={settings} onToggle={handleToggleSetting} />
       </div>
     </div>

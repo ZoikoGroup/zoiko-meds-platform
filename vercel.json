@@ -3,7 +3,16 @@
   "outputDirectory": "frontend/dist",
   "installCommand": "cd frontend && npm ci",
   "framework": "vite",
+  "build": {
+    "env": {
+      "VITE_API_BASE_URL": "/internal"
+    }
+  },
   "rewrites": [
+    {
+      "source": "/internal/:path*",
+      "destination": "https://get.zoikomeds.com/api/:path*"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

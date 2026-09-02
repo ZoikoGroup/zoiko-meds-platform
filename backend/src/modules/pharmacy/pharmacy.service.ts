@@ -1,16 +1,58 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AvailabilityConfidence } from '@prisma/client';
+import {
+  AvailabilityConfidence,
+  CommercialClassification,
+  Notification,
+  NotificationStatus,
+  NotificationTarget,
+  QualityState,
+  SignalEventType,
+  SignalNotificationType,
+  UserRole,
+  VerificationRequestStatus,
+  VerificationStatus,
+} from '@prisma/client';
+import { resolveCountryAlpha2 } from '../../common/countries';
+import { resolveJurisdictionId } from '../../common/jurisdiction';
+import { normalizePhone } from '../../common/phone';
+import { logoUrlFor } from './logo/pharmacy-logo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
+import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
+import { assertLocationIsFree } from './location-identity';
+import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
+import { resolvePharmacyCoordinates } from './pharmacy-coordinates';
+import { canParticipate, participationBlockedReason } from './participation';
+import {
+  NotificationCategory,
+  NotificationPreferencesService,
+} from './notification-preferences.service';
+import { resolveMapLink } from './map-link';
+import {
+  PHARMACY_INVENTORY_KEY_PREFIX,
+  PHARMACY_UPLOAD_KEY_PREFIX,
+  PharmacyNotificationService,
+} from './notifications/pharmacy-notification.service';
+import { AcceptedDocument, readVerificationDocument } from './verification-document';
+import { VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
+
+/** Is this broadcast addressed to pharmacy staff at all? */
+function reachesPharmacyStaff(target: NotificationTarget): boolean {
+  return (
+    target === NotificationTarget.ALL_USERS ||
+    target === NotificationTarget.PHARMACY_MANAGERS
+  );
+}
 
 /**
  * Maps the pharmacy-facing status string to the AvailabilityConfidence enum
@@ -22,6 +64,58 @@ const STATUS_TO_CONFIDENCE: Record<string, AvailabilityConfidence> = {
   'out-of-stock': AvailabilityConfidence.LOW,
 };
 
+/** The three statuses the portal has; the CSV must resolve to one of them. */
+export const INVENTORY_STATUSES = ['available', 'limited', 'out-of-stock'] as const;
+
+/**
+ * How a spreadsheet spells each status.
+ *
+ * A CSV is typed by a person, so "Out of Stock", "OUT OF STOCK" and
+ * "out-of-stock" are all the same answer. The importer only ever recognised the
+ * hyphenated form, and everything else fell through a `|| HIGH` default — so a
+ * pharmacy that uploaded a medicine as out of stock had it published to patients
+ * as available. That is the bug this table exists to close, and the reason it is
+ * a lookup rather than another default.
+ */
+const STATUS_SYNONYMS: Record<string, (typeof INVENTORY_STATUSES)[number]> = {
+  available: 'available',
+  instock: 'available',
+  instocks: 'available',
+  yes: 'available',
+  y: 'available',
+  limited: 'limited',
+  limitedstock: 'limited',
+  low: 'limited',
+  lowstock: 'limited',
+  outofstock: 'out-of-stock',
+  outstock: 'out-of-stock',
+  unavailable: 'out-of-stock',
+  notavailable: 'out-of-stock',
+  nostock: 'out-of-stock',
+  no: 'out-of-stock',
+  n: 'out-of-stock',
+};
+
+/**
+ * Read a CSV status cell.
+ *
+ * Returns the canonical status, or null when the cell says something this
+ * product has no status for. Null is deliberately distinct from "empty": an
+ * unrecognised value is a mistake to report, not a value to default.
+ *
+ * Case, spacing, hyphens and underscores are all ignored, because none of them
+ * change what the pharmacist meant.
+ */
+export function normalizeInventoryStatus(
+  raw: string | null | undefined,
+): (typeof INVENTORY_STATUSES)[number] | null {
+  const key = String(raw ?? '')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+  if (!key) return null;
+  return STATUS_SYNONYMS[key] ?? null;
+}
+
 /** Maps AvailabilityConfidence back to the pharmacy-facing status string. */
 const CONFIDENCE_TO_STATUS: Record<string, string> = {
   HIGH: 'available',
@@ -30,6 +124,110 @@ const CONFIDENCE_TO_STATUS: Record<string, string> = {
   UNKNOWN: 'out-of-stock',
   SUPPRESSED: 'out-of-stock',
 };
+
+/**
+ * Which section of the portal's notification list a row belongs in.
+ *
+ * The category was previously hard-coded to 'verification' for every row, which is
+ * why the Inventory, Uploads and System filters could never match anything and
+ * read as broken (MP-24).
+ *
+ * There is no stored category to read: SignalNotificationType describes patient
+ * availability signals, and the verification workflow reuses SAFETY for its own
+ * decisions. The dedupe key is the honest discriminator - it is set by whichever
+ * workflow raised the row, and it is what distinguishes a verification decision
+ * from a genuine safety alert that happens to share a type.
+ *
+ * The two pharmacy-written prefixes are imported rather than repeated: they are
+ * a contract with PharmacyNotificationService, and a prefix that drifts on one
+ * side of it is an empty filter tab with nothing to show it is broken.
+ */
+function notificationCategory(row: {
+  dedupeKey: string;
+  type: SignalNotificationType;
+}): 'inventory' | 'verification' | 'upload' | 'system' {
+  if (row.dedupeKey.startsWith('verification:')) return 'verification';
+  if (row.dedupeKey.startsWith(PHARMACY_UPLOAD_KEY_PREFIX)) return 'upload';
+  if (row.dedupeKey.startsWith(PHARMACY_INVENTORY_KEY_PREFIX)) return 'inventory';
+
+  switch (row.type) {
+    // Availability signals about a medicine: stock, in this portal's language.
+    case SignalNotificationType.RUNNING_LOW:
+    case SignalNotificationType.BACK_IN_STOCK:
+    case SignalNotificationType.LIMITED:
+    case SignalNotificationType.NEARBY_RESTOCK:
+      return 'inventory';
+    // Recalls and advisories are platform-wide messages, not this pharmacy's
+    // stock, so they belong with the other platform messages.
+    case SignalNotificationType.RECALL:
+    case SignalNotificationType.SAFETY:
+    default:
+      return 'system';
+  }
+}
+
+/**
+ * Store the country as its alpha-2 code, whichever form the operator typed.
+ *
+ * The field is free text on the form and always will be — somebody will type
+ * "India" and somebody else "IN", and both are the same answer. Billing is not so
+ * forgiving: the price catalog is keyed on the code and the payment provider
+ * rejects anything else, so the code is what gets persisted. An unrecognisable
+ * value is refused at the edge instead of becoming a purchase that fails much
+ * later with a message about markets.
+ */
+/**
+ * A pharmacy's own contact number in E.164, or a refusal.
+ *
+ * Patient search offers one action on every pharmacy card — call before you
+ * travel — and it can only be the number of that exact branch. A pharmacy with
+ * no number reaches patients as a card they cannot act on, so the number is
+ * required rather than optional, and it is never defaulted or borrowed from
+ * anywhere.
+ *
+ * Local and international form are both accepted: the number is read against the
+ * pharmacy's own country and stored in one form. A number that is not valid for
+ * that country is refused rather than saved, because a number nobody can ring
+ * still looks like a way to reach the pharmacy.
+ */
+function normalizePhoneInput(
+  phone: string | null | undefined,
+  country: string | null | undefined,
+): string {
+  const typed = phone?.trim();
+  if (!typed) {
+    throw new BadRequestException(
+      "Enter the pharmacy's contact number, including its country or area code — " +
+        'patients are shown this number to confirm availability before visiting.',
+    );
+  }
+
+  const normalized = normalizePhone(typed, country);
+  if (!normalized) {
+    throw new BadRequestException(
+      country
+        ? `"${typed}" is not a valid phone number for ${country}. Include the area code, or write it ` +
+          'in international form such as +91 40 2345 6789.'
+        : `"${typed}" is not a valid phone number. Write it in international form, such as ` +
+          '+91 40 2345 6789, or set your country first so a local number can be understood.',
+    );
+  }
+  return normalized;
+}
+
+function normalizeCountryInput(country?: string | null): string | null {
+  const typed = country?.trim();
+  if (!typed) return null;
+
+  const resolved = resolveCountryAlpha2(typed);
+  if (!resolved) {
+    throw new BadRequestException(
+      `"${typed}" is not a country we recognise. Enter the country name, such as India, or its ` +
+        'two-letter code, IN.',
+    );
+  }
+  return resolved;
+}
 
 /**
  * Pharmacy verification, participation & inventory management.
@@ -43,6 +241,10 @@ export class PharmacyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditWriter: AuditWriter,
+    private readonly savedLink: SavedMedicineLinkService,
+    private readonly portalNotifications: PharmacyNotificationService,
+    private readonly notificationPreferences: NotificationPreferencesService,
+    private readonly nearby: NearbyPharmacyService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -50,7 +252,7 @@ export class PharmacyService {
   // ---------------------------------------------------------------------------
 
   async listVerified() {
-    return this.prisma.pharmacy.findMany({
+    const pharmacies = await this.prisma.pharmacy.findMany({
       where: { verificationStatus: 'VERIFIED', isParticipating: true },
       select: {
         id: true,
@@ -58,12 +260,34 @@ export class PharmacyService {
         city: true,
         region: true,
         reliabilityScore: true,
+        // The timestamp, never the image: this list is a patient-facing query and
+        // the bytes live in their own table precisely so it stays cheap.
+        logoUpdatedAt: true,
       },
     });
+    return pharmacies.map(({ logoUpdatedAt, ...pharmacy }) => ({
+      ...pharmacy,
+      logoUrl: logoUrlFor(pharmacy.id, logoUpdatedAt),
+    }));
   }
 
   async findById(id: string) {
-    return this.prisma.pharmacy.findUnique({ where: { id } });
+    const pharmacy = await this.prisma.pharmacy.findUnique({ where: { id } });
+    // Returning null here would serialize as a 200 with an empty body, which
+    // clients cannot distinguish from a successful fetch — surface a 404.
+    if (!pharmacy) throw new NotFoundException('Pharmacy not found');
+    return { ...pharmacy, logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt) };
+  }
+
+  /**
+   * Coordinates behind a Google Maps share link.
+   *
+   * Read-only: it never touches the pharmacy record. The portal shows the pair
+   * for confirmation first, and saving it goes through the normal profile
+   * update, so a mis-pasted link cannot silently move a pharmacy.
+   */
+  async resolveMapLink(url: string) {
+    return resolveMapLink(url);
   }
 
   async getProfile(pharmacyId: string, user?: AuthenticatedUser) {
@@ -75,31 +299,312 @@ export class PharmacyService {
     const latestReq = await this.prisma.verificationRequest.findFirst({
       where: { pharmacyId },
       orderBy: { createdAt: 'desc' },
+      // Metadata only — the bytes are never sent to the portal, which only
+      // needs to show the operator which file is currently attached.
+      include: {
+        document: {
+          select: { filename: true, mimeType: true, sizeBytes: true, updatedAt: true },
+        },
+      },
     });
 
+    // Every field below is the stored value or empty — never a fabricated
+    // placeholder. The profile page renders this as the pharmacy's own record,
+    // so invented contact details would read as real data to the operator.
     return {
       id: pharmacy.id,
+      isDraft: false,
       name: pharmacy.name,
       licenseNumber: pharmacy.licenseNumber || '',
       verificationStatus: pharmacy.verificationStatus,
       isParticipating: pharmacy.isParticipating,
-      phone: pharmacy.phone || '+91 40 2345 6789',
-      email: user?.email || 'pharmacy@zoikomeds.io',
+      // Null unless something is holding an approved pharmacy back. Verified
+      // and listed are separate answers now, and an operator who has been
+      // approved but cannot be found needs to be told which one is missing.
+      listingBlockedReason: participationBlockedReason(pharmacy),
+      phone: pharmacy.phone || '',
+      email: user?.email || '',
       addressLine1: pharmacy.addressLine1 || '',
       addressLine2: pharmacy.addressLine2 || '',
       city: pharmacy.city || '',
       region: pharmacy.region || '',
       country: pharmacy.country || '',
       postalCode: pharmacy.postalCode || '',
+      // Null until the operator sets a location; the portal renders the
+      // "not set yet" state from exactly that.
+      latitude: pharmacy.latitude,
+      longitude: pharmacy.longitude,
+      // APPROXIMATE means the pin came from geocoding an area — the middle of a
+      // city or a PIN code, not the shop. The portal tells the operator so, and
+      // asks for a maps link: only they know which building it is.
+      locationPrecision: pharmacy.locationPrecision,
       reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      logoUrl: logoUrlFor(pharmacy.id, pharmacy.logoUpdatedAt),
+      // Commercial standing, so the portal can show the plan without a second
+      // round trip. Deliberately not the price: what a pharmacy pays comes from
+      // the catalog, and the profile is not a billing surface (ZM-COM-BILL-001).
+      commercialClassification: pharmacy.commercialClassification,
+      reviewStatus: latestReq?.status ?? null,
+      reviewedBy: latestReq?.reviewer ?? null,
+      submittedAt: latestReq?.createdAt ?? null,
       notes: latestReq?.notes || null,
-      hours: [
-        { day: 'Mon–Fri', open: '08:00', close: '22:00' },
-        { day: 'Saturday', open: '08:00', close: '22:00' },
-        { day: 'Sunday', open: '09:00', close: '21:00' },
-      ],
+      // What the reviewer will see attached to this request, so the profile can
+      // say "licence.pdf, uploaded on…" instead of offering an empty control
+      // that hides a document already on file.
+      document: latestReq?.document
+        ? {
+            filename: latestReq.document.filename,
+            mimeType: latestReq.document.mimeType,
+            sizeBytes: latestReq.document.sizeBytes,
+            uploadedAt: latestReq.document.updatedAt,
+          }
+        : null,
     };
   }
+
+  /**
+   * Profile for the logged-in pharmacy user, resolved from Pharmacy Management.
+   *
+   * An account with no pharmacy link yet gets an empty draft rather than an
+   * error: that is the self-onboarding path, where the operator fills in their
+   * own details and `saveMyProfile` files the verification request. Inventory
+   * routes still hard-fail on a missing link via `resolvePharmacyId`.
+   */
+  async getMyProfile(user: AuthenticatedUser) {
+    const pharmacyId = await this.findMyPharmacyId(user);
+    if (pharmacyId) return this.getProfile(pharmacyId, user);
+
+    // An admin may already have queued a placeholder request for this account
+    // (AdminService.ensurePharmacyVerificationRequest). Carry its reviewer
+    // correspondence into the draft so the operator sees where they stand
+    // instead of being told nothing has been submitted.
+    const pending = user?.email
+      ? await this.prisma.verificationRequest.findFirst({
+          where: {
+            pharmacyId: null,
+            submittedBy: { contains: user.email, mode: 'insensitive' },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : null;
+
+    return {
+      id: null,
+      isDraft: true,
+      name: '',
+      licenseNumber: '',
+      verificationStatus: VerificationStatus.UNVERIFIED,
+      isParticipating: false,
+      // No pharmacy record yet, so nothing is being held back — there is
+      // nothing to hold. Present for shape parity with a saved profile.
+      listingBlockedReason: null,
+      phone: '',
+      email: user?.email || '',
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      region: '',
+      country: '',
+      postalCode: '',
+      latitude: null,
+      longitude: null,
+      locationPrecision: null,
+      reliabilityScore: 0,
+      // Same shape as a saved profile: a draft simply has no logo yet.
+      logoUrl: null,
+      // No pharmacy record exists yet, so there is nothing claimed either.
+      commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
+      reviewStatus: pending?.status ?? null,
+      reviewedBy: pending?.reviewer ?? null,
+      submittedAt: pending?.createdAt ?? null,
+      notes: pending?.notes ?? null,
+      document: null,
+    };
+  }
+
+  /** Pharmacy link for the caller, or null when the account has none yet. */
+  private async findMyPharmacyId(user: AuthenticatedUser): Promise<string | null> {
+    if (user?.pharmacyId) return user.pharmacyId;
+    if (!user?.id) return null;
+    const row = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { pharmacyId: true },
+    });
+    return row?.pharmacyId ?? null;
+  }
+
+  /**
+   * Save the logged-in pharmacy's own profile, creating the Pharmacy record on
+   * first submit, and file a verification request for the admin panel.
+   *
+   * Re-review is triggered when the pharmacy is not yet verified, and when an
+   * already-verified pharmacy changes its name or licence number — those are the
+   * two fields verification actually attests to, so a change has to be re-checked.
+   * Address and phone edits on a verified pharmacy do not drop its status.
+   */
+  async saveMyProfile(
+    user: AuthenticatedUser,
+    dto: UpdatePharmacyProfileDto,
+    ipAddress?: string,
+  ) {
+    const pharmacyId = await this.findMyPharmacyId(user);
+    if (pharmacyId) {
+      return this.updateProfile(pharmacyId, dto, user, ipAddress);
+    }
+
+    const name = dto.name?.trim();
+    const licenseNumber = dto.licenseNumber?.trim();
+    if (!name || !licenseNumber) {
+      throw new BadRequestException(
+        'Pharmacy name and licence number are required to submit your pharmacy for verification.',
+      );
+    }
+
+    // Resolved once, before the write: the phone number is interpreted in this
+    // country, so a national-format number and the country it belongs to have to
+    // be settled together.
+    const submittedCountry = normalizeCountryInput(dto.country);
+
+    // Patients are given this number to confirm before travelling, so a new
+    // pharmacy cannot be registered without one.
+    const phone = normalizePhoneInput(dto.phone, submittedCountry);
+
+    // Read and checked before anything is written. A file this service cannot
+    // accept must fail the submission outright — filing a pharmacy for review
+    // and then failing to attach its licence would report success for a
+    // submission the reviewer cannot act on.
+    const document = dto.document?.content ? readVerificationDocument(dto.document) : null;
+
+    // Resolved before the transaction opens: geocoding is a network call and
+    // must not hold a database transaction. An operator registering by address
+    // does not have coordinates to hand, and a pharmacy stored without them can
+    // never be returned by the distance-bounded patient search — so the address
+    // is geocoded here rather than leaving the row unlocatable until someone
+    // notices and runs the backfill.
+    const coords = await resolvePharmacyCoordinates(this.nearby, dto, [
+      dto.addressLine1,
+      dto.addressLine2,
+      dto.city,
+      dto.region,
+      dto.postalCode,
+      submittedCountry,
+    ]);
+
+    // One physical pharmacy, one record. Checked before the insert, so the
+    // second registration of a shop is refused rather than created and merged
+    // later — by then both halves hold their own availability signals and there
+    // is no way to tell a patient which card is the real one.
+    if (coords) {
+      await assertLocationIsFree(this.prisma, {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+      });
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const jurisdictionId = await resolveJurisdictionId(tx, submittedCountry);
+      const pharmacy = await tx.pharmacy.create({
+        data: {
+          name,
+          licenseNumber,
+          phone,
+          addressLine1: dto.addressLine1?.trim() || null,
+          addressLine2: dto.addressLine2?.trim() || null,
+          city: dto.city?.trim() || null,
+          region: dto.region?.trim() || null,
+          country: submittedCountry,
+          jurisdictionId,
+          postalCode: dto.postalCode?.trim() || null,
+          // Without these the pharmacy is invisible to the distance-bounded
+          // patient search, however complete the rest of the profile is.
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
+          locationPrecision: coords?.precision ?? null,
+          // Awaiting review — a self-declared pharmacy is never trusted on
+          // submit, so it stays out of public results until an admin approves.
+          verificationStatus: VerificationStatus.PENDING,
+          isParticipating: false,
+          reliabilityScore: 0,
+        },
+      });
+
+      await tx.user.update({
+        where: { id: user.id },
+        data: { pharmacyId: pharmacy.id },
+      });
+
+      // Adopt any request raised before this pharmacy record existed so the
+      // Verification Center shows one row, not two.
+      //
+      // Matching on licence alone is not enough: AdminService provisions a
+      // request via ensurePharmacyVerificationRequest as soon as an account gets
+      // a pharmacy role, and it cannot know the real licence — so that row never
+      // matches what the operator later types. Match on the submitting account
+      // as well, which is the stable identifier across both paths, and overwrite
+      // the provisional name/licence with what was actually submitted.
+      const orphan = await tx.verificationRequest.findFirst({
+        where: {
+          pharmacyId: null,
+          OR: [
+            { licenseNumber },
+            { submittedBy: { contains: user.email, mode: 'insensitive' } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (orphan) {
+        await tx.verificationRequest.update({
+          where: { id: orphan.id },
+          data: {
+            pharmacyId: pharmacy.id,
+            pharmacyName: name,
+            licenseNumber,
+            submittedBy: `${user.fullName} (${user.email})`,
+            status: VerificationRequestStatus.PENDING,
+            notes: orphan.notes
+              ? `${orphan.notes}\nPharmacy submitted its own details from the pharmacy portal profile.`
+              : 'Submitted by the pharmacy from the pharmacy portal profile.',
+          },
+        });
+      } else {
+        await tx.verificationRequest.create({
+          data: {
+            pharmacyId: pharmacy.id,
+            pharmacyName: name,
+            licenseNumber,
+            submittedBy: `${user.fullName} (${user.email})`,
+            status: VerificationRequestStatus.PENDING,
+            notes: 'Submitted by the pharmacy from the pharmacy portal profile.',
+          },
+        });
+      }
+
+      return pharmacy;
+    });
+
+    // The document is attached to the request the transaction just filed. An
+    // unreadable file has already thrown out of readVerificationDocument before
+    // this point on the update path; here the profile exists first because the
+    // request it attaches to did not exist until a moment ago.
+    if (document) {
+      const requestId = await this.currentRequestId(created.id);
+      if (requestId) {
+        await this.storeVerificationDocument(requestId, created.id, user?.id ?? null, document);
+      }
+    }
+
+    await this.auditWriter.write(
+      user?.id ?? null,
+      'pharmacy.profile.submit',
+      'Pharmacy',
+      created.id,
+      { userId: user?.id, pharmacyId: created.id, name, licenseNumber },
+      ipAddress,
+    );
+
+    return this.getProfile(created.id, user);
+  }
+  
 
   async updateProfile(
     pharmacyId: string,
@@ -110,17 +615,136 @@ export class PharmacyService {
     const existing = await this.prisma.pharmacy.findUnique({ where: { id: pharmacyId } });
     if (!existing) throw new NotFoundException('Pharmacy not found');
 
+    // Before any write, for the same reason as on first submit.
+    const document = dto.document?.content ? readVerificationDocument(dto.document) : null;
+
+    const name = dto.name !== undefined ? dto.name.trim() : undefined;
+    const licenseNumber = dto.licenseNumber !== undefined ? dto.licenseNumber.trim() : undefined;
+
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('Pharmacy name cannot be empty.');
+    }
+    if (dto.licenseNumber !== undefined && !licenseNumber) {
+      throw new BadRequestException('Licence number cannot be empty.');
+    }
+
+    // The country this edit leaves the record in, which is the one a national-format
+    // phone number is read against. Taking it from `existing` alone would reject a
+    // valid number whenever the country is being corrected in the same save.
+    const country =
+      dto.country !== undefined ? normalizeCountryInput(dto.country) : existing.country;
+
+    // Re-resolved only when the country itself is part of this edit — an edit
+    // to, say, the address alone must not spend a write re-deriving a value
+    // nothing about this save is changing.
+    const jurisdictionId =
+      dto.country !== undefined
+        ? await resolveJurisdictionId(this.prisma, country)
+        : existing.jurisdictionId;
+
+    // The contact number is what a patient acts on, so it cannot be cleared, and a
+    // record that never had one has to supply it on the next save. A save that does
+    // not touch the field on a pharmacy that already has a number is unaffected: a
+    // number stored before this validation existed must not block an edit to the
+    // address, and it is normalized the moment the operator next touches the field.
+    let phone = existing.phone;
+    if (dto.phone !== undefined) {
+      phone = normalizePhoneInput(dto.phone, country);
+    } else if (!existing.phone?.trim()) {
+      throw new BadRequestException(
+        "Add the pharmacy's contact number before saving — patients are shown this " +
+          'number to confirm availability before visiting.',
+      );
+    }
+
+    // Re-locate when the operator supplied a pin, when the address changed, or
+    // when the record simply never had coordinates. That last case is what
+    // brings an already-registered pharmacy into patient search: it is stored
+    // with an address and no pin, and until it has one no distance-bounded
+    // search can return it, so the next profile save is the natural moment to
+    // resolve it rather than waiting for an admin to notice.
+    const addressChanged =
+      dto.addressLine1 !== undefined ||
+      dto.addressLine2 !== undefined ||
+      dto.city !== undefined ||
+      dto.region !== undefined ||
+      dto.postalCode !== undefined ||
+      dto.country !== undefined;
+    const missingCoords = existing.latitude == null || existing.longitude == null;
+    const suppliedPin = dto.latitude != null && dto.longitude != null;
+
+    // A supplied pin goes through the same resolver as a geocode rather than
+    // straight to the column. It still wins — the operator dropped it on their
+    // own branch, which beats any address lookup — but the resolver is also
+    // where a pin is checked against the address saved beside it, and a pin
+    // that skips that check is how a Delhi pharmacy came to be stored in
+    // Hyderabad with nothing to flag it.
+    const located =
+      suppliedPin || addressChanged || missingCoords
+        ? await resolvePharmacyCoordinates(
+            this.nearby,
+            suppliedPin ? { latitude: dto.latitude, longitude: dto.longitude } : {},
+            [
+              dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
+              dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
+              dto.city !== undefined ? dto.city : existing.city,
+              dto.region !== undefined ? dto.region : existing.region,
+              dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
+              country,
+            ],
+          )
+        : null;
+
+    // Geocoding only ever fills a gap; it never overwrites a pin already stored.
+    const nextLat = located?.latitude ?? existing.latitude;
+    const nextLng = located?.longitude ?? existing.longitude;
+    const nextPrecision = located?.precision ?? existing.locationPrecision;
+
+    // A profile edit can move the pin. Moving it onto another pharmacy's
+    // premises creates the same duplicate a second registration would; itself
+    // excluded, so re-saving an unchanged location is never blocked.
+    const movingPin = nextLat !== existing.latitude || nextLng !== existing.longitude;
+    if (movingPin && nextLat != null && nextLng != null) {
+      await assertLocationIsFree(this.prisma, {
+        latitude: nextLat,
+        longitude: nextLng,
+        excludeId: pharmacyId,
+      });
+    }
+
     const updated = await this.prisma.pharmacy.update({
       where: { id: pharmacyId },
       data: {
-        name: dto.name !== undefined ? dto.name : existing.name,
-        licenseNumber: dto.licenseNumber !== undefined ? dto.licenseNumber : existing.licenseNumber,
-        phone: dto.phone !== undefined ? dto.phone : existing.phone,
-        addressLine1: dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
-        city: dto.city !== undefined ? dto.city : existing.city,
-        region: dto.region !== undefined ? dto.region : existing.region,
-        country: dto.country !== undefined ? dto.country : existing.country,
-        postalCode: dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
+        name: name !== undefined ? name : existing.name,
+        licenseNumber: licenseNumber !== undefined ? licenseNumber : existing.licenseNumber,
+        phone,
+        addressLine1:
+          dto.addressLine1 !== undefined ? dto.addressLine1.trim() || null : existing.addressLine1,
+        addressLine2:
+          dto.addressLine2 !== undefined ? dto.addressLine2.trim() || null : existing.addressLine2,
+        city: dto.city !== undefined ? dto.city.trim() || null : existing.city,
+        region: dto.region !== undefined ? dto.region.trim() || null : existing.region,
+        country,
+        jurisdictionId,
+        postalCode:
+          dto.postalCode !== undefined ? dto.postalCode.trim() || null : existing.postalCode,
+        latitude: nextLat,
+        longitude: nextLng,
+        locationPrecision: nextPrecision,
+        // Setting a location is what releases an already-verified pharmacy into
+        // patient search. Approval no longer publishes an unlocated record, so
+        // without this the operator would paste their Maps link, save, and stay
+        // invisible until an admin touched the row — the one step that closes
+        // the loop, left to somebody else.
+        //
+        // Read off `existing`, not off a fresh approval: this save cannot grant
+        // verification, and where it revokes it (an identity change) that is
+        // `submitForReview`'s write, which follows and sets both fields down.
+        isParticipating: canParticipate({
+          verificationStatus: existing.verificationStatus,
+          latitude: nextLat,
+          longitude: nextLng,
+        }),
         updatedAt: new Date(),
       },
     });
@@ -135,6 +759,38 @@ export class PharmacyService {
       });
     }
 
+    // A pharmacy that is not verified yet always goes (back) into the review
+    // queue on save. A verified one only does so if the attested identity —
+    // name or licence — actually changed.
+    //
+    // SUSPENDED is deliberately excluded: it is an enforcement state, so letting
+    // a save move it to PENDING would let a suspended pharmacy clear its own
+    // suspension. Only an admin can lift it from the Verification Center.
+    const identityChanged =
+      existing.name !== updated.name ||
+      (existing.licenseNumber || '') !== (updated.licenseNumber || '');
+    const suspended = existing.verificationStatus === VerificationStatus.SUSPENDED;
+    const needsReview =
+      !suspended &&
+      (existing.verificationStatus !== VerificationStatus.VERIFIED || identityChanged);
+
+    if (needsReview && user) {
+      await this.submitForReview(updated, user, identityChanged);
+    }
+
+    // Replaces the document on the open request, so a reviewer looking at a
+    // resubmitted profile sees the file that came with it rather than the one
+    // before the correction.
+    if (document) {
+      const requestId = await this.currentRequestId(pharmacyId);
+      if (!requestId) {
+        throw new BadRequestException(
+          'There is no open verification request to attach this document to. Save your profile first.',
+        );
+      }
+      await this.storeVerificationDocument(requestId, pharmacyId, user?.id ?? null, document);
+    }
+
     await this.auditWriter.write(
       user?.id ?? null,
       'pharmacy.profile.update',
@@ -145,6 +801,7 @@ export class PharmacyService {
         pharmacyId,
         name: updated.name,
         licenseNumber: updated.licenseNumber,
+        resubmittedForReview: needsReview,
       },
       ipAddress,
     );
@@ -152,20 +809,297 @@ export class PharmacyService {
     return this.getProfile(pharmacyId, user);
   }
 
-  async getUserNotifications(userId: string) {
-    const list = await this.prisma.signalNotification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
+  /**
+   * Store the licence document against the pharmacy's open verification request.
+   *
+   * One document per request, replaced in place: a pharmacy that corrects its
+   * profile and re-uploads must not leave the reviewer choosing between two
+   * files. `docName` and `docUrl` on the request are the fields the Verification
+   * Center already reads — they were simply never written, which is why it
+   * showed "No document" and a dead link.
+   *
+   * `docUrl` is an authenticated API path, not a storage URL. There is nothing
+   * public to leak, and the bytes are only ever served by a route that checks
+   * the caller first.
+   */
+  private async storeVerificationDocument(
+    requestId: string,
+    pharmacyId: string | null,
+    uploadedById: string | null,
+    document: AcceptedDocument,
+  ) {
+    await this.prisma.verificationDocument.upsert({
+      where: { verificationRequestId: requestId },
+      create: {
+        verificationRequestId: requestId,
+        pharmacyId,
+        uploadedById,
+        filename: document.filename,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes,
+        data: document.data,
+      },
+      update: {
+        pharmacyId,
+        uploadedById,
+        filename: document.filename,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes,
+        data: document.data,
+      },
     });
-    return list.map((n) => ({
-      id: n.id,
-      type: 'verification',
-      title: n.title,
-      message: n.description,
-      when: this.timeAgo(n.createdAt),
-      unread: !n.read,
-    }));
+
+    await this.prisma.verificationRequest.update({
+      where: { id: requestId },
+      data: {
+        docName: document.filename,
+        docUrl: `/admin/verification-requests/${requestId}/document`,
+      },
+    });
+
+    return document;
+  }
+
+  /** The open (or most recent) verification request for this pharmacy. */
+  private async currentRequestId(pharmacyId: string): Promise<string | null> {
+    const request = await this.prisma.verificationRequest.findFirst({
+      where: { pharmacyId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    return request?.id ?? null;
+  }
+
+  /**
+   * Put a pharmacy into the admin Verification Center queue. Reuses an open
+   * request when one exists so repeated saves do not flood the reviewer with
+   * duplicate rows for the same pharmacy.
+   */
+  private async submitForReview(
+    pharmacy: { id: string; name: string; licenseNumber: string | null },
+    user: AuthenticatedUser,
+    identityChanged: boolean,
+  ) {
+    const OPEN = [
+      VerificationRequestStatus.PENDING,
+      VerificationRequestStatus.UNDER_REVIEW,
+      VerificationRequestStatus.ESCALATED,
+      VerificationRequestStatus.REQUEST_INFO,
+    ];
+
+    await this.prisma.pharmacy.update({
+      where: { id: pharmacy.id },
+      data: {
+        verificationStatus: VerificationStatus.PENDING,
+        isParticipating: false,
+        updatedAt: new Date(),
+      },
+    });
+
+    const open = await this.prisma.verificationRequest.findFirst({
+      where: { pharmacyId: pharmacy.id, status: { in: OPEN } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const note = identityChanged
+      ? 'Pharmacy updated its name or licence number — re-verification required.'
+      : 'Pharmacy updated its profile and resubmitted for verification.';
+
+    if (open) {
+      await this.prisma.verificationRequest.update({
+        where: { id: open.id },
+        data: {
+          pharmacyName: pharmacy.name,
+          licenseNumber: pharmacy.licenseNumber || '',
+          status: VerificationRequestStatus.PENDING,
+          notes: open.notes ? `${open.notes}\n${note}` : note,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.verificationRequest.create({
+      data: {
+        pharmacyId: pharmacy.id,
+        pharmacyName: pharmacy.name,
+        licenseNumber: pharmacy.licenseNumber || '',
+        submittedBy: `${user.fullName} (${user.email})`,
+        status: VerificationRequestStatus.PENDING,
+        notes: note,
+      },
+    });
+  }
+
+  /**
+   * Billing view for the logged-in pharmacy (ZM-COM-BILL-001 S-22).
+   *
+   * Financial detail is scoped by role, per the published access matrix: a
+   * Pharmacy Manager sees plan and usage but no invoice amounts, and a Pharmacist
+   * sees only operational limits. Rather than returning everything and hoping the
+   * client hides it, the fields simply are not present for roles that may not see
+   * them — a UI bug cannot then leak them.
+   *
+   * There is no payment method or checkout here. Purchasing runs through an
+   * authorized payer, and the portal is not a billing surface.
+   */
+  async getMyBilling(user: AuthenticatedUser) {
+    const pharmacyId = await this.findMyPharmacyId(user);
+    if (!pharmacyId) {
+      return {
+        linked: false,
+        classification: CommercialClassification.DIRECTORY_UNCLAIMED,
+        participatesInNetworkCore: false,
+        canSeeFinancialDetail: false,
+        plan: null,
+        invoices: [],
+      };
+    }
+
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id: pharmacyId },
+      select: { commercialClassification: true, name: true },
+    });
+
+    const link = await this.prisma.subscriptionLocation.findFirst({
+      where: { pharmacyId, releasedAt: null },
+      orderBy: { activatedAt: 'desc' },
+      include: {
+        subscription: {
+          include: { priceCatalogEntry: true, billingProfile: true },
+        },
+      },
+    });
+
+    const subscription = link?.subscription ?? null;
+
+    // Only a Pharmacy Manager (PHARMACY_ADMIN) or above may see amounts. Staff
+    // get plan status alone.
+    const canSeeFinancialDetail =
+      user.role === UserRole.PHARMACY_ADMIN ||
+      user.role === UserRole.SUPER_ADMIN ||
+      user.role === UserRole.ADMIN;
+
+    const plan = subscription
+      ? {
+          offer: subscription.offer,
+          state: subscription.state,
+          quantity: subscription.quantity,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          evaluationEndsAt: subscription.evaluationEndsAt,
+          // Amounts only for roles permitted financial detail.
+          ...(canSeeFinancialDetail && subscription.priceCatalogEntry
+            ? {
+                amountMinor: subscription.priceCatalogEntry.amountMinor,
+                currency: subscription.priceCatalogEntry.currency,
+                interval: subscription.priceCatalogEntry.interval,
+              }
+            : {}),
+        }
+      : null;
+
+    let invoices: unknown[] = [];
+    if (canSeeFinancialDetail && subscription?.billingProfileId) {
+      const rows = await this.prisma.invoice.findMany({
+        where: { billingProfileId: subscription.billingProfileId },
+        orderBy: { createdAt: 'desc' },
+        take: 24,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          currency: true,
+          totalMinor: true,
+          amountPaidMinor: true,
+          periodStart: true,
+          periodEnd: true,
+          issuedAt: true,
+          paidAt: true,
+        },
+      });
+      invoices = rows;
+    }
+
+    return {
+      linked: true,
+      pharmacyName: pharmacy?.name ?? null,
+      classification:
+        pharmacy?.commercialClassification ?? CommercialClassification.DIRECTORY_UNCLAIMED,
+      participatesInNetworkCore: true,
+      canSeeFinancialDetail,
+      plan,
+      invoices,
+    };
+  }
+
+  /**
+   * Everything the portal's notification bell should show this account.
+   *
+   * Two sources, one list: the notifications addressed to this user, and the
+   * announcements an administrator broadcast to everybody. The broadcasts used
+   * to be fetched by the client from /admin/notifications — a SUPER_ADMIN route,
+   * so every pharmacy account silently got a 403 and saw none of them, while an
+   * admin browsing the portal saw all of them regardless of any preference.
+   *
+   * Both are filtered here, by the categories this account still wants. Doing it
+   * server-side is the point: a switch the client honours is a switch anyone can
+   * turn back on with devtools, and the unread count has to agree with the list.
+   */
+  async getUserNotifications(userId: string) {
+    const allowed = await this.notificationPreferences.allowedCategories(userId);
+
+    const [own, broadcasts] = await Promise.all([
+      this.prisma.signalNotification.findMany({
+        // Dismissed and archived rows stay out of the bell, as they already did:
+        // a preference decides what may arrive, not what the user has dealt with.
+        where: { userId, dismissed: false, archived: false },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+      // Only when the account still wants them — an announcement nobody may see
+      // is not worth reading out of the database.
+      allowed.has('system')
+        ? this.prisma.notification.findMany({
+            where: { status: NotificationStatus.DISPATCHED },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+          })
+        : Promise.resolve<Notification[]>([]),
+    ]);
+
+    const mine = own
+      .map((n) => ({
+        id: n.id,
+        category: notificationCategory(n),
+        title: n.title,
+        message: n.description,
+        createdAt: n.createdAt,
+        unread: !n.read,
+      }))
+      .filter((n) => allowed.has(n.category));
+
+    const announcements = broadcasts
+      .filter((n) => reachesPharmacyStaff(n.target))
+      .map((n) => ({
+        id: `broadcast-${n.id}`,
+        category: 'system' as NotificationCategory,
+        title: n.title,
+        message: n.message,
+        createdAt: n.createdAt,
+        // Broadcasts carry no per-user read state, so they read as unread. That
+        // is the behaviour the portal already had for them.
+        unread: true,
+      }));
+
+    return [...mine, ...announcements]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((n) => ({
+        id: n.id,
+        type: n.category,
+        title: n.title,
+        message: n.message,
+        when: this.timeAgo(n.createdAt),
+        unread: n.unread,
+      }));
   }
 
   // ---------------------------------------------------------------------------
@@ -198,6 +1132,12 @@ export class PharmacyService {
   /**
    * List all inventory items for a pharmacy. Each row joins MedicineEntity +
    * AvailabilitySignal to produce the shape the frontend DataTable expects.
+   *
+   * Scoped to this pharmacyId and to nothing else: every AvailabilitySignal the
+   * pharmacy holds is returned whatever its confidence band, so a medicine
+   * patients can see a High / Moderate / Low signal for is always listed and
+   * editable here. These are the same rows the public surfaces read — the
+   * portal is the writer, patient search the reader, one table.
    */
   async getInventory(pharmacyId: string) {
     const signals = await this.prisma.availabilitySignal.findMany({
@@ -208,6 +1148,11 @@ export class PharmacyService {
             id: true,
             canonicalName: true,
             genericName: true,
+            // Patient search matches brand names too (MediBase holds them on
+            // the identity). Without them here, a pharmacy searching its own
+            // availability page for the brand a patient searched — "Lantus" for
+            // the "Insulin Glargine" identity — was told no medicine matched.
+            brandNames: true,
             strength: true,
             dosageForm: true,
           },
@@ -221,8 +1166,10 @@ export class PharmacyService {
       medicineId: s.medicineId,
       name: s.medicine.canonicalName,
       generic: s.medicine.genericName || '',
+      brands: s.medicine.brandNames ?? [],
       strength: s.medicine.strength || '',
       dosageForm: s.medicine.dosageForm || 'Tablet',
+      dosageform: s.medicine.dosageForm || 'Tablet',
       status: CONFIDENCE_TO_STATUS[s.confidence] || 'out-of-stock',
       confidence: s.confidence.toLowerCase(),
       updated: this.timeAgo(s.computedAt),
@@ -345,19 +1292,121 @@ export class PharmacyService {
   }
 
   /**
+   * The reporting pharmacy's jurisdiction, for stamping onto a MediBase
+   * identity created from what it typed (MSA-35). Without this, every
+   * pharmacy-sourced identity carries `jurisdictionId: null` forever — the
+   * catalog has no other moment at which a jurisdiction is ever attached to
+   * one, so the MediBase dashboard's market counts stay at zero regardless of
+   * how large the catalog grows.
+   */
+  private async getPharmacyJurisdictionId(pharmacyId: string): Promise<string | null> {
+    const pharmacy = await this.prisma.pharmacy.findUnique({
+      where: { id: pharmacyId },
+      select: { jurisdictionId: true },
+    });
+    return pharmacy?.jurisdictionId ?? null;
+  }
+
+  /**
    * Aggregate live database analytics for the authenticated pharmacy:
    * 1. Inventory Overview (Available, Limited, Out of Stock counts)
    * 2. Availability Trend (daily percentage over last 7 days)
    * 3. Frequently Requested Medicines (ranked by real DB inquiry/saved/search counts)
    * 4. Update Activity (count of daily updates from CSV, manual edits, status changes)
    */
+  /**
+   * Participation metrics for the portal's Participation page (MP-44).
+   *
+   * Every figure here is measured from this pharmacy's own rows. The page used to
+   * render a hard-coded fixture - 92% reliability, 87% participation, 34 updates a
+   * week - identical for every pharmacy, which is worse than an empty page: it
+   * reads as the operator's own record.
+   *
+   * Two of the old fixture's numbers are deliberately not reproduced. A
+   * "participation score" and a "data quality" percentage are composites, and
+   * inventing a formula would put an authoritative-looking score on the screen that
+   * no specification defines. What is returned instead is what can be counted:
+   * how much of the catalogue is current, how complete its details are, and how
+   * often it is updated. Each is explainable from the counts returned beside it.
+   */
+  async getParticipation(pharmacyId: string) {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [pharmacy, signals, updatesLast7Days] = await Promise.all([
+      this.prisma.pharmacy.findUnique({
+        where: { id: pharmacyId },
+        select: { reliabilityScore: true, verificationStatus: true, isParticipating: true },
+      }),
+      this.prisma.availabilitySignal.findMany({
+        where: { pharmacyId },
+        select: {
+          computedAt: true,
+          confidence: true,
+          medicine: {
+            select: { genericName: true, strength: true, dosageForm: true },
+          },
+        },
+      }),
+      this.prisma.inventorySignal.count({
+        where: { pharmacyId, reportedAt: { gte: sevenDaysAgo } },
+      }),
+    ]);
+    if (!pharmacy) throw new NotFoundException('Pharmacy not found');
+
+    const medicinesListed = signals.length;
+
+    // Average age of the availability information patients are being shown. Null
+    // rather than zero when nothing is listed: "0 hours old" would read as
+    // perfectly fresh when in fact there is nothing there.
+    const freshnessHours =
+      medicinesListed === 0
+        ? null
+        : Math.round(
+            (signals.reduce((total, s) => total + (now.getTime() - s.computedAt.getTime()), 0) /
+              medicinesListed /
+              3_600_000) *
+              10,
+          ) / 10;
+
+    const currentCount = signals.filter((s) => s.computedAt >= sevenDaysAgo).length;
+    const completeCount = signals.filter(
+      (s) =>
+        !!s.medicine.genericName?.trim() &&
+        !!s.medicine.strength?.trim() &&
+        !!s.medicine.dosageForm?.trim(),
+    ).length;
+
+    const percent = (part: number) =>
+      medicinesListed === 0 ? null : Math.round((part / medicinesListed) * 100);
+
+    return {
+      // Stored, and the one governed score here: it drives ZoikoAvail confidence.
+      reliabilityScore: Math.round(pharmacy.reliabilityScore * 100),
+      verificationStatus: pharmacy.verificationStatus,
+      isParticipating: pharmacy.isParticipating,
+
+      medicinesListed,
+      updatesLast7Days,
+      freshnessHours,
+
+      /** Share of listed medicines updated in the last seven days. */
+      upToDatePercent: percent(currentCount),
+      upToDateCount: currentCount,
+
+      /** Share whose MediBase entry has a generic name, strength and dosage form. */
+      detailsCompletePercent: percent(completeCount),
+      detailsCompleteCount: completeCount,
+    };
+  }
+
   async getReports(pharmacyId: string) {
     const now = new Date();
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [availabilitySignals, inventorySignals, auditLogs, savedMedsGroup] =
+    const [availabilitySignals, inventorySignals, auditLogs] =
       await Promise.all([
         this.prisma.availabilitySignal.findMany({
           where: { pharmacyId },
@@ -390,10 +1439,6 @@ export class PharmacyService {
             ],
           },
           select: { createdAt: true, metadata: true },
-        }),
-        this.prisma.savedMedicine.groupBy({
-          by: ['medicineId'],
-          _count: { medicineId: true },
         }),
       ]);
 
@@ -468,43 +1513,76 @@ export class PharmacyService {
       day.inStockCount = cumulativeSignals.filter((s) => s.reportedInStock).length;
     }
 
-    const hasTrendHistory =
-      days.some((d) => d.inventoryCount > 0) || availabilitySignals.length > 0;
+    // True only when some day in the window actually has reports behind it. It
+    // previously counted the existence of any availability signal at all, so it
+    // claimed trend data for a pharmacy that had reported nothing all week.
+    const hasTrendHistory = days.some((d) => d.inventoryCount > 0);
 
-    const availabilityTrend = days.map((day) => {
-      let pct = 0;
-      if (day.inventoryCount > 0) {
-        pct = Math.round((day.inStockCount / day.inventoryCount) * 100);
-      } else if (availabilitySignals.length > 0) {
-        const totalAvail = availabilitySignals.length;
-        const availCount = availabilitySignals.filter(
-          (s) => s.confidence === AvailabilityConfidence.HIGH,
-        ).length;
-        pct = Math.round((availCount / totalAvail) * 100);
-      }
-      return {
-        label: day.label,
-        value: pct,
-      };
-    });
+    // A day with no reports has no availability percentage, and is reported as
+    // such. Today's snapshot used to be substituted for every empty day, which
+    // drew a flat line across the week - 79% seven times over - that looked like
+    // a fortnight of stable history rather than an absence of data (MP-44).
+    const availabilityTrend = days.map((day) => ({
+      label: day.label,
+      value:
+        day.inventoryCount > 0
+          ? Math.round((day.inStockCount / day.inventoryCount) * 100)
+          : null,
+    }));
 
     // 3. Frequently Requested Medicines
-    const savedMap = new Map<string, number>();
-    for (const item of savedMedsGroup) {
-      savedMap.set(item.medicineId, item._count.medicineId);
-    }
+    //
+    // Demand is what patients actually searched for: SignalEvent SEARCH rows,
+    // which MeService and SearchService write with the MediBase identity the
+    // query resolved to. Matching is on that identity id, so "Dolo 650",
+    // "Dolo-650" and "dolo 650" are the same medicine here because they were
+    // the same medicine when the search resolved — no name-string comparison is
+    // involved at any point.
+    //
+    // This card used to rank the pharmacy's inventory by how many patients had
+    // SAVED each medicine — a different action, counted across the whole
+    // platform — and then showed the top five whatever the counts were. Since
+    // almost nothing is ever saved, every count was 0 and the five names were
+    // just the first five rows of the pharmacy's own inventory: real medicines,
+    // but nothing to do with demand.
+    //
+    // Scoped to identities this pharmacy currently stocks, so the report is
+    // isolated per pharmacy and a medicine removed from inventory drops out of
+    // it. Counts come from retained events (ZoikoSignal prunes raw events after
+    // its retention window), which makes this recent demand rather than
+    // all-time.
+    const stockedMedicineIds = availabilitySignals.map((signal) => signal.medicineId);
 
-    const requestedMeds = availabilitySignals.map((sig) => {
-      const savedCount = savedMap.get(sig.medicineId) || 0;
-      return {
-        id: sig.medicineId,
-        name: sig.medicine.canonicalName,
-        requests: savedCount,
-      };
-    });
+    const demand = stockedMedicineIds.length
+      ? await this.prisma.signalEvent.groupBy({
+          by: ['medicineId'],
+          where: {
+            type: SignalEventType.SEARCH,
+            medicineId: { in: stockedMedicineIds },
+          },
+          _count: { _all: true },
+        })
+      : [];
 
-    requestedMeds.sort((a, b) => b.requests - a.requests);
-    const frequentlyRequested = requestedMeds.slice(0, 5);
+    const stockedNameById = new Map(
+      availabilitySignals.map((signal) => [signal.medicineId, signal.medicine.canonicalName]),
+    );
+
+    const frequentlyRequested = demand
+      .map((row) => ({
+        id: row.medicineId as string,
+        name: stockedNameById.get(row.medicineId as string) ?? '',
+        // The field stays `requests` because that is what the card renders. See
+        // the note in the return value below on what it actually measures.
+        requests: row._count._all,
+      }))
+      // A medicine with no searches is not "frequently requested" — the card is
+      // a demand list, and padding it to five with zeros is what made it read
+      // as inventory rather than demand. With none, the page shows its existing
+      // "No medicine requests recorded" state.
+      .filter((entry) => entry.name && entry.requests > 0)
+      .sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name))
+      .slice(0, 5);
 
     // 4. Update Activity
     const updateActivity = days.map((day) => ({
@@ -515,6 +1593,12 @@ export class PharmacyService {
     return {
       statusBreakdown,
       availabilityTrend: hasTrendHistory ? availabilityTrend : [],
+      // Named "requests" because that is the card's wording, but the number is
+      // a count of patient SEARCHES for the medicine. The platform records no
+      // separate "request this medicine" action — there is no such button and
+      // no such event — so searches are the demand signal that exists. If the
+      // product wants a distinct request action, that is a new event type and a
+      // new control, not a rename of this one.
       frequentlyRequested,
       updateActivity,
       hasTrendData: hasTrendHistory,
@@ -528,27 +1612,121 @@ export class PharmacyService {
    * 3. Upsert an AvailabilitySignal (public-safe derived signal).
    * 4. Audit-log the operation.
    */
+  /**
+   * Promote a directory record that has become a real, reporting pharmacy.
+   *
+   * A preloaded record stays DIRECTORY_UNCLAIMED through verification on
+   * purpose: approving a licence says the pharmacy exists, not that anybody has
+   * taken responsibility for what it reports. Reporting stock is that act — it
+   * is the pharmacy speaking for itself — so the first patient-visible signal is
+   * what earns the network classification (MSA-54).
+   *
+   * Every precondition sits in the `where`, which is what makes this safe to
+   * call after any successful inventory write:
+   *
+   *   - it can only ever match DIRECTORY_UNCLAIMED, so no higher classification
+   *     is downgraded or overwritten, and nothing else is touched;
+   *   - it requires a signal that patients could actually be shown, so a failed
+   *     upload, an empty CSV or a feed configured but never synced promotes
+   *     nothing;
+   *   - matching nothing on the second call makes it idempotent;
+   *   - one statement, so two concurrent imports cannot race.
+   *
+   * The signal condition is VISIBLE_SIGNAL_WHERE — the same predicate the
+   * patient surfaces filter on — so "eligible to be shown" and "promoted" can
+   * never drift apart.
+   */
+  private async promoteClaimedByReporting(
+    pharmacyId: string,
+    actorId?: string | null,
+    ipAddress?: string,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.pharmacy.updateMany({
+      where: {
+        id: pharmacyId,
+        verificationStatus: VerificationStatus.VERIFIED,
+        isParticipating: true,
+        commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
+        availabilitySignals: { some: VISIBLE_SIGNAL_WHERE },
+      },
+      data: {
+        commercialClassification: CommercialClassification.VERIFIED_NETWORK_CORE,
+      },
+    });
+
+    if (count === 0) return false;
+
+    // A commercial classification changing on its own is worth being able to
+    // account for later.
+    await this.auditWriter.write(
+      actorId ?? null,
+      'pharmacy.classification.promote',
+      'Pharmacy',
+      pharmacyId,
+      {
+        pharmacyId,
+        from: CommercialClassification.DIRECTORY_UNCLAIMED,
+        to: CommercialClassification.VERIFIED_NETWORK_CORE,
+        reason: 'First patient-visible availability signal reported.',
+        module: 'Pharmacy Management',
+      },
+      ipAddress,
+    );
+    return true;
+  }
+
   async addInventoryItem(
     pharmacyId: string,
     dto: AddInventoryDto,
     user?: AuthenticatedUser,
     ipAddress?: string,
   ) {
-    // 1. Find or create the medicine entity
-    let medicine = await this.prisma.medicineEntity.findFirst({
-      where: {
-        canonicalName: { equals: dto.name, mode: 'insensitive' },
-        strength: dto.strength || undefined,
-      },
-    });
+    // Absent when an explicit identity id is sent, and that is correct: nothing
+    // is created on that path, so there is no catalog entry a blank field could
+    // end up in. Required by the DTO on the name path, where it is.
+    const name = (dto.name ?? '').trim();
+    const generic = (dto.generic ?? '').trim();
+    const strength = (dto.strength ?? '').trim();
+    const dosageForm = (dto.dosageForm ?? dto.dosageform ?? '').trim();
+
+    // 1. Resolve the MediBase identity this row is about.
+    //
+    // An explicit id is authoritative: the identity is taken as given, with no
+    // name matching and nothing created, so the pharmacy's signal lands on
+    // exactly the identity patients search.
+    //
+    // A name — what the portal form sends — is matched on name and strength
+    // together. The strength used to be passed as `dto.strength || undefined`,
+    // which in Prisma means "do not filter on this", so a request without one
+    // matched whichever strength happened to be stored first: a pharmacy
+    // stocking 500 mg was recorded against the 650 mg identity a patient was
+    // searching for.
+    let medicine = dto.medicineId
+      ? await this.prisma.medicineEntity.findUnique({ where: { id: dto.medicineId } })
+      : await this.prisma.medicineEntity.findFirst({
+          where: {
+            canonicalName: { equals: name, mode: 'insensitive' },
+            strength: { equals: strength, mode: 'insensitive' },
+          },
+        });
+
+    if (dto.medicineId && !medicine) {
+      throw new NotFoundException(
+        'That medicine is not in the MediBase catalog. Send the medicine name instead, or ask MediBase support to add the identity.',
+      );
+    }
 
     if (!medicine) {
+      // This is a MediBase identity, created from what a pharmacy typed. It is
+      // why the fields above are required rather than optional: whatever is
+      // missing here is missing from the catalog every patient searches.
       medicine = await this.prisma.medicineEntity.create({
         data: {
-          canonicalName: dto.name,
-          genericName: dto.generic || null,
-          strength: dto.strength || null,
-          dosageForm: dto.dosageForm || 'Tablet',
+          canonicalName: name,
+          genericName: generic,
+          strength,
+          dosageForm,
+          jurisdictionId: await this.getPharmacyJurisdictionId(pharmacyId),
         },
       });
     }
@@ -556,6 +1734,18 @@ export class PharmacyService {
     const status = dto.status || 'available';
     const confidence = STATUS_TO_CONFIDENCE[status] || AvailabilityConfidence.HIGH;
     const reportedInStock = status !== 'out-of-stock';
+
+    // The availability this pharmacy was publishing for this medicine before
+    // now, if any. Read here because the upsert below is the point it stops
+    // existing, and the portal notification is about the transition rather than
+    // about the save.
+    const priorSignal = await this.prisma.availabilitySignal.findUnique({
+      where: { medicineId_pharmacyId: { medicineId: medicine.id, pharmacyId } },
+      select: { confidence: true },
+    });
+    const priorStatus = priorSignal
+      ? CONFIDENCE_TO_STATUS[priorSignal.confidence] || 'out-of-stock'
+      : null;
 
     // 2. Create the raw inventory signal
     await this.prisma.inventorySignal.create({
@@ -587,6 +1777,22 @@ export class PharmacyService {
       },
     });
 
+    // 3b. Attach any name-only saved medicines to this identity and alert the
+    // patients following it. Only meaningful when the medicine is actually
+    // stocked — an out-of-stock report is not an availability event.
+    if (reportedInStock) {
+      await this.savedLink.linkPendingSaves(medicine);
+    }
+
+    // 3c. Tell this pharmacy's own portal what changed, on the Inventory tab.
+    await this.notifyAvailabilityTransition(
+      pharmacyId,
+      medicine,
+      priorStatus,
+      status,
+      Date.now(),
+    );
+
     // 4. Audit log entry
     const pharmacyName = await this.getPharmacyName(pharmacyId);
     await this.auditWriter.write(
@@ -609,20 +1815,26 @@ export class PharmacyService {
         medicineName: medicine.canonicalName,
         genericName: medicine.genericName || '',
         strength: medicine.strength || '',
-        dosageForm: medicine.dosageForm || 'Tablet',
+        dosageForm: medicine.dosageForm || '',
         newValues: { status, confidence: confidence.toLowerCase() },
         status: 'Success',
       },
       ipAddress,
     );
 
+    // A directory record that has now reported stock is speaking for itself, so
+    // it stops being unclaimed. No-ops unless every condition holds.
+    await this.promoteClaimedByReporting(pharmacyId, user?.id, ipAddress);
+
     return {
       id: avail.id,
       medicineId: medicine.id,
       name: medicine.canonicalName,
       generic: medicine.genericName || '',
+      brands: medicine.brandNames ?? [],
       strength: medicine.strength || '',
       dosageForm: medicine.dosageForm || 'Tablet',
+      dosageform: medicine.dosageForm || 'Tablet',
       status,
       confidence: confidence.toLowerCase(),
       updated: 'just now',
@@ -630,7 +1842,95 @@ export class PharmacyService {
   }
 
   /**
-   * Update the availability status of an existing inventory item.
+   * Tell the pharmacy's own portal that a medicine's patient-facing
+   * availability changed — when it actually changed.
+   *
+   * `previousStatus` is null for a medicine this pharmacy was publishing
+   * nothing for, which counts as a transition into whatever it now is. The same
+   * status in and out is not an event and raises nothing: re-saving a row must
+   * not manufacture news, or the Inventory tab fills with rows that say only
+   * that somebody pressed Save.
+   *
+   * Never rethrows — a failed notification must not undo the inventory write it
+   * is describing.
+   */
+  private async notifyAvailabilityTransition(
+    pharmacyId: string,
+    medicine: { id: string; canonicalName: string; strength?: string | null },
+    previousStatus: string | null,
+    status: string,
+    occurredAtMs: number,
+  ): Promise<void> {
+    if (previousStatus === status) return;
+
+    if (status === 'available') {
+      await this.portalNotifications.inventoryBecameAvailable(
+        pharmacyId,
+        medicine,
+        occurredAtMs,
+      );
+      return;
+    }
+
+    // A row that arrives already out of stock takes nothing away from patients,
+    // so only the loss of availability the pharmacy actually had is reported.
+    if (previousStatus === null) return;
+
+    await this.portalNotifications.inventoryBecameUnavailable(
+      pharmacyId,
+      medicine,
+      status,
+      occurredAtMs,
+    );
+  }
+
+  /**
+   * Find the MediBase identity an inventory row should point at.
+   *
+   * Name + strength are what identify a medicine, and the matcher is the same
+   * one addInventoryItem uses so both entry points land on the same row. A
+   * blank strength deliberately matches any strength, as it does on add.
+   */
+  private findMedicineIdentity(name: string, strength?: string | null) {
+    return this.prisma.medicineEntity.findFirst({
+      where: {
+        canonicalName: { equals: name, mode: 'insensitive' },
+        strength: strength || undefined,
+      },
+    });
+  }
+
+  /**
+   * May this pharmacy rewrite an identity's descriptive fields in place?
+   *
+   * MedicineEntity is the shared MediBase catalog, not per-pharmacy stock. An
+   * in-place edit therefore reaches every other pharmacy holding that medicine
+   * and every patient searching for it. Allowed only when the pharmacy is the
+   * sole stockist AND the identity is still ungoverned (NEEDS_REVIEW — what
+   * addInventoryItem creates); a curated entry belongs to MediBase admin.
+   */
+  private async mayEditIdentity(
+    medicine: { id: string; qualityState: QualityState },
+    pharmacyId: string,
+  ) {
+    if (medicine.qualityState !== QualityState.NEEDS_REVIEW) return false;
+    const otherStockist = await this.prisma.availabilitySignal.findFirst({
+      where: { medicineId: medicine.id, pharmacyId: { not: pharmacyId } },
+      select: { id: true },
+    });
+    return !otherStockist;
+  }
+
+  /**
+   * Edit an inventory item: its availability status, the medicine it points at,
+   * or both.
+   *
+   * Name and strength are resolved to a MediBase identity rather than written
+   * over the current one — changing "Asthalin 100 mcg" to 200 mcg re-points
+   * this pharmacy's row at the 200 mcg identity (creating it if the catalog
+   * has never seen it) and leaves the 100 mcg identity intact for whoever else
+   * stocks it. Generic name and dosage form describe the identity itself, so
+   * they are only written when this pharmacy is its sole, ungoverned owner.
    */
   async updateInventoryItem(
     pharmacyId: string,
@@ -641,6 +1941,7 @@ export class PharmacyService {
   ) {
     const signal = await this.prisma.availabilitySignal.findUnique({
       where: { id: signalId },
+      include: { medicine: true },
     });
 
     if (!signal || signal.pharmacyId !== pharmacyId) {
@@ -648,23 +1949,167 @@ export class PharmacyService {
     }
 
     const oldStatus = CONFIDENCE_TO_STATUS[signal.confidence] || 'out-of-stock';
-    const status = dto.status || 'available';
+    // Keep the current status when the caller only edits identity fields.
+    // Defaulting to 'available' here would silently restock an out-of-stock
+    // medicine because someone corrected a spelling.
+    const status = dto.status || oldStatus;
     const confidence = STATUS_TO_CONFIDENCE[status] || AvailabilityConfidence.HIGH;
+    const reportedInStock = status !== 'out-of-stock';
+
+    const current = signal.medicine;
+    const editsIdentity =
+      dto.name !== undefined ||
+      dto.generic !== undefined ||
+      dto.strength !== undefined ||
+      dto.dosageForm !== undefined ||
+      dto.dosageform !== undefined;
+
+    let medicineId = signal.medicineId;
+    let linkTarget: { id: string; canonicalName: string; strength?: string | null } | null = null;
+
+    // An explicit MediBase identity id wins over name resolution: it says which
+    // identity this row is about with no room for a near-miss, which is what a
+    // CSV/API integration should send. Nothing is created and no descriptive
+    // field of the shared identity is touched.
+    if (dto.medicineId !== undefined && dto.medicineId !== signal.medicineId) {
+      const target = await this.prisma.medicineEntity.findUnique({
+        where: { id: dto.medicineId },
+      });
+      if (!target) {
+        throw new NotFoundException(
+          'That medicine is not in the MediBase catalog. Send the medicine name instead, or ask MediBase support to add the identity.',
+        );
+      }
+      // One row per (medicine, pharmacy) — the unique constraint the name path
+      // guards the same way below.
+      const clash = await this.prisma.availabilitySignal.findUnique({
+        where: { medicineId_pharmacyId: { medicineId: target.id, pharmacyId } },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new ConflictException(
+          `${target.canonicalName}${target.strength ? ` ${target.strength}` : ''} is already in your inventory. Edit that entry instead.`,
+        );
+      }
+      medicineId = target.id;
+      linkTarget = target;
+    } else if (editsIdentity) {
+      // Unsent fields keep their current value — this is a patch, not a replace.
+      const name = (dto.name ?? current.canonicalName).trim();
+      if (!name) throw new BadRequestException('Medicine name is required');
+      const strength = (dto.strength ?? current.strength ?? '').trim();
+      const generic = (dto.generic ?? current.genericName ?? '').trim();
+      const dosageForm = (
+        dto.dosageForm ??
+        dto.dosageform ??
+        current.dosageForm ??
+        'Tablet'
+      ).trim();
+
+      const target = await this.findMedicineIdentity(name, strength);
+
+      if (!target) {
+        // The catalog has no such medicine yet. Creating it here mirrors
+        // addInventoryItem, which is also how a pharmacy introduces one.
+        const created = await this.prisma.medicineEntity.create({
+          data: {
+            canonicalName: name,
+            genericName: generic || null,
+            strength: strength || null,
+            dosageForm,
+            jurisdictionId: await this.getPharmacyJurisdictionId(pharmacyId),
+          },
+        });
+        medicineId = created.id;
+        linkTarget = created;
+      } else {
+        medicineId = target.id;
+        linkTarget = target;
+
+        const descriptionChanged =
+          (target.genericName ?? '') !== generic ||
+          (target.dosageForm ?? '') !== dosageForm;
+
+        if (descriptionChanged) {
+          if (await this.mayEditIdentity(target, pharmacyId)) {
+            const fixed = await this.prisma.medicineEntity.update({
+              where: { id: target.id },
+              data: { genericName: generic || null, dosageForm },
+            });
+            linkTarget = fixed;
+          } else {
+            // Refuse rather than save half the form: the pharmacist must know
+            // the generic/dosage form they typed was not applied.
+            throw new ConflictException(
+              `${target.canonicalName}${target.strength ? ` ${target.strength}` : ''} is a shared MediBase identity — other pharmacies stock it, so its generic name and dosage form are governed centrally and cannot be changed here. Adjust the medicine name or strength to point your inventory at a different medicine.`,
+            );
+          }
+        }
+      }
+
+      if (medicineId !== signal.medicineId) {
+        // One row per (medicine, pharmacy) — re-pointing onto a medicine this
+        // pharmacy already lists would collide on that unique constraint.
+        const clash = await this.prisma.availabilitySignal.findUnique({
+          where: { medicineId_pharmacyId: { medicineId, pharmacyId } },
+          select: { id: true },
+        });
+        if (clash) {
+          throw new ConflictException(
+            `${name}${strength ? ` ${strength}` : ''} is already in your inventory. Edit that entry instead.`,
+          );
+        }
+      }
+    }
 
     const updated = await this.prisma.availabilitySignal.update({
       where: { id: signalId },
-      data: { confidence, computedAt: new Date() },
+      data: { medicineId, confidence, computedAt: new Date() },
       include: {
         medicine: {
           select: {
             canonicalName: true,
             genericName: true,
+            brandNames: true,
             strength: true,
             dosageForm: true,
           },
         },
       },
     });
+
+    // An edit can introduce a medicine the catalog never held, which is exactly
+    // the moment patients following that name off-catalog should be linked and
+    // told — the same hook addInventoryItem uses.
+    if (linkTarget && medicineId !== signal.medicineId && reportedInStock) {
+      await this.savedLink.linkPendingSaves(linkTarget);
+    } else if (reportedInStock && oldStatus === 'out-of-stock') {
+      // Restocking a row the pharmacy already held is the other way a saved
+      // medicine becomes available, and it used to raise nothing: the link hook
+      // only fired when the edit re-pointed the row at a different identity, so
+      // a patient waiting on this exact medicine heard nothing when the only
+      // pharmacy stocking it flipped it back to available.
+      await this.savedLink.linkPendingSaves({
+        id: updated.medicineId,
+        canonicalName: updated.medicine.canonicalName,
+      });
+    }
+
+    // Tell this pharmacy's own portal what changed, on the Inventory tab.
+    await this.notifyAvailabilityTransition(
+      pharmacyId,
+      {
+        id: updated.medicineId,
+        canonicalName: updated.medicine.canonicalName,
+        strength: updated.medicine.strength,
+      },
+      // Re-pointing the row at a different identity means this pharmacy was
+      // publishing no availability at all for the medicine it now holds, so the
+      // old row's status is not this medicine's previous state.
+      medicineId === signal.medicineId ? oldStatus : null,
+      status,
+      Date.now(),
+    );
 
     // Audit log entry
     const pharmacyName = await this.getPharmacyName(pharmacyId);
@@ -689,20 +2134,46 @@ export class PharmacyService {
         genericName: updated.medicine.genericName || '',
         strength: updated.medicine.strength || '',
         dosageForm: updated.medicine.dosageForm || 'Tablet',
-        previousValues: { status: oldStatus, confidence: signal.confidence.toLowerCase() },
-        newValues: { status, confidence: confidence.toLowerCase() },
+        previousValues: {
+          status: oldStatus,
+          confidence: signal.confidence.toLowerCase(),
+          // Identity is auditable too — re-pointing a row changes what the
+          // pharmacy is telling patients it stocks.
+          medicineId: signal.medicineId,
+          medicineName: current.canonicalName,
+          genericName: current.genericName || '',
+          strength: current.strength || '',
+          dosageForm: current.dosageForm || 'Tablet',
+        },
+        newValues: {
+          status,
+          confidence: confidence.toLowerCase(),
+          medicineId: updated.medicineId,
+          medicineName: updated.medicine.canonicalName,
+          genericName: updated.medicine.genericName || '',
+          strength: updated.medicine.strength || '',
+          dosageForm: updated.medicine.dosageForm || 'Tablet',
+        },
         status: 'Success',
       },
       ipAddress,
     );
+
+    // A directory record that has now reported stock is speaking for itself, so
+    // it stops being unclaimed. No-ops unless every condition holds.
+    await this.promoteClaimedByReporting(pharmacyId, user?.id, ipAddress);
 
     return {
       id: updated.id,
       medicineId: updated.medicineId,
       name: updated.medicine.canonicalName,
       generic: updated.medicine.genericName || '',
+      brands: updated.medicine.brandNames ?? [],
       strength: updated.medicine.strength || '',
       dosageForm: updated.medicine.dosageForm || 'Tablet',
+      // Alias kept in step with getInventory/addInventoryItem so the table and
+      // the edit dialog read the same shape whichever call produced the row.
+      dosageform: updated.medicine.dosageForm || 'Tablet',
       status,
       confidence: confidence.toLowerCase(),
       updated: 'just now',
@@ -729,7 +2200,9 @@ export class PharmacyService {
         throw new BadRequestException('The CSV file is empty.');
       }
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-      if (!headers.includes('name')) {
+      // A file keyed on MediBase identity ids needs no name column: the id says
+      // which medicine each row is about more precisely than a name can.
+      if (!headers.includes('name') && !headers.includes('medicineid')) {
         throw new BadRequestException('CSV file missing required "name" header column.');
       }
       for (let i = 1; i < lines.length; i++) {
@@ -744,33 +2217,87 @@ export class PharmacyService {
       rawRows = input;
     }
 
+    // Every status is read before anything is written.
+    //
+    // A cell this product has no status for is a mistake in the file, not a
+    // value to default: the importer used to fall back to "available", so a
+    // typo — or the perfectly ordinary "out of stock" it did not recognise —
+    // published a medicine to patients as in stock. Refusing the whole file
+    // rather than skipping the row matters most in replace mode, where a row
+    // dropped from the import is a medicine pruned from the inventory.
+    const badStatuses: string[] = [];
+    rawRows.forEach((row, index) => {
+      const cell = row?.status ?? row?.availability ?? '';
+      if (String(cell).trim() && !normalizeInventoryStatus(cell)) {
+        badStatuses.push(`row ${index + 2}: "${String(cell).trim()}"`);
+      }
+    });
+    if (badStatuses.length > 0) {
+      const shown = badStatuses.slice(0, 5).join(', ');
+      const more = badStatuses.length > 5 ? ` and ${badStatuses.length - 5} more` : '';
+      throw new BadRequestException(
+        `Unrecognised status in the CSV (${shown}${more}). Use available, limited stock, or out of stock. Nothing was imported.`,
+      );
+    }
+
     let imported = 0;
     let updated = 0;
     let skipped = 0;
     let totalProcessed = 0;
     const processedSignalIds = new Set<string>();
 
+    // Looked up once, not per row: pharmacyId is constant for the whole file,
+    // and a several-hundred-row CSV should not cost a query per row for a
+    // value that never changes within the call.
+    const jurisdictionId = await this.getPharmacyJurisdictionId(pharmacyId);
+
+    /**
+     * Identities this file reported as in stock, deduplicated.
+     *
+     * Collected during the loop and fanned out to patients afterwards rather
+     * than inside it: a file may list the same medicine twice, and
+     * linkPendingSaves is a query per call. Keyed by identity id so a 400-row
+     * import costs one lookup per distinct medicine, not one per row.
+     */
+    const stockedIdentities = new Map<string, { id: string; canonicalName: string }>();
+
     for (const row of rawRows) {
       totalProcessed++;
       const name = row.name || row.canonicalName || row.medicineName;
-      if (!name) {
+      // A MediBase identity id in the file is authoritative — the row attaches
+      // to that identity with no name matching. Integrations that hold ids
+      // should send them; a file with names only behaves exactly as before.
+      const medicineIdColumn = (row.medicineid || row.medicineId || '').trim?.() || '';
+      if (!name && !medicineIdColumn) {
         skipped++;
         continue;
       }
       const generic = row.generic || row.genericName || '';
       const strength = row.strength || '';
-      const dosageForm = row.dosageForm || row.form || 'Tablet';
-      const statusRaw = (row.status || row.availability || 'available').toLowerCase();
-      const confidence = STATUS_TO_CONFIDENCE[statusRaw] || AvailabilityConfidence.HIGH;
-      const reportedInStock = statusRaw !== 'out-of-stock';
+      const dosageForm = row.dosageform || row.dosageForm || row.form || 'Tablet';
+      // Validated above, so an unrecognised value never reaches here. An empty
+      // cell still means available — that is the documented default, and the
+      // only case a default is correct.
+      const status = normalizeInventoryStatus(row.status ?? row.availability) ?? 'available';
+      const confidence = STATUS_TO_CONFIDENCE[status];
+      const reportedInStock = status !== 'out-of-stock';
 
       try {
-        let medicine = await this.prisma.medicineEntity.findFirst({
-          where: {
-            canonicalName: { equals: name, mode: 'insensitive' },
-            strength: strength || undefined,
-          },
-        });
+        let medicine = medicineIdColumn
+          ? await this.prisma.medicineEntity.findUnique({ where: { id: medicineIdColumn } })
+          : await this.prisma.medicineEntity.findFirst({
+              where: {
+                canonicalName: { equals: name, mode: 'insensitive' },
+                strength: strength || undefined,
+              },
+            });
+
+        // An id column that names no identity is a data error in the file, not
+        // an invitation to mint a new identity under a borrowed id.
+        if (medicineIdColumn && !medicine) {
+          skipped++;
+          continue;
+        }
 
         if (!medicine) {
           medicine = await this.prisma.medicineEntity.create({
@@ -779,6 +2306,7 @@ export class PharmacyService {
               genericName: generic || null,
               strength: strength || null,
               dosageForm,
+              jurisdictionId,
             },
           });
         }
@@ -822,6 +2350,16 @@ export class PharmacyService {
           processedSignalIds.add(createdSignal.id);
           imported++;
         }
+
+        // An out-of-stock line is a record, not an availability event, so only
+        // stocked rows are followed up on — the same rule addInventoryItem
+        // applies on the single-item path.
+        if (reportedInStock) {
+          stockedIdentities.set(medicine.id, {
+            id: medicine.id,
+            canonicalName: medicine.canonicalName,
+          });
+        }
       } catch (err: any) {
         skipped++;
       }
@@ -843,6 +2381,24 @@ export class PharmacyService {
         });
       }
     }
+
+    // Attach name-only saved medicines to the identities this file stocked and
+    // alert the patients waiting on them. A bulk import used to skip this
+    // entirely, so the same medicine that raised an alert when typed into the
+    // form raised none when it arrived in a CSV — a pharmacy's upload method is
+    // not something a patient should be able to feel.
+    for (const identity of stockedIdentities.values()) {
+      await this.savedLink.linkPendingSaves(identity);
+    }
+
+    // Report the outcome on the portal's Uploads tab. Raised for every import,
+    // including one that applied nothing: a file that failed silently is the
+    // case the pharmacy most needs told about.
+    await this.portalNotifications.bulkUploadCompleted(
+      pharmacyId,
+      { imported, updated, skipped, totalProcessed, mode },
+      Date.now(),
+    );
 
     const pharmacyName = await this.getPharmacyName(pharmacyId);
     await this.auditWriter.write(
@@ -869,6 +2425,10 @@ export class PharmacyService {
       },
       ipAddress,
     );
+
+    // A directory record that has now reported stock is speaking for itself, so
+    // it stops being unclaimed. No-ops unless every condition holds.
+    await this.promoteClaimedByReporting(pharmacyId, user?.id, ipAddress);
 
     return {
       imported,

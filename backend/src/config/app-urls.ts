@@ -21,10 +21,78 @@ export function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
 }
 
-/** Origin of the SPA, e.g. `https://app.zoikomeds.com`. No trailing slash. */
+/** Origins the API accepts browser requests from, i.e. where the SPA is served. */
+function allowedOrigins(config: ConfigService): string[] {
+  return (config.get<string>('CORS_ORIGIN') || '')
+    .split(',')
+    .map((origin) => normalizeBaseUrl(origin))
+    .filter(Boolean);
+}
+
+function originOf(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+const isLoopback = (value: string) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$|\/)/i.test(value);
+
+/**
+ * Origin of the SPA, e.g. `https://app.zoikomeds.com`. No trailing slash.
+ *
+ * APP_BASE_URL is the answer whenever it names a host this API actually serves
+ * the SPA to — which is exactly the set in CORS_ORIGIN, since a browser on that
+ * origin could not call this API otherwise.
+ *
+ * When it names anything else, it is not usable and is not used. Pointed at the
+ * API's own origin, every link built from it lands on a JSON 404 instead of a
+ * page: password resets, invites, and the page a pharmacy is returned to after
+ * paying (MP-47). CORS_ORIGIN already holds the right host in that situation, so
+ * the first non-loopback entry is used instead of knowingly producing a dead link.
+ *
+ * Deliberately not clever about which entry: a single wrong link is recoverable,
+ * and the alternative is a deployment where nothing sent to a browser works.
+ */
 export function appBaseUrl(config: ConfigService): string {
-  return normalizeBaseUrl(
-    config.get<string>('APP_BASE_URL') || DEFAULT_APP_BASE_URL,
+  const configured = normalizeBaseUrl(config.get<string>('APP_BASE_URL') || '');
+  const allowed = allowedOrigins(config);
+
+  if (configured) {
+    const configuredOrigin = originOf(configured);
+    const servesTheSpa =
+      allowed.length === 0 ||
+      allowed.some((origin) => originOf(origin) === configuredOrigin);
+    if (servesTheSpa) return configured;
+
+    const usable = allowed.find((origin) => !isLoopback(origin));
+    if (usable) return usable;
+  }
+
+  return configured || DEFAULT_APP_BASE_URL;
+}
+
+/**
+ * Why appBaseUrl did not use APP_BASE_URL, or null when it did.
+ *
+ * Returned rather than logged from inside the resolver: it is called on every
+ * link, and the warning belongs once at boot where somebody will read it.
+ */
+export function appBaseUrlWarning(config: ConfigService): string | null {
+  const configured = normalizeBaseUrl(config.get<string>('APP_BASE_URL') || '');
+  if (!configured) {
+    return `APP_BASE_URL is not set, so browser links fall back to ${DEFAULT_APP_BASE_URL}. Set it to the origin that serves the SPA.`;
+  }
+
+  const resolved = appBaseUrl(config);
+  if (resolved === configured) return null;
+
+  return (
+    `APP_BASE_URL is set to ${configured}, which is not an origin this API serves the SPA to ` +
+    `(CORS_ORIGIN). Browser links would land on a 404, so ${resolved} is being used instead. ` +
+    'Correct APP_BASE_URL: every outbound link, and the page a pharmacy returns to after paying, is built from it.'
   );
 }
 

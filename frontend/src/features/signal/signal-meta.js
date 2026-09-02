@@ -14,11 +14,17 @@ import {
 } from 'lucide-react'
 
 // Saved-medicine availability status.
+//
+// Every band here is scoped to the patient's own search radius — the API bands
+// a saved medicine on the signals within reach of them, not on every signal in
+// the network — so "None Nearby" is the honest name for the empty case. Called
+// "Out of Stock" it read as a claim about the medicine itself, which is not
+// what the platform knows: the shelf may be full two states away.
 export const STATUS_META = {
   available: { label: 'Available', tone: 'good', dot: 'bg-success', icon: CheckCircle2 },
   limited: { label: 'Limited Stock', tone: 'warning', dot: 'bg-warning', icon: AlertTriangle },
   'running-low': { label: 'Running Low', tone: 'critical', dot: 'bg-danger', icon: TrendingDown },
-  'out-of-stock': { label: 'Out of Stock', tone: 'neutral', dot: 'bg-muted-foreground', icon: MinusCircle },
+  'out-of-stock': { label: 'None Nearby', tone: 'neutral', dot: 'bg-muted-foreground', icon: MinusCircle },
 }
 
 // Notification / alert types.

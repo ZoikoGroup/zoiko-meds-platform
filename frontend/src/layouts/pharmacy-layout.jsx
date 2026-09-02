@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutDashboard, Boxes, Activity, Upload, PlugZap, Gauge, BarChart3,
-  Bell, Building2, Settings, HelpCircle, Menu, LogOut, Sun, Moon, Loader2,
+  Bell, Building2, CreditCard, Settings, HelpCircle, Menu, LogOut, Sun, Moon, Loader2,
 } from 'lucide-react'
 import { useAuth } from '@/providers/auth-provider'
 import { useTheme } from '@/providers/theme-provider'
@@ -48,6 +48,7 @@ const NAV_SECTIONS = [
     heading: 'Account',
     items: [
       { label: 'Pharmacy Profile', to: '/pharmacy/profile', icon: Building2 },
+      { label: 'Billing', to: '/pharmacy/billing', icon: CreditCard },
       { label: 'Settings', to: '/pharmacy/settings', icon: Settings },
     ],
   },

@@ -5,17 +5,32 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/shared/states';
 import { cn } from '@/lib/utils';
-export function DataTable({ columns, data, getRowId, searchable = true, searchPlaceholder = 'Search…', searchAccessor, pageSize = 8, toolbar, rowActions, emptyTitle = 'No results', emptyDescription = 'Try adjusting your search or filters.', className, }) {
-    const [query, setQuery] = useState('');
+/**
+ * Optional `server` prop: hand the table a backend that already did the
+ * searching, sorting and paging, and it renders `data` verbatim while driving
+ * the same search box and pager controls through your callbacks. Omit it and
+ * the table behaves exactly as before — filtering, sorting and paging in the
+ * browser over whatever `data` it was given.
+ *
+ *   server = { query, onQueryChange, page, pageCount, total, onPageChange, loading }
+ *
+ * `page` is 1-based here, matching the API; internally the client mode stays
+ * 0-based. `loading` suppresses the empty state so a fetch in flight does not
+ * flash "No results".
+ */
+export function DataTable({ columns, data, getRowId, searchable = true, searchPlaceholder = 'Search…', searchAccessor, pageSize = 8, toolbar, rowActions, emptyTitle = 'No results', emptyDescription = 'Try adjusting your search or filters.', className, server, initialQuery = '', }) {
+    const [query, setQuery] = useState(initialQuery);
     const [sortKey, setSortKey] = useState(null);
     const [sortDir, setSortDir] = useState('asc');
     const [page, setPage] = useState(0);
     const filtered = useMemo(() => {
-        if (!query || !searchAccessor)
+        // Server mode has already filtered; re-filtering would hide rows the
+        // backend matched on a field this accessor cannot see (e.g. a brand).
+        if (server || !query || !searchAccessor)
             return data;
         const q = query.toLowerCase();
         return data.filter((row) => searchAccessor(row).toLowerCase().includes(q));
-    }, [data, query, searchAccessor]);
+    }, [data, query, searchAccessor, server]);
     const sorted = useMemo(() => {
         if (!sortKey)
             return filtered;
@@ -39,9 +54,26 @@ export function DataTable({ columns, data, getRowId, searchable = true, searchPl
             return sortDir === 'asc' ? cmp : -cmp;
         });
     }, [filtered, sortKey, sortDir, columns]);
-    const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
-    const safePage = Math.min(page, pageCount - 1);
-    const paged = sorted.slice(safePage * pageSize, safePage * pageSize + pageSize);
+    // In server mode the page the backend returned IS the page to render.
+    const pageCount = server ? Math.max(1, server.pageCount ?? 1) : Math.max(1, Math.ceil(sorted.length / pageSize));
+    const safePage = server ? Math.min(Math.max(0, (server.page ?? 1) - 1), pageCount - 1) : Math.min(page, pageCount - 1);
+    const paged = server ? data : sorted.slice(safePage * pageSize, safePage * pageSize + pageSize);
+    const totalRows = server ? (server.total ?? data.length) : sorted.length;
+    const searchValue = server ? (server.query ?? '') : query;
+    const onSearch = (value) => {
+        if (server)
+            server.onQueryChange?.(value);
+        else {
+            setQuery(value);
+            setPage(0);
+        }
+    };
+    const goToPage = (next) => {
+        if (server)
+            server.onPageChange?.(Math.min(pageCount, Math.max(1, next + 1)));
+        else
+            setPage(Math.min(pageCount - 1, Math.max(0, next)));
+    };
     const toggleSort = (key) => {
         if (sortKey === key) {
             setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -54,12 +86,9 @@ export function DataTable({ columns, data, getRowId, searchable = true, searchPl
     const alignClass = (a) => a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left';
     return (<div className={cn('flex flex-col gap-4', className)}>
       {(searchable || toolbar) && (<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {searchable && searchAccessor ? (<div className="relative w-full sm:max-w-xs">
+          {searchable && (searchAccessor || server) ? (<div className="relative w-full sm:max-w-xs">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/>
-              <Input value={query} onChange={(e) => {
-                    setQuery(e.target.value);
-                    setPage(0);
-                }} placeholder={searchPlaceholder} className="pl-9" aria-label="Search table"/>
+              <Input value={searchValue} onChange={(e) => onSearch(e.target.value)} placeholder={searchPlaceholder} className="pl-9" aria-label="Search table"/>
             </div>) : (<div />)}
           {toolbar && <div className="flex flex-wrap items-center gap-2">{toolbar}</div>}
         </div>)}
@@ -91,23 +120,23 @@ export function DataTable({ columns, data, getRowId, searchable = true, searchPl
           </Table>
         </div>
 
-        {paged.length === 0 && (<EmptyState title={emptyTitle} description={emptyDescription} className="rounded-none border-0 border-t"/>)}
+        {paged.length === 0 && !server?.loading && (<EmptyState title={emptyTitle} description={emptyDescription} className="rounded-none border-0 border-t"/>)}
       </div>
 
-      {sorted.length > pageSize && (<div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+      {totalRows > pageSize && (<div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
           <span className="tabular">
             {safePage * pageSize + 1}–
-            {Math.min((safePage + 1) * pageSize, sorted.length)} of{' '}
-            {sorted.length}
+            {Math.min((safePage + 1) * pageSize, totalRows)} of{' '}
+            {totalRows}
           </span>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon-sm" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} aria-label="Previous page">
+            <Button variant="outline" size="icon-sm" disabled={safePage === 0} onClick={() => goToPage(safePage - 1)} aria-label="Previous page">
               <ChevronLeft />
             </Button>
             <span className="tabular text-xs">
               Page {safePage + 1} / {pageCount}
             </span>
-            <Button variant="outline" size="icon-sm" disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} aria-label="Next page">
+            <Button variant="outline" size="icon-sm" disabled={safePage >= pageCount - 1} onClick={() => goToPage(safePage + 1)} aria-label="Next page">
               <ChevronRight />
             </Button>
           </div>

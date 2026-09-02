@@ -39,7 +39,10 @@ export function MedicineSuggestions({
     <ul
       id={id}
       role="listbox"
-      className="absolute left-0 top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-elevated"
+      /* Bounded and scrollable rather than `overflow-hidden`: the list fits whole
+         at the usual limits, but on a short viewport the last rows used to be cut
+         off with nothing to say they were there. */
+      className="absolute left-0 top-full z-20 mt-2 max-h-[min(22rem,60vh)] w-full overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover p-1.5 shadow-elevated"
     >
       {loading && (
         <li className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground">

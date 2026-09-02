@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { matchMedicines } from '@/services/medicine-api'
+import { toSearchQuery } from '@/lib/inn'
 
 /**
  * Debounced live MediBase™ autocomplete. Backed by /medibase/match — no mock
@@ -23,7 +24,9 @@ export function useMedicineSuggestions(query, { limit = 7, debounceMs = 200 } = 
     setLoading(true)
     setError(false)
     const t = setTimeout(() => {
-      matchMedicines(q, limit)
+      // Same INN resolution as the availability search, so suggestions appear
+      // for a name typed in the patient's own script.
+      matchMedicines(toSearchQuery(q), limit)
         .then((rows) => { if (alive) { setSuggestions(rows); setLoading(false) } })
         .catch(() => { if (alive) { setSuggestions([]); setError(true); setLoading(false) } })
     }, debounceMs)

@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
 import { SetPriorityDto } from './dto/set-priority.dto';
+import { SavedQueryDto } from '../dto/saved-query.dto';
 
 /**
  * Patient ZoikoSignal™ — personalized availability notifications for the caller.
@@ -28,8 +30,10 @@ export class PatientSignalController {
 
   @Get('summary')
   @ApiOperation({ summary: 'ZoikoSignal summary counters' })
-  summary(@CurrentUser('id') userId: string) {
-    return this.signal.summary(userId);
+  summary(@CurrentUser('id') userId: string, @Query() query: SavedQueryDto) {
+    // Same location as saved-status: the counters describe the cards beneath
+    // them, so they have to be measured from the same place.
+    return this.signal.summary(userId, query);
   }
 
   @Get('digest')
@@ -40,8 +44,8 @@ export class PatientSignalController {
 
   @Get('saved-status')
   @ApiOperation({ summary: 'Saved medicines with current availability status' })
-  savedStatus(@CurrentUser('id') userId: string) {
-    return this.signal.savedStatus(userId);
+  savedStatus(@CurrentUser('id') userId: string, @Query() query: SavedQueryDto) {
+    return this.signal.savedStatus(userId, query);
   }
 
   @Get('notifications')

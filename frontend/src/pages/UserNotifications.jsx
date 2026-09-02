@@ -19,6 +19,7 @@ import {
   Loader2,
   Check,
   ArrowRight,
+  AlertCircle,
 } from 'lucide-react'
 
 const TYPE_META = {
@@ -32,14 +33,19 @@ export default function UserNotifications() {
   const { t } = useLanguage()
   const [items, setItems] = useState(null)
   const [filter, setFilter] = useState('all')
+  const [failedSources, setFailedSources] = useState([])
   const navigate = useNavigate()
 
   const fetchItems = useCallback(async () => {
     try {
       const data = await getPatientNotifications()
       setItems(data)
+      // Which feeds could not be read. An empty section is only honest when the
+      // request behind it actually succeeded.
+      setFailedSources(data?.failed ?? [])
     } catch {
       setItems([])
+      setFailedSources(['notifications'])
     }
   }, [])
 
@@ -113,6 +119,20 @@ export default function UserNotifications() {
         }
       />
 
+      {failedSources.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <div className="flex flex-col gap-1">
+            <span className="font-semibold">
+              {t('couldNotLoadSome', 'Some notifications could not be loaded')}
+            </span>
+            <span className="text-xs leading-relaxed text-foreground/90">
+              {failedSources.join(' and ')} — this is a problem on our side, not an empty inbox.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Filter chips */}
       <div className="flex flex-wrap gap-2">
         {filtersList.map((f) => (
@@ -132,7 +152,18 @@ export default function UserNotifications() {
       </div>
 
       {visible.length === 0 ? (
-        <EmptyState icon={Bell} title={t('noNotifications', 'No notifications')} description={t('allCaughtUp', "You are all caught up.")} />
+        <EmptyState
+          icon={Bell}
+          title={t('noNotifications', 'No notifications')}
+          description={
+            failedSources.length > 0
+              ? t(
+                  'notificationsPartlyUnavailable',
+                  'Some notifications could not be loaded just now, so this may not be everything.',
+                )
+              : t('allCaughtUp', 'You are all caught up.')
+          }
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {visible.map((n) => {
