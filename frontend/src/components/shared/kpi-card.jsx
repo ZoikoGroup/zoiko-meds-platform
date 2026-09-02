@@ -16,8 +16,16 @@ export function KpiCard({ metric, icon: Icon, index = 0, className }) {
         {/* hover glow */}
         <div className="pointer-events-none absolute -right-8 -top-8 size-24 rounded-full bg-primary/5 opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100"/>
 
-        <div className="flex items-start justify-between gap-3">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        {/*
+          Wraps rather than overflows. A Badge is `whitespace-nowrap shrink-0`,
+          so it cannot give up a pixel; without `flex-wrap` a long label
+          ("Pending Action") pushed past the card edge and was clipped by
+          `overflow-hidden`, and the icon — lacking `shrink-0` — squashed out of
+          square trying to absorb it. Now the badge drops to its own line when
+          the card is too narrow, and the icon keeps its shape either way.
+        */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <Icon className="size-4.5" aria-hidden/>
           </span>
           <StatusBadge tone={metric.status.severity} size="sm">

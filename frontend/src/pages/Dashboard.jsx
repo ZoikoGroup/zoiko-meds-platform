@@ -174,22 +174,32 @@ export default function Dashboard() {
       )}
 
       {/* KPI grid */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {loading
-          ? Array.from({ length: 10 }, (_, i) => (
-              <div
-                key={i}
-                className="h-[168px] animate-pulse rounded-2xl border border-border bg-muted/30"
-              />
-            ))
-          : kpis.map((metric, i) => (
-              <KpiCard
-                key={metric.id}
-                metric={metric}
-                icon={SUPER_KPI_ICONS[metric.id] ?? Activity}
-                index={i}
-              />
-            ))}
+      {/*
+        Column count follows the grid's own width, not the viewport. The 20rem
+        Live Telemetry panel takes its space out of this row without changing
+        the breakpoint, so a viewport-keyed `lg:grid-cols-5` sat at five columns
+        of ~112px with the panel open — narrower than the "Pending Action" badge
+        the Pending Verifications card shows whenever the queue is non-empty.
+        A container query measures what is actually available.
+      */}
+      <div className="@container">
+        <div className="grid grid-cols-1 gap-4 @min-[25rem]:grid-cols-2 @min-[38rem]:grid-cols-3 @min-[64rem]:grid-cols-5">
+          {loading
+            ? Array.from({ length: 10 }, (_, i) => (
+                <div
+                  key={i}
+                  className="h-[168px] animate-pulse rounded-2xl border border-border bg-muted/30"
+                />
+              ))
+            : kpis.map((metric, i) => (
+                <KpiCard
+                  key={metric.id}
+                  metric={metric}
+                  icon={SUPER_KPI_ICONS[metric.id] ?? Activity}
+                  index={i}
+                />
+              ))}
+        </div>
       </div>
 
       {/* Visualizations */}
