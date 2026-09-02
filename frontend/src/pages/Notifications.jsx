@@ -28,6 +28,18 @@ const TYPE_VARIANT = {
   PLATFORM_UPDATE: 'default',
   SYSTEM_ANNOUNCEMENT: 'default',
 }
+/**
+ * Which patient safety category an emergency alert is.
+ *
+ * ZoikoSignal used to work this out from the title with /recall/i, so "Urgent
+ * product withdrawal" reached patients as a government advisory and which of
+ * their two toggles governed a broadcast depended on its wording. The person
+ * dispatching it says which it is.
+ */
+const SAFETY_KIND_LABEL = {
+  MEDICINE_RECALL: 'Medicine Recall',
+  GOVERNMENT_SAFETY: 'Government Safety Alert',
+}
 const TARGET_LABEL = {
   ALL_USERS: 'All Users',
   PHARMACY_MANAGERS: 'Pharmacy Managers',
@@ -40,12 +52,17 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [isAddOpen, setIsAddOpen] = useState(false)
-  const [form, setForm] = useState({
+  const EMPTY_FORM = {
     title: '',
     message: '',
     type: 'PLATFORM_UPDATE',
     target: 'ALL_USERS',
-  })
+    // Only carried on an emergency alert; cleared whenever the channel type
+    // moves away from one, so a stale choice cannot ride along.
+    safetyKind: '',
+  }
+  const [form, setForm] = useState(EMPTY_FORM)
+  const needsSafetyKind = form.type === 'EMERGENCY_ALERT'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -66,10 +83,18 @@ export default function Notifications() {
   const handleBroadcast = async (e) => {
     e.preventDefault()
     if (!form.title || !form.message) return
+    // The backend refuses an emergency alert with no safety category, so there
+    // is nothing to gain from sending one — say so here rather than surfacing a
+    // validation error from the API.
+    if (needsSafetyKind && !form.safetyKind) {
+      setError('Choose a Safety Alert Type for an emergency alert.')
+      return
+    }
     try {
-      await admin.createNotification(form)
+      const { safetyKind, ...rest } = form
+      await admin.createNotification(needsSafetyKind ? { ...rest, safetyKind } : rest)
       setIsAddOpen(false)
-      setForm({ title: '', message: '', type: 'PLATFORM_UPDATE', target: 'ALL_USERS' })
+      setForm(EMPTY_FORM)
       window.dispatchEvent(new CustomEvent('broadcast-dispatched'))
       await load()
     } catch (err) {
@@ -221,7 +246,17 @@ export default function Notifications() {
                 <label className="text-xs font-semibold text-muted-foreground">Alert Channel Type</label>
                 <select
                   value={form.type}
-                  onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  aria-label="Alert Channel Type"
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      type: e.target.value,
+                      // Dropped as soon as the channel is not an emergency, so
+                      // switching away and back cannot submit an old choice.
+                      safetyKind:
+                        e.target.value === 'EMERGENCY_ALERT' ? form.safetyKind : '',
+                    })
+                  }
                   className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
                 >
                   {Object.entries(TYPE_LABEL).map(([v, l]) => (
@@ -235,6 +270,7 @@ export default function Notifications() {
                 <label className="text-xs font-semibold text-muted-foreground">Target Recipient Group</label>
                 <select
                   value={form.target}
+                  aria-label="Target Recipient Group"
                   onChange={(e) => setForm({ ...form, target: e.target.value })}
                   className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
                 >
@@ -246,6 +282,41 @@ export default function Notifications() {
                 </select>
               </div>
             </div>
+            {/*
+              Shown only for an emergency alert, because it is the only channel
+              that reaches a patient's safety categories at all. The other three
+              never become ZoikoSignal notifications, so a safety category would
+              be a value nothing reads.
+            */}
+            {needsSafetyKind && (
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="safety-kind"
+                  className="text-xs font-semibold text-muted-foreground"
+                >
+                  Safety Alert Type <span className="text-danger">*</span>
+                </label>
+                <select
+                  id="safety-kind"
+                  value={form.safetyKind}
+                  aria-label="Safety Alert Type"
+                  onChange={(e) => setForm({ ...form, safetyKind: e.target.value })}
+                  required
+                  className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
+                >
+                  <option value="">Select a safety category…</option>
+                  {Object.entries(SAFETY_KIND_LABEL).map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted-foreground">
+                  Decides which patient toggle governs this alert — Medicine recall alerts or
+                  Government safety alerts. Patients with that toggle off will not receive it.
+                </p>
+              </div>
+            )}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Broadcast Message Body</label>
               <textarea

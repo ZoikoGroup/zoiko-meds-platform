@@ -47,6 +47,14 @@ import { AcceptedDocument, readVerificationDocument } from './verification-docum
 import { VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
 
 /** Is this broadcast addressed to pharmacy staff at all? */
+/** Verification-request states that are still waiting on a reviewer. */
+const OPEN_REVIEW_STATUSES = [
+  VerificationRequestStatus.PENDING,
+  VerificationRequestStatus.UNDER_REVIEW,
+  VerificationRequestStatus.ESCALATED,
+  VerificationRequestStatus.REQUEST_INFO,
+];
+
 function reachesPharmacyStaff(target: NotificationTarget): boolean {
   return (
     target === NotificationTarget.ALL_USERS ||
@@ -774,15 +782,21 @@ export class PharmacyService {
       !suspended &&
       (existing.verificationStatus !== VerificationStatus.VERIFIED || identityChanged);
 
-    if (needsReview && user) {
-      await this.submitForReview(updated, user, identityChanged);
-    }
+    // The request this save is about, taken from the submission itself rather
+    // than looked up again. `currentRequestId` orders by createdAt across every
+    // status while `submitForReview` reuses the most recent *open* one, so with
+    // a newer closed request beside an older open one the two disagreed and a
+    // fresh upload attached to the request the reviewer was not looking at.
+    const submission =
+      needsReview && user
+        ? await this.submitForReview(updated, user, identityChanged)
+        : null;
 
-    // Replaces the document on the open request, so a reviewer looking at a
+    // Replaces the document on that same request, so a reviewer looking at a
     // resubmitted profile sees the file that came with it rather than the one
     // before the correction.
     if (document) {
-      const requestId = await this.currentRequestId(pharmacyId);
+      const requestId = submission?.requestId ?? (await this.currentRequestId(pharmacyId));
       if (!requestId) {
         throw new BadRequestException(
           'There is no open verification request to attach this document to. Save your profile first.',
@@ -860,14 +874,28 @@ export class PharmacyService {
     return document;
   }
 
-  /** The open (or most recent) verification request for this pharmacy. */
+  /**
+   * The open (or, failing that, most recent) verification request.
+   *
+   * Open first, to match what `submitForReview` targets. Ordering by createdAt
+   * across every status returned a newer *closed* request ahead of the older
+   * open one a reviewer was working through, which is how an upload could land
+   * on a request nobody was reviewing.
+   */
   private async currentRequestId(pharmacyId: string): Promise<string | null> {
-    const request = await this.prisma.verificationRequest.findFirst({
+    const open = await this.prisma.verificationRequest.findFirst({
+      where: { pharmacyId, status: { in: OPEN_REVIEW_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (open) return open.id;
+
+    const latest = await this.prisma.verificationRequest.findFirst({
       where: { pharmacyId },
       orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
-    return request?.id ?? null;
+    return latest?.id ?? null;
   }
 
   /**
@@ -879,14 +907,7 @@ export class PharmacyService {
     pharmacy: { id: string; name: string; licenseNumber: string | null },
     user: AuthenticatedUser,
     identityChanged: boolean,
-  ) {
-    const OPEN = [
-      VerificationRequestStatus.PENDING,
-      VerificationRequestStatus.UNDER_REVIEW,
-      VerificationRequestStatus.ESCALATED,
-      VerificationRequestStatus.REQUEST_INFO,
-    ];
-
+  ): Promise<{ requestId: string; resubmitted: boolean }> {
     await this.prisma.pharmacy.update({
       where: { id: pharmacy.id },
       data: {
@@ -897,7 +918,7 @@ export class PharmacyService {
     });
 
     const open = await this.prisma.verificationRequest.findFirst({
-      where: { pharmacyId: pharmacy.id, status: { in: OPEN } },
+      where: { pharmacyId: pharmacy.id, status: { in: OPEN_REVIEW_STATUSES } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -915,10 +936,10 @@ export class PharmacyService {
           notes: open.notes ? `${open.notes}\n${note}` : note,
         },
       });
-      return;
+      return { requestId: open.id, resubmitted: true };
     }
 
-    await this.prisma.verificationRequest.create({
+    const created = await this.prisma.verificationRequest.create({
       data: {
         pharmacyId: pharmacy.id,
         pharmacyName: pharmacy.name,
@@ -926,6 +947,62 @@ export class PharmacyService {
         submittedBy: `${user.fullName} (${user.email})`,
         status: VerificationRequestStatus.PENDING,
         notes: note,
+      },
+    });
+
+    // The licence already on file belongs to the pharmacy, not to the request
+    // that happened to carry it. A document is bound to one request by a unique
+    // key and nothing copied it forward, so a new request started with nothing
+    // attached — the reviewer opened it and saw "No document" while the file
+    // sat on the closed request before it, and the pharmacy's own page reverted
+    // to "No document uploaded yet" under a banner saying it was in review.
+    await this.carryForwardDocument(pharmacy.id, created.id);
+
+    return { requestId: created.id, resubmitted: false };
+  }
+
+  /**
+   * Copy the pharmacy's most recent licence document onto a new request.
+   *
+   * The bytes are duplicated deliberately: each request keeps the document it
+   * was reviewed against, so approving one does not silently re-point the
+   * evidence behind another. Nothing is overwritten — a request that already
+   * holds a document keeps it, which is what makes this safe to call on any
+   * newly created request.
+   */
+  private async carryForwardDocument(
+    pharmacyId: string,
+    requestId: string,
+  ): Promise<void> {
+    const existing = await this.prisma.verificationDocument.findUnique({
+      where: { verificationRequestId: requestId },
+      select: { id: true },
+    });
+    if (existing) return;
+
+    const previous = await this.prisma.verificationDocument.findFirst({
+      where: { pharmacyId, verificationRequestId: { not: requestId } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!previous) return;
+
+    await this.prisma.verificationDocument.create({
+      data: {
+        verificationRequestId: requestId,
+        pharmacyId,
+        uploadedById: previous.uploadedById,
+        filename: previous.filename,
+        mimeType: previous.mimeType,
+        sizeBytes: previous.sizeBytes,
+        data: previous.data,
+      },
+    });
+
+    await this.prisma.verificationRequest.update({
+      where: { id: requestId },
+      data: {
+        docName: previous.filename,
+        docUrl: `/admin/verification-requests/${requestId}/document`,
       },
     });
   }

@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Tooltip, TooltipContent, TooltipTrigger, } from '@/components/ui/tooltip';
 import { useTheme } from '@/providers/theme-provider';
 import { useAuth } from '@/providers/auth-provider';
-import { listNotifications } from '@/services/admin-api';
+import { listAdminInbox, listNotifications } from '@/services/admin-api';
 import { routeMeta } from '@/routes/navigation';
 import { cn } from '@/lib/utils';
 /* ------------------------------- search --------------------------------- */
@@ -92,7 +92,19 @@ function NotificationsMenu() {
 
     const loadLiveNotifications = useCallback(async () => {
         try {
-            const raw = await listNotifications();
+            // Two sources: the broadcasts an admin composed, and the
+            // verification submissions waiting on a reviewer. The bell used to
+            // read only the first, so a pharmacy uploading its licence and
+            // submitting for verification told nobody at all.
+            //
+            // allSettled, because one failing feed must not empty the bell:
+            // whichever answered still shows.
+            const [broadcasts, inbox] = await Promise.allSettled([
+                listNotifications(),
+                listAdminInbox(),
+            ]);
+            const raw = broadcasts.status === 'fulfilled' ? broadcasts.value : [];
+            const reviews = inbox.status === 'fulfilled' ? (inbox.value || []) : [];
             const mapped = (raw || []).map((n) => {
                 let severity = 'good';
                 if (n.type === 'EMERGENCY_ALERT') severity = 'critical';
@@ -115,8 +127,20 @@ function NotificationsMenu() {
                     rawDate: n.date ? new Date(n.date) : new Date(),
                 };
             });
-            mapped.sort((a, b) => b.rawDate - a.rawDate);
-            setItems(mapped);
+            const reviewItems = reviews.map((r) => ({
+                id: r.id,
+                title: r.title,
+                description: r.message,
+                severity: r.severity || 'serious',
+                channel: 'Verification Center',
+                to: `/admin/verification?request=${encodeURIComponent(r.requestId)}`,
+                time: r.date ? new Date(r.date).toLocaleDateString() : 'Just now',
+                rawDate: r.date ? new Date(r.date) : new Date(),
+            }));
+
+            const all = [...mapped, ...reviewItems];
+            all.sort((a, b) => b.rawDate - a.rawDate);
+            setItems(all);
         } catch {
             // Keep current items if network fails
         }
@@ -177,7 +201,11 @@ function NotificationsMenu() {
             items.map((n) => {
               const isRead = readIds.has(n.id);
               const { Icon, className } = SEV[n.severity] || SEV.good;
-              return (<div key={n.id} onClick={() => markSingleRead(n.id)} className={cn('flex cursor-pointer gap-3 px-4 py-3 transition-colors hover:bg-accent', !isRead && 'bg-primary/5')}>
+              // A review reminder is actionable, so it opens the request it is
+              // about. A broadcast has nowhere to go and stays a plain row.
+              const Row = n.to ? Link : 'div';
+              const rowProps = n.to ? { to: n.to } : {};
+              return (<Row key={n.id} {...rowProps} onClick={() => markSingleRead(n.id)} className={cn('flex cursor-pointer gap-3 px-4 py-3 transition-colors hover:bg-accent', !isRead && 'bg-primary/5')}>
                   <Icon className={cn('mt-0.5 size-4.5 shrink-0', className)}/>
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-2">
@@ -191,7 +219,7 @@ function NotificationsMenu() {
                       {n.channel} · {n.time}
                     </span>
                   </div>
-                </div>);
+                </Row>);
             })
           )}
         </div>
