@@ -152,7 +152,10 @@ export const createReport = (body) =>
 export const duplicateReport = (id) =>
   apiFetch(`/admin/reports/${id}/duplicate`, { method: 'POST' })
 
-export const downloadReport = (id) => apiFetch(`/admin/reports/${id}/download`)
+// Binary: the endpoint answers with the artifact itself — a PDF, a CSV — not a
+// description of one. apiFetch parses every response as text, which is how a
+// report labelled PDF was saved as JSON (MSA-53).
+export const downloadReport = (id) => apiFetchBlob(`/admin/reports/${id}/download`)
 
 export const deleteReport = (id) =>
   apiFetch(`/admin/reports/${id}`, { method: 'DELETE' })

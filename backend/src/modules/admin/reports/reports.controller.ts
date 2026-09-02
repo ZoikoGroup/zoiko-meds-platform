@@ -6,9 +6,11 @@ import {
   Ip,
   Param,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
+import { ApiBearerAuth, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { ReportsService } from './reports.service';
 import { CreateReportDto } from './dto/create-report.dto';
@@ -53,13 +55,30 @@ export class ReportsController {
   }
 
   @Get(':id/download')
-  @ApiOperation({ summary: 'Download a report as a governed export payload' })
-  download(
+  @ApiOperation({
+    summary: 'Download a report as its stated format',
+    description:
+      'Answers with the artifact itself, not a description of one: a PDF report returns application/pdf, a CSV report text/csv. The format column and the downloaded file are decided together (MSA-53).',
+  })
+  @ApiProduces('application/pdf', 'text/csv', 'application/json')
+  async download(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Ip() ipAddress: string,
+    @Res() res: Response,
   ) {
-    return this.reports.download(actorId, id, ipAddress);
+    const artifact = await this.reports.download(actorId, id, ipAddress);
+    res
+      .status(200)
+      .set({
+        'Content-Type': artifact.contentType,
+        'Content-Disposition': `attachment; filename="${artifact.filename}"`,
+        'Content-Length': String(artifact.body.length),
+        // An export is a point-in-time document; a cached copy would be a
+        // different report wearing the same URL.
+        'Cache-Control': 'no-store',
+      })
+      .send(artifact.body);
   }
 
   @Get(':id')

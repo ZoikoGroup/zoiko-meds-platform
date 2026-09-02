@@ -44,6 +44,7 @@ import {
   PharmacyNotificationService,
 } from './notifications/pharmacy-notification.service';
 import { AcceptedDocument, readVerificationDocument } from './verification-document';
+import { VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
 
 /** Is this broadcast addressed to pharmacy staff at all? */
 function reachesPharmacyStaff(target: NotificationTarget): boolean {
@@ -1611,6 +1612,69 @@ export class PharmacyService {
    * 3. Upsert an AvailabilitySignal (public-safe derived signal).
    * 4. Audit-log the operation.
    */
+  /**
+   * Promote a directory record that has become a real, reporting pharmacy.
+   *
+   * A preloaded record stays DIRECTORY_UNCLAIMED through verification on
+   * purpose: approving a licence says the pharmacy exists, not that anybody has
+   * taken responsibility for what it reports. Reporting stock is that act — it
+   * is the pharmacy speaking for itself — so the first patient-visible signal is
+   * what earns the network classification (MSA-54).
+   *
+   * Every precondition sits in the `where`, which is what makes this safe to
+   * call after any successful inventory write:
+   *
+   *   - it can only ever match DIRECTORY_UNCLAIMED, so no higher classification
+   *     is downgraded or overwritten, and nothing else is touched;
+   *   - it requires a signal that patients could actually be shown, so a failed
+   *     upload, an empty CSV or a feed configured but never synced promotes
+   *     nothing;
+   *   - matching nothing on the second call makes it idempotent;
+   *   - one statement, so two concurrent imports cannot race.
+   *
+   * The signal condition is VISIBLE_SIGNAL_WHERE — the same predicate the
+   * patient surfaces filter on — so "eligible to be shown" and "promoted" can
+   * never drift apart.
+   */
+  private async promoteClaimedByReporting(
+    pharmacyId: string,
+    actorId?: string | null,
+    ipAddress?: string,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.pharmacy.updateMany({
+      where: {
+        id: pharmacyId,
+        verificationStatus: VerificationStatus.VERIFIED,
+        isParticipating: true,
+        commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
+        availabilitySignals: { some: VISIBLE_SIGNAL_WHERE },
+      },
+      data: {
+        commercialClassification: CommercialClassification.VERIFIED_NETWORK_CORE,
+      },
+    });
+
+    if (count === 0) return false;
+
+    // A commercial classification changing on its own is worth being able to
+    // account for later.
+    await this.auditWriter.write(
+      actorId ?? null,
+      'pharmacy.classification.promote',
+      'Pharmacy',
+      pharmacyId,
+      {
+        pharmacyId,
+        from: CommercialClassification.DIRECTORY_UNCLAIMED,
+        to: CommercialClassification.VERIFIED_NETWORK_CORE,
+        reason: 'First patient-visible availability signal reported.',
+        module: 'Pharmacy Management',
+      },
+      ipAddress,
+    );
+    return true;
+  }
+
   async addInventoryItem(
     pharmacyId: string,
     dto: AddInventoryDto,
@@ -1757,6 +1821,10 @@ export class PharmacyService {
       },
       ipAddress,
     );
+
+    // A directory record that has now reported stock is speaking for itself, so
+    // it stops being unclaimed. No-ops unless every condition holds.
+    await this.promoteClaimedByReporting(pharmacyId, user?.id, ipAddress);
 
     return {
       id: avail.id,
@@ -2091,6 +2159,10 @@ export class PharmacyService {
       ipAddress,
     );
 
+    // A directory record that has now reported stock is speaking for itself, so
+    // it stops being unclaimed. No-ops unless every condition holds.
+    await this.promoteClaimedByReporting(pharmacyId, user?.id, ipAddress);
+
     return {
       id: updated.id,
       medicineId: updated.medicineId,
@@ -2353,6 +2425,10 @@ export class PharmacyService {
       },
       ipAddress,
     );
+
+    // A directory record that has now reported stock is speaking for itself, so
+    // it stops being unclaimed. No-ops unless every condition holds.
+    await this.promoteClaimedByReporting(pharmacyId, user?.id, ipAddress);
 
     return {
       imported,
