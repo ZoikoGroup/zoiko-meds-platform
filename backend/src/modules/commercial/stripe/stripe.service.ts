@@ -569,6 +569,18 @@ export class StripeService {
   }
 
   /**
+   * Read back a checkout session the browser has just returned from (MP-52).
+   *
+   * The return route needs the session's own payment status and metadata, not the
+   * query string's word for it: `?checkout=success` is whatever the browser was
+   * redirected with, and anybody can type it. Asking the provider is what makes
+   * the answer trustworthy.
+   */
+  async retrieveCheckoutSession(sessionId: string): Promise<Stripe.Checkout.Session> {
+    return this.stripe().checkout.sessions.retrieve(sessionId);
+  }
+
+  /**
    * Provider-hosted billing portal: manage payment method, view invoices, download
    * receipts. Also hosted, for the same reason as checkout.
    */

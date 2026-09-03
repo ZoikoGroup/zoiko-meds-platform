@@ -13,7 +13,12 @@ import {
 } from '@/components/ui/table'
 import { EmptyState, ErrorState } from '@/components/shared/states'
 import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
-import { getBilling, openBillingPortal, startBillingCheckout } from '@/services/pharmacy-api'
+import {
+  confirmBillingCheckout,
+  getBilling,
+  openBillingPortal,
+  startBillingCheckout,
+} from '@/services/pharmacy-api'
 import { CLASSIFICATION_META, DELINQUENCY_TIMELINE, formatMinor } from '@/lib/commercial'
 import { CreditCard, ExternalLink, FileText, Info, Loader2, ShieldCheck } from 'lucide-react'
 
@@ -48,14 +53,40 @@ const INVOICE_META = {
  * the API actually sent, so a Pharmacist simply receives no amounts rather than
  * receiving them and relying on this component to hide them.
  */
+/**
+ * How many times the page asks whether the payment has landed, and how long it
+ * waits between asks (MP-52).
+ *
+ * The confirm call reconciles the session directly, so the first attempt
+ * normally settles it. The retries are for a payment method that settles
+ * asynchronously, where the provider itself does not know yet. Twelve attempts
+ * five seconds apart is a minute of watching, after which the page says plainly
+ * that it is still waiting rather than spinning forever.
+ */
+const CONFIRM_ATTEMPTS = 12
+const CONFIRM_INTERVAL_MS = 5000
+
 export default function PharmacyBilling() {
   // Populated by the hosted checkout redirect.
-  const checkoutOutcome = new URLSearchParams(window.location.search).get('checkout')
+  const search = new URLSearchParams(window.location.search)
+  const checkoutOutcome = search.get('checkout')
+  const checkoutSessionId = search.get('session_id')
 
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [actionError, setActionError] = useState('')
+  /**
+   * Where the return-from-checkout confirmation has got to.
+   *
+   * 'confirming' while the page is asking, 'active' once the plan is, 'waiting'
+   * once it has asked as many times as it is going to. The page used to promise
+   * it "updates automatically" while doing nothing of the kind — it read the
+   * billing record once on mount and then only on window focus, so a webhook
+   * that arrived a second later, or never, left the message standing over an
+   * inactive plan indefinitely.
+   */
+  const [confirmState, setConfirmState] = useState(null)
 
   // Both actions hand off to a provider-hosted page. Navigating away is the point:
   // card entry happens on the provider's domain, never here.
@@ -91,6 +122,59 @@ export default function PharmacyBilling() {
       window.removeEventListener('focus', sync)
     }
   }, [load])
+
+  /**
+   * Confirm the payment this page was redirected back from.
+   *
+   * The platform used to learn about a completed checkout from the provider's
+   * webhook alone. When that webhook was misconfigured, unreachable, or merely
+   * slower than the browser, the pharmacy was left on an inactive plan with
+   * nothing recorded anywhere — not on this page and not for an administrator
+   * either, because no subscription had been created to see.
+   *
+   * So the pharmacy confirms its own session. The server reads it back from the
+   * provider and runs the same reconciliation the webhook runs, idempotently:
+   * whichever route arrives first activates the plan and the other finds the
+   * work already done.
+   */
+  useEffect(() => {
+    if (checkoutOutcome !== 'success' || !checkoutSessionId) return
+
+    let alive = true
+    let attempt = 0
+    let timer = null
+    setConfirmState('confirming')
+
+    const ask = async () => {
+      attempt += 1
+      try {
+        const result = await confirmBillingCheckout(checkoutSessionId)
+        if (!alive) return
+        if (result?.status === 'active') {
+          setConfirmState('active')
+          await load()
+          return
+        }
+      } catch {
+        // A refusal here is not worth showing: the webhook may still land, and
+        // the honest thing to report is that the answer has not arrived, which
+        // is what the 'waiting' state below says.
+        if (!alive) return
+      }
+
+      if (attempt >= CONFIRM_ATTEMPTS) {
+        setConfirmState('waiting')
+        return
+      }
+      timer = setTimeout(ask, CONFIRM_INTERVAL_MS)
+    }
+
+    ask()
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [checkoutOutcome, checkoutSessionId, load])
 
   if (error) {
     return (
@@ -133,15 +217,36 @@ export default function PharmacyBilling() {
         subtitle="Your plan and participation in the ZoikoMeds network."
       />
 
-      {/* Returned from the hosted checkout. Success is not asserted here — the
-          plan only becomes active once the provider confirms payment by webhook,
-          so this reports what was submitted, not what was charged. */}
-      {checkoutOutcome === 'success' && (
+      {/* Returned from the hosted checkout. Success is not asserted until the
+          provider has confirmed the payment — this reports which of those has
+          happened, rather than one standing message that outlived both. */}
+      {checkoutOutcome === 'success' && confirmState !== 'waiting' && (
         <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs font-medium text-success max-w-4xl">
-          <Info className="mt-0.5 size-3.5 shrink-0" />
+          {confirmState === 'confirming' ? (
+            <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Info className="mt-0.5 size-3.5 shrink-0" />
+          )}
           <span className="text-foreground/90">
-            Payment submitted. Your plan activates as soon as the payment provider confirms it —
-            this page updates automatically.
+            {confirmState === 'active'
+              ? 'Payment confirmed. Your plan is active.'
+              : 'Payment submitted. Confirming it with the payment provider…'}
+          </span>
+        </div>
+      )}
+
+      {/* Asked as many times as it is going to and still no confirmation. Said
+          plainly, with something to do about it: a pharmacy that has been
+          charged must not be left reading "activates automatically" over a plan
+          that never activated. */}
+      {checkoutOutcome === 'success' && confirmState === 'waiting' && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-medium max-w-4xl">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-warning" />
+          <span className="text-foreground/90">
+            Your payment was submitted, but the payment provider has not confirmed it yet. If you
+            have been charged and your plan is still not active in a few minutes, contact
+            ZoikoMeds support with your payment reference — nothing further is needed from you
+            here.
           </span>
         </div>
       )}

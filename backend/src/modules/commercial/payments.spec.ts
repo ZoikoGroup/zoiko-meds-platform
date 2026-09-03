@@ -276,6 +276,135 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
   });
 });
 
+/**
+ * One reconciliation, reachable two ways (MP-52).
+ *
+ * The subscription used to come into existence only through the provider's
+ * webhook. A pharmacy that paid and was redirected back was told its plan
+ * "activates as soon as the payment provider confirms it — this page updates
+ * automatically", and when the webhook did not arrive, nothing ever did: no plan
+ * on the pharmacy's page, and nothing for an administrator to find either,
+ * because no subscription had been created to see.
+ *
+ * The pharmacy now confirms its own session on the way back, through this same
+ * method. Which makes idempotency the whole point rather than a nicety: both
+ * routes can run for one payment, and exactly one subscription may result.
+ */
+describe('StripeWebhookService.reconcileCheckoutSession — the webhook is not the only route', () => {
+  let service: StripeWebhookService;
+  let prisma: any;
+
+  const session = (over: Record<string, unknown> = {}) =>
+    ({
+      id: 'cs_1',
+      payment_status: 'paid',
+      subscription: 'sub_provider_1',
+      metadata: {
+        billingProfileId: 'bp_1',
+        pharmacyId: 'ph_1',
+        priceCatalogEntryId: 'pc_1',
+      },
+      ...over,
+    }) as any;
+
+  beforeEach(() => {
+    prisma = {
+      providerEvent: {
+        create: jest.fn().mockResolvedValue({ id: 'pe_1' }),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'sub_local' }),
+        update: jest.fn(),
+      },
+      subscriptionLocation: { create: jest.fn().mockResolvedValue({}) },
+      pharmacy: { update: jest.fn().mockResolvedValue({}) },
+      invoice: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
+    };
+    service = new StripeWebhookService(
+      prisma as unknown as PrismaService,
+      audit(),
+      { recordPaymentFailure: jest.fn() } as unknown as SubscriptionService,
+      new StripeConfig(cfg({ STRIPE_SECRET_KEY: 'sk_test_abc' })),
+    );
+  });
+
+  it('creates the subscription when the pharmacy confirms on return', async () => {
+    // The bug in one line: this used to be reachable only from a webhook.
+    const result = await service.reconcileCheckoutSession(session(), 'return');
+
+    expect(result).toMatchObject({ reconciled: true });
+    expect(prisma.subscription.create).toHaveBeenCalled();
+  });
+
+  it('marks the pharmacy as paying, which is what the billing page reads', async () => {
+    await service.reconcileCheckoutSession(session(), 'return');
+
+    expect(prisma.pharmacy.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ph_1' },
+        data: { commercialClassification: CommercialClassification.PRO_ACTIVE },
+      }),
+    );
+  });
+
+  it('creates exactly one subscription when both routes run for one payment', async () => {
+    // Whichever arrives first wins; the second finds the work done. Without this
+    // a pharmacy confirming its own return alongside a webhook that did arrive
+    // would be billed against two subscriptions for one purchase.
+    await service.reconcileCheckoutSession(session(), 'return');
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
+    const second = await service.reconcileCheckoutSession(session(), 'webhook');
+
+    expect(prisma.subscription.create).toHaveBeenCalledTimes(1);
+    // Reported as done, not as nothing having happened — the caller is asking
+    // whether the plan is active, and it is.
+    expect(second).toMatchObject({ reconciled: true });
+  });
+
+  it('activates nothing for a session the provider has not marked paid', async () => {
+    const result = await service.reconcileCheckoutSession(
+      session({ payment_status: 'unpaid' }),
+      'return',
+    );
+
+    expect(result).toMatchObject({ reconciled: false, reason: 'unpaid' });
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+  });
+
+  it('activates nothing for a session carrying no metadata to reconcile against', async () => {
+    const result = await service.reconcileCheckoutSession(session({ metadata: {} }), 'webhook');
+
+    expect(result).toMatchObject({ reconciled: false });
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+  });
+
+  it('records which route confirmed it, so a dead webhook is visible', async () => {
+    // When this reads "return" for every payment, webhook delivery is broken and
+    // the redirect is carrying the whole flow on its own.
+    const writer = { write: jest.fn() };
+    service = new StripeWebhookService(
+      prisma as unknown as PrismaService,
+      writer as unknown as AuditWriter,
+      { recordPaymentFailure: jest.fn() } as unknown as SubscriptionService,
+      new StripeConfig(cfg({ STRIPE_SECRET_KEY: 'sk_test_abc' })),
+    );
+
+    await service.reconcileCheckoutSession(session(), 'return');
+
+    expect(writer.write).toHaveBeenCalledWith(
+      null,
+      'commercial.stripe.checkout_completed',
+      'Subscription',
+      'sub_local',
+      expect.objectContaining({ source: 'return', pharmacyId: 'ph_1' }),
+    );
+  });
+});
+
 describe('TaxService — never assumes a rate (S-M3)', () => {
   let service: TaxService;
   let prisma: any;

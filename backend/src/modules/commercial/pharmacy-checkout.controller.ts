@@ -2,9 +2,11 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  NotFoundException,
   Post,
   UseGuards,
 } from '@nestjs/common';
+import type Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
@@ -25,6 +27,7 @@ import { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { BillingProfileService } from './billing-profile.service';
 import { PriceCatalogService } from './price-catalog.service';
 import { StripeService } from './stripe/stripe.service';
+import { StripeWebhookService } from './stripe/stripe-webhook.service';
 
 class StartCheckoutDto {
   /**
@@ -40,6 +43,13 @@ class StartCheckoutDto {
   @IsString()
   @Length(3, 3)
   currency?: string;
+}
+
+/** The session id the provider put in the return URL. */
+class ConfirmCheckoutDto {
+  @IsString()
+  @Length(8, 256)
+  sessionId!: string;
 }
 
 /**
@@ -70,6 +80,9 @@ export class PharmacyCheckoutController {
     private readonly stripe: StripeService,
     private readonly priceCatalog: PriceCatalogService,
     private readonly billingProfiles: BillingProfileService,
+    // The same reconciliation the webhook runs, so the two routes cannot drift
+    // into disagreeing about what a paid checkout means.
+    private readonly webhooks: StripeWebhookService,
   ) {}
 
   @Post('checkout')
@@ -155,11 +168,63 @@ export class PharmacyCheckoutController {
       classification: pharmacy.commercialClassification,
       pharmacyId: pharmacy.id,
       priceCatalogEntryId: price.id,
-      successUrl: `${base}/pharmacy/billing?checkout=success`,
+      // The session id comes back in the redirect so the page returning from
+      // checkout can confirm the payment itself. Without it the platform had no
+      // way to learn a payment succeeded except the webhook, and a webhook that
+      // is misconfigured or slower than the browser left the pharmacy staring at
+      // an inactive plan with nothing recorded anywhere (MP-52). Stripe
+      // substitutes the id for this literal placeholder.
+      successUrl: `${base}/pharmacy/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${base}/pharmacy/billing?checkout=cancelled`,
     });
 
     return { url: session.url };
+  }
+
+  @Post('checkout/confirm')
+  @Roles(UserRole.PHARMACY_ADMIN)
+  @ApiOperation({
+    summary: 'Confirm a checkout the browser has just returned from',
+    description:
+      'Reads the session back from the provider and activates the plan if it is paid. The webhook does the same thing; whichever arrives first wins and the other finds the work done. Exists because a webhook that is misconfigured, unreachable, or simply slower than the redirect used to leave a paid pharmacy on an inactive plan with nothing recorded for an administrator to find (MP-52).',
+  })
+  async confirmCheckout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ConfirmCheckoutDto,
+  ): Promise<{ status: 'active' | 'pending'; message: string }> {
+    const pharmacyId = user.pharmacyId ?? (await this.resolvePharmacyId(user));
+    if (!pharmacyId) {
+      throw new ForbiddenException('Your account is not linked to a pharmacy.');
+    }
+
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await this.stripe.retrieveCheckoutSession(dto.sessionId);
+    } catch {
+      // An id that the provider does not recognise. Not an error worth alarming
+      // the operator with — the webhook may yet arrive — so it reads as pending.
+      throw new NotFoundException('That checkout session could not be found.');
+    }
+
+    // The session must be this pharmacy's own. Session ids are not secret once
+    // they have been in a URL, and confirming somebody else's purchase would
+    // activate a plan against a pharmacy that never bought one.
+    if (session.metadata?.pharmacyId !== pharmacyId) {
+      throw new ForbiddenException('That checkout session does not belong to your pharmacy.');
+    }
+
+    const result = await this.webhooks.reconcileCheckoutSession(session, 'return');
+    if (result.reconciled) {
+      return { status: 'active', message: 'Payment confirmed. Your plan is active.' };
+    }
+
+    return {
+      status: 'pending',
+      message:
+        result.reason === 'unpaid'
+          ? 'The payment provider has not confirmed this payment yet. This page will keep checking.'
+          : 'This checkout is not ready to activate yet. This page will keep checking.',
+    };
   }
 
   @Post('portal')
