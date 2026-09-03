@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
+import { EmailSecondFactorCard } from '@/components/shared/email-second-factor-card'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -890,6 +891,11 @@ export default function PharmacyProfile() {
             />
           </CardContent>
         </Card>
+
+        {/* Confirm each sign-in by email (MSA-42). Its own control with its own
+            save, so it is not part of this form's submit — the Switch renders a
+            type="button", which is what keeps it out of the way. */}
+        <EmailSecondFactorCard />
       </div>
     </form>
   )

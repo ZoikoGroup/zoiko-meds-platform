@@ -83,17 +83,17 @@ export class AdminController {
   @ApiOperation({
     summary: 'Authentication controls, as they actually stand',
     description:
-      'The stored policy and the controls derived from it. Controls the console cannot decide report where they are configured instead — a stored flag that nothing enforces is worse than no flag (MSA-42).',
+      'The stored policy, the controls derived from it, and how ready the workspace is for two-factor enforcement. Controls the console cannot decide report where they are configured instead — a stored flag that nothing enforces is worse than no flag (MSA-42).',
   })
-  getSecurityPosture() {
-    return this.security.posture();
+  getSecurityPosture(@CurrentUser('id') actorId: string) {
+    return this.security.posture(actorId);
   }
 
   @Patch('security')
   @ApiOperation({
     summary: 'Set the workspace security policy',
     description:
-      'Only the controls this page can actually decide.',
+      'Only the controls this page can actually decide. Requiring two-factor authentication is refused unless the administrator asking for it has enrolled an authenticator of their own — otherwise the policy locks out the only account that could lift it (MSA-42).',
   })
   updateSecurityPosture(
     @CurrentUser('id') actorId: string,

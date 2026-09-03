@@ -25,6 +25,10 @@ vi.mock('@/services/pharmacy-api', () => ({
 
 vi.mock('@/lib/api-client', () => ({
   apiBaseUrl: () => '/internal',
+  // The sign-in security card on this page reads its own status. Stubbed to
+  // nothing so it renders nothing: these tests are about the profile form,
+  // and an unmocked read would put an error alert in their way (MSA-42).
+  apiFetch: () => Promise.resolve(undefined),
 }))
 
 const PROFILE = {

@@ -71,6 +71,7 @@ import Register from '@/pages/Register'
 const ForgotPassword = lazyImport(() => import('@/pages/ForgotPassword'), 'ForgotPassword')
 const ResetPassword = lazyImport(() => import('@/pages/ResetPassword'), 'ResetPassword')
 const AuthCallback = lazyImport(() => import('@/pages/AuthCallback'), 'AuthCallback')
+const VerifyLogin = lazyImport(() => import('@/pages/VerifyLogin'), 'VerifyLogin')
 const NotFound = lazyImport(() => import('@/pages/NotFound'), 'NotFound')
 
 export const router = createBrowserRouter([
@@ -119,6 +120,9 @@ export const router = createBrowserRouter([
   },
   // OAuth landing
   { path: 'auth/callback', element: <AuthCallback />, errorElement: <RouteErrorBoundary /> },
+  // Where an emailed sign-in link lands. Public, because it is the call that
+  // produces the session — requiring one to reach it would be circular (MSA-42).
+  { path: 'auth/verify-login', element: <VerifyLogin />, errorElement: <RouteErrorBoundary /> },
   { path: '/', element: <Navigate to="/login" replace /> },
   // User Portal routes
   {

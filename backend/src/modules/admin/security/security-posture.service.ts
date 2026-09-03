@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { isOAuthConfigured } from '../../auth/guards/oauth.guard';
@@ -36,6 +37,32 @@ export interface SecurityPolicy {
 }
 
 /**
+ * Who would still be able to sign in if MFA were required right now.
+ *
+ * Reported alongside the policy so the console can answer the question the
+ * switch really asks — "who does this shut out?" — before it is thrown, rather
+ * than afterwards through a support ticket.
+ *
+ * Administrators only, because the policy reaches administrators only. It used
+ * to reach every account, which made this switch able to turn every patient and
+ * every pharmacy out of the platform: none of them have anywhere to enrol an
+ * authenticator, and none of them could get a session in which to try. They
+ * have the emailed sign-in link instead, opt-in and their own to set, and this
+ * policy does not touch them.
+ *
+ * Password accounts only, on top of that: OAuth sign-in does not consult the
+ * policy, so an account without a password is not one this rule can shut out.
+ */
+export interface MfaReadiness {
+  /** Whether the admin reading this has confirmed an authenticator of their own. */
+  actorEnrolled: boolean;
+  /** Active administrators who sign in with a password. */
+  passwordMembers: number;
+  /** How many of those have confirmed a second factor. */
+  enrolledMembers: number;
+}
+
+/**
  * The workspace's authentication posture (MSA-42).
  *
  * The settings page carried three switches — "Enforce multi-factor
@@ -58,6 +85,16 @@ export interface SecurityPolicy {
  */
 /** The one Organization row every policy lives on. */
 const SINGLETON_ID = 'singleton';
+
+/**
+ * Exactly the accounts AuthService.login applies the policy to: active
+ * administrators who sign in with a password.
+ */
+const ADMINS_THE_POLICY_REACHES = {
+  isActive: true,
+  role: UserRole.SUPER_ADMIN,
+  passwordHash: { not: null },
+} as const;
 
 const DEFAULT_POLICY: SecurityPolicy = {
   requireMfa: false,
@@ -87,7 +124,18 @@ export class SecurityPostureService {
     actorId: string | null,
     dto: UpdateSecurityPolicyDto,
     ipAddress?: string,
-  ): Promise<{ policy: SecurityPolicy; controls: SecurityControl[] }> {
+  ): Promise<{
+    policy: SecurityPolicy;
+    controls: SecurityControl[];
+    mfa: MfaReadiness;
+  }> {
+    // Checked before the write, not after: the switch that turns MFA on is the
+    // one control here whose failure mode is losing the console, exactly as the
+    // withdrawn IP allowlist's was. An admin who has not enrolled would be
+    // refused by the rule they just wrote, on their own next sign-in, with
+    // nobody left holding a session that could undo it.
+    if (dto.requireMfa === true) await this.assertActorHasSecondFactor(actorId);
+
     const data = {
       ...(dto.requireMfa !== undefined ? { requireMfa: dto.requireMfa } : {}),
       ...(dto.allowOauthSignIn !== undefined
@@ -111,7 +159,7 @@ export class SecurityPostureService {
       ipAddress,
     );
 
-    return { policy: await this.policy(), controls: await this.list() };
+    return this.posture(actorId);
   }
 
   /**
@@ -120,8 +168,78 @@ export class SecurityPostureService {
    * The same shape `update` answers with, so a save and a first load leave the
    * page holding the same thing.
    */
-  async posture(): Promise<{ policy: SecurityPolicy; controls: SecurityControl[] }> {
-    return { policy: await this.policy(), controls: await this.list() };
+  async posture(actorId: string | null): Promise<{
+    policy: SecurityPolicy;
+    controls: SecurityControl[];
+    mfa: MfaReadiness;
+  }> {
+    return {
+      policy: await this.policy(),
+      controls: await this.list(),
+      mfa: await this.mfaReadiness(actorId),
+    };
+  }
+
+  /**
+   * Refuse to require a second factor of everyone at the hands of an admin who
+   * has not got one.
+   *
+   * This is the whole reason the switch sat inert. Enforcement itself has
+   * worked since MSA-42 landed, but nothing stopped the one account that could
+   * switch it back off from writing itself out of its own workspace, and in
+   * production that is what happened. The recovery was a hand-written UPDATE
+   * against the database.
+   */
+  private async assertActorHasSecondFactor(actorId: string | null): Promise<void> {
+    if (!actorId) {
+      throw new BadRequestException(
+        'Set up your own authenticator app before requiring one of the workspace.',
+      );
+    }
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorId },
+      select: { mfaEnabledAt: true },
+    });
+    if (!actor?.mfaEnabledAt) {
+      throw new BadRequestException(
+        'Set up your own authenticator app before requiring one of the workspace. ' +
+          'Without it this policy would refuse your next sign-in, and no other account could turn it off.',
+      );
+    }
+  }
+
+  /**
+   * How ready the administrators are for the policy.
+   *
+   * Scoped to SUPER_ADMIN because AuthService.login is: everybody else uses the
+   * opt-in emailed sign-in link, which this switch neither requires nor affects.
+   * Counting them here would report a lockout that cannot happen and stop an
+   * administrator enabling a control that was safe.
+   *
+   * OAuth is not counted either, because oauthLogin does not consult the policy
+   * — an account with no password is not one this rule can shut out.
+   */
+  async mfaReadiness(actorId: string | null): Promise<MfaReadiness> {
+    const [actor, passwordMembers, enrolledMembers] = await Promise.all([
+      actorId
+        ? this.prisma.user.findUnique({
+            where: { id: actorId },
+            select: { mfaEnabledAt: true },
+          })
+        : Promise.resolve(null),
+      this.prisma.user.count({
+        where: ADMINS_THE_POLICY_REACHES,
+      }),
+      this.prisma.user.count({
+        where: { ...ADMINS_THE_POLICY_REACHES, mfaEnabledAt: { not: null } },
+      }),
+    ]);
+
+    return {
+      actorEnrolled: Boolean(actor?.mfaEnabledAt),
+      passwordMembers,
+      enrolledMembers,
+    };
   }
 
   async list(): Promise<SecurityControl[]> {
@@ -184,10 +302,10 @@ export class SecurityPostureService {
   private multiFactor(policy: SecurityPolicy): SecurityControl {
     return {
       id: 'mfa',
-      label: 'Require two-factor authentication',
+      label: 'Require two-factor authentication for administrators',
       detail: policy.requireMfa
-        ? 'Every password sign-in must present a code from an authenticator app. A member who has not enrolled is refused a session and told to set it up.'
-        : 'Members may enrol an authenticator app, but sign-in does not require one. Switching this on refuses a session to anyone who has not enrolled.',
+        ? 'Every administrator signing in with a password must present a code from an authenticator app. One who has not enrolled is refused a session. Patients and pharmacies are not affected: they choose the emailed sign-in link on their own profile.'
+        : 'Administrators may enrol an authenticator app, but sign-in does not require one. Switching this on refuses a session to any administrator who has not enrolled, and is refused unless you have enrolled yourself. It does not affect patients or pharmacies.',
       state: policy.requireMfa ? 'enforced' : 'available',
       configuredBy: 'This page',
       setting: 'requireMfa',

@@ -28,7 +28,13 @@ vi.mock('@/services/pharmacy-api', () => ({
   resolveMapLink: vi.fn(),
 }))
 
-vi.mock('@/lib/api-client', () => ({ apiBaseUrl: () => '/internal' }))
+vi.mock('@/lib/api-client', () => ({
+  apiBaseUrl: () => '/internal',
+  // The sign-in security card on this page reads its own status. Stubbed to
+  // nothing so it renders nothing: these tests are about the profile form,
+  // and an unmocked read would put an error alert in their way (MSA-42).
+  apiFetch: () => Promise.resolve(undefined),
+}))
 
 /** Exactly the metadata shape GET /pharmacies/me returns. */
 const ATTACHED = {

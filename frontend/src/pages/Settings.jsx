@@ -65,6 +65,12 @@ import {
   createApiKey,
   revokeApiKey,
 } from '@/services/admin-api'
+import {
+  mfaStatusRequest,
+  mfaSetupRequest,
+  mfaConfirmRequest,
+  mfaDisableRequest,
+} from '@/services/auth-api'
 import { useFlash } from '@/components/shared/flash'
 import { useAuth } from '@/providers/auth-provider'
 import { initials, formatRelative } from '@/utils/format'
@@ -453,96 +459,320 @@ function MembersPanel() {
  * The sign-in controls this page shows (MSA-42).
  *
  * They were switches bound to useState and nothing else, two of them on by
- * default, so all three read as active security while none of them did anything.
- * What changed is that a switch is live only where the platform really enforces
- * the control, and the rest say so instead of sitting there inviting a click.
+ * default, so all three read as active security while none of them did
+ * anything. Then they were pinned off and labelled "coming soon", which stopped
+ * them lying but left the workspace with no way to require a second factor at
+ * all - the control was built and enforced at sign-in, and unreachable.
  *
- * IP allowlist has been withdrawn. It was the one live switch here, and it did
+ * What was actually missing was the rest of the flow. Enforcement has always
+ * worked; nothing let an administrator enrol, and nothing stopped an unenrolled
+ * one from requiring of everybody a factor they did not have themselves. So the
+ * panel carries both halves: enrol here, and only then may the switch be
+ * thrown. The same guard is on the server, because this page is a convenience
+ * and not the thing standing between the workspace and a lockout.
+ *
+ * IP allowlist stays withdrawn. It was the one live switch here, and it did
  * exactly what it said: an operator saved a subnet mask as though it were a
- * range, switched it on, and every request from outside that list was refused —
+ * range, switched it on, and every request from outside that list was refused -
  * including the console session of the only account that could switch it back
  * off. Recovering it took a write to the database. Restriction by network now
  * belongs at the load balancer, where locking yourself out does not also remove
  * the means to undo it.
  *
- * SAML is not built at all. Single sign-on here is OAuth against Google, which
- * is a different protocol — an Okta IdP that only speaks SAML cannot be
- * connected, so this switch would have configured nothing.
- *
- * MFA is built and enforced at login, but the enable path does not yet check
- * that the admin turning it on has finished enrolling. Switching it on while
- * unenrolled refuses every password sign-in, including theirs — which is exactly
- * what happened in production. It stays disabled until that guard exists.
+ * SAML is still not built, and still says so rather than offering a switch.
+ * Single sign-on here is OAuth against Google, a different protocol; an Okta
+ * IdP that only speaks SAML cannot be connected.
  */
 
-/** The rows, in the order the page has always listed them. */
-const SECURITY_ROWS = [
-  {
-    id: 'mfa',
-    title: 'Enforce multi-factor authentication',
-    detail: 'Require MFA for all members on every sign-in.',
-    // Enforced at login, but enabling it can still lock out an unenrolled admin.
-    comingSoon: true,
-  },
-  {
-    id: 'saml',
-    title: 'SSO (SAML 2.0)',
-    detail: 'Single sign-on via your identity provider (Okta).',
-    // No SAML service provider exists; Google OAuth is not the same protocol.
-    comingSoon: true,
-  },
-]
+/** How a control the console cannot set is described where it stands. */
+const CONTROL_STATE_LABEL = {
+  enforced: 'Enforced',
+  available: 'Available',
+  'not-implemented': 'Not available',
+}
+
+/** Group a setup key the way authenticator apps display it. */
+const groupSecret = (secret) => (secret || '').replace(/(.{4})/g, '$1 ').trim()
+
+/**
+ * Enrolling this administrator's own authenticator.
+ *
+ * Two steps, because the server's are two: setup mints a secret and hands back
+ * the key, and only confirm - a code proved against it - makes a factor exist.
+ * Opening this panel and closing the tab must leave the account able to sign in
+ * exactly as before, which is why nothing here counts as enrolment until a code
+ * comes back accepted.
+ */
+function MfaEnrolment({ status, onChanged }) {
+  const [setup, setSetup] = useState(null)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [flashMsg, flash] = useFlash()
+  // Turning it off is destructive and needs a code of its own, so it is asked
+  // for deliberately rather than sitting open beside the enrolled state.
+  const [disabling, setDisabling] = useState(false)
+
+  const begin = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      setSetup(await mfaSetupRequest())
+      setCode('')
+    } catch (err) {
+      setError(err?.message || 'Could not start setup.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirm = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await mfaConfirmRequest(code)
+      setSetup(null)
+      setCode('')
+      flash('Authenticator app set up.')
+      await onChanged()
+    } catch (err) {
+      // The setup key is kept on screen: a mistyped code should cost a retry,
+      // not the whole enrolment and another trip through the key.
+      setError(err?.message || 'That code was not accepted.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disable = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await mfaDisableRequest(code)
+      setDisabling(false)
+      setCode('')
+      flash('Authenticator app removed.')
+      await onChanged()
+    } catch (err) {
+      setError(err?.message || 'Could not turn it off.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cancel = () => {
+    setSetup(null)
+    setDisabling(false)
+    setCode('')
+    setError('')
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/30 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Your authenticator app</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {status?.enrolled
+              ? 'Set up. Your sign-in asks for a code from this app.'
+              : 'Not set up. Administrators cannot be made to use two-factor authentication until yours is.'}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge variant={status?.enrolled ? 'success' : 'secondary'}>
+            {status?.enrolled ? 'Enrolled' : 'Not enrolled'}
+          </Badge>
+          {!status?.enrolled && !setup && (
+            <Button size="sm" variant="teal" disabled={busy} onClick={begin}>
+              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              Set up
+            </Button>
+          )}
+          {status?.enrolled && !disabling && (
+            <Button
+              size="sm"
+              variant="outline"
+              // Refused by the server while the workspace requires MFA, so the
+              // button says so rather than letting the press find out.
+              disabled={Boolean(status?.required)}
+              title={
+                status?.required
+                  ? 'This workspace requires two-factor authentication, so it cannot be turned off.'
+                  : undefined
+              }
+              onClick={() => {
+                setDisabling(true)
+                setCode('')
+                setError('')
+              }}
+            >
+              Turn off
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {flashMsg && <p className="pt-3 text-xs font-medium text-success">{flashMsg}</p>}
+      {error && (
+        <p role="alert" className="flex items-start gap-2 pt-3 text-xs font-medium text-danger">
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          {error}
+        </p>
+      )}
+
+      {setup && (
+        <form onSubmit={confirm} className="flex flex-col gap-3 pt-4">
+          <Separator />
+          <div className="pt-1">
+            <p className="text-xs font-medium">1. Add this key to your authenticator app</p>
+            <p className="pb-2 text-xs text-muted-foreground">
+              In Google Authenticator, 1Password, Authy or similar, choose to add an account by
+              entering a setup key.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs tracking-wider">
+                {groupSecret(setup.secret)}
+              </code>
+              <CopyButton value={setup.secret} />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="mfa-confirm-code" className="text-xs font-medium">
+              2. Enter the 6-digit code it now shows
+            </Label>
+            <Input
+              id="mfa-confirm-code"
+              // Not type="number", which strips a leading zero - and one code in
+              // ten begins with one.
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              placeholder="123 456"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="max-w-[12rem] font-mono tracking-[0.3em]"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" variant="teal" disabled={busy || !code.trim()}>
+              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              Confirm
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={cancel} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {disabling && (
+        <form onSubmit={disable} className="flex flex-col gap-3 pt-4">
+          <Separator />
+          <div className="flex flex-col gap-1.5 pt-1">
+            <Label htmlFor="mfa-disable-code" className="text-xs font-medium">
+              Enter a current code to turn it off
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              A session alone is not enough - an unattended browser is the situation a second
+              factor exists for.
+            </p>
+            <Input
+              id="mfa-disable-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              placeholder="123 456"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="max-w-[12rem] font-mono tracking-[0.3em]"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" variant="destructive" disabled={busy || !code.trim()}>
+              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              Turn off
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={cancel} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  )
+}
 
 function SecurityPanel() {
   const [controls, setControls] = useState(null)
+  const [readiness, setReadiness] = useState(null)
+  const [mfaStatus, setMfaStatus] = useState(null)
   // `error` is only for a failed load, which leaves the page with nothing to
   // show. A refused save is transient: it belongs to the click that caused it,
   // rather than sitting there afterwards reading as a standing complaint.
   const [error, setError] = useState('')
   const [savingKey, setSavingKey] = useState(null)
   const [flashMsg, flash] = useFlash()
-  const [saveError, flashError] = useFlash(5200)
-  /**
-   * The switches for controls that are not built yet.
-   *
-   * Held here rather than bound to the server policy, which is why they move at
-   * all: reading them off the policy pinned them off, so a click appeared to do
-   * nothing and the control read as broken rather than as unfinished. This state
-   * is the switch's appearance and nothing else — it is never sent, never
-   * stored, and gone on the next mount, because the feature really is off.
-   */
-  const [uiOnly, setUiOnly] = useState({})
+  const [saveError, flashError] = useFlash(6000)
 
-  /** Take a { policy, controls } payload from either a read or a save. */
+  /** Take a { policy, controls, mfa } payload from either a read or a save. */
   const apply = useCallback((next) => {
     setControls(Array.isArray(next?.controls) ? next.controls : [])
+    setReadiness(next?.mfa ?? null)
   }, [])
+
+  /**
+   * Both reads together.
+   *
+   * The posture says what the workspace requires; the status says what this
+   * account has done about it. The switch below needs both, and showing one
+   * without the other is how an administrator ends up being told they may
+   * enforce something they cannot.
+   */
+  const load = useCallback(async () => {
+    const [posture, status] = await Promise.all([getSecurityPosture(), mfaStatusRequest()])
+    apply(posture)
+    setMfaStatus(status)
+  }, [apply])
 
   useEffect(() => {
     let alive = true
-    getSecurityPosture()
-      .then((next) => alive && apply(next))
-      .catch((err) => alive && setError(err.message || 'Could not load security settings.'))
-    return () => { alive = false }
-  }, [apply])
+    load().catch((err) => {
+      if (alive) setError(err?.message || 'Could not load security settings.')
+    })
+    return () => {
+      alive = false
+    }
+  }, [load])
 
-  /** Is this control on, according to the server rather than to this component? */
-  const isOn = (id) => Boolean(controls?.find((c) => c.id === id)?.enabled)
-
-  /** Move an unbuilt control's switch, and say why it will not do anything. */
-  const setUiOnlySwitch = (id, next) => setUiOnly((prev) => ({ ...prev, [id]: next }))
-
-  const save = async (key, body, message) => {
-    setSavingKey(key)
-    setError('')
+  const save = async (setting, next) => {
+    setSavingKey(setting)
     try {
-      apply(await updateSecurityPolicy(body))
-      flash(message)
+      apply(await updateSecurityPolicy({ [setting]: next }))
+      flash('Security policy saved')
+      // Requiring MFA of the workspace also decides whether this account may
+      // remove its own factor, and that answer lives in the status rather than
+      // the posture. Re-read it, or the card above goes on offering a Turn off
+      // the server would now refuse.
+      if (setting === 'requireMfa') {
+        try {
+          setMfaStatus(await mfaStatusRequest())
+        } catch {
+          /* the policy did save; a stale badge is not worth an error over */
+        }
+      }
     } catch (err) {
       flashError(err?.message || 'Could not save the security policy.')
       // Re-read, so a refused save does not leave the switch showing a state the
       // server never accepted.
-      try { apply(await getSecurityPosture()) } catch { /* keep the message above */ }
+      try {
+        await load()
+      } catch {
+        /* keep the message above */
+      }
     } finally {
       setSavingKey(null)
     }
@@ -550,7 +780,10 @@ function SecurityPanel() {
 
   if (error && !controls) {
     return (
-      <div role="alert" className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+      <div
+        role="alert"
+        className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger"
+      >
         <AlertCircle className="mt-0.5 size-4 shrink-0" />
         {error}
       </div>
@@ -560,63 +793,154 @@ function SecurityPanel() {
   if (!controls) {
     return (
       <div className="flex min-h-[30vh] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" /> Loading security settings…
+        <Loader2 className="size-4 animate-spin" /> Loading security settings...
       </div>
     )
   }
 
+  const settable = controls.filter((c) => c.setting)
+  const reported = controls.filter((c) => !c.setting)
+  const enrolled = Boolean(mfaStatus?.enrolled)
+  // Password accounts that would be turned away the moment the switch goes on.
+  // OAuth accounts are not counted: signing in through a provider does not
+  // consult this policy, so it cannot shut them out.
+  const strandedMembers = readiness
+    ? Math.max(0, readiness.passwordMembers - readiness.enrolledMembers)
+    : 0
+
+  /**
+   * Why a switch is held, or null when it is not.
+   *
+   * MFA is the only one that can be: the server refuses it unless this
+   * administrator has enrolled, and a switch that moves and then bounces back
+   * reads as broken rather than as guarded.
+   */
+  const heldReason = (control) =>
+    control.setting === 'requireMfa' && !control.enabled && !enrolled
+      ? 'Set up your own authenticator app first - otherwise this would refuse your next sign-in, and no other account could turn it off.'
+      : null
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Security</CardTitle>
-        <CardDescription>Authentication and access controls for the workspace.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-1">
-        {flashMsg && <p className="pb-2 text-xs font-medium text-success">{flashMsg}</p>}
-        {saveError && (
-          <p role="alert" className="flex items-start gap-2 pb-2 text-xs font-medium text-danger">
-            <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            {saveError}
-          </p>
-        )}
-        {SECURITY_ROWS.map((row, i) => (
-          <div key={row.id}>
-            <div className="flex items-center justify-between gap-4 py-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{row.title}</p>
-                <p className="text-xs leading-relaxed text-muted-foreground">{row.detail}</p>
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Two-factor authentication</CardTitle>
+          <CardDescription>
+            Your own second factor, and whether the workspace requires one of every
+            administrator. Patients and pharmacies choose the emailed sign-in link on their own
+            profile instead — this page neither sets nor requires it for them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <MfaEnrolment status={mfaStatus} onChanged={load} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Workspace policy</CardTitle>
+          <CardDescription>
+            Controls this page can actually set. Each one is enforced at sign-in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1">
+          {flashMsg && <p className="pb-2 text-xs font-medium text-success">{flashMsg}</p>}
+          {saveError && (
+            <p role="alert" className="flex items-start gap-2 pb-2 text-xs font-medium text-danger">
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              {saveError}
+            </p>
+          )}
+          {settable.map((control, i) => {
+            const held = heldReason(control)
+            return (
+              <div key={control.id}>
+                <div className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{control.label}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {control.detail}
+                    </p>
+                    {held && (
+                      <p className="pt-1 text-xs font-medium text-amber-600 dark:text-amber-500">
+                        {held}
+                      </p>
+                    )}
+                    {/* Said before the switch is thrown rather than discovered
+                        after it: this is how many people would stop being able
+                        to sign in. */}
+                    {control.setting === 'requireMfa' &&
+                      !control.enabled &&
+                      enrolled &&
+                      strandedMembers > 0 && (
+                        <p className="flex items-start gap-1.5 pt-1 text-xs font-medium text-amber-600 dark:text-amber-500">
+                          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                          {strandedMembers}{' '}
+                          {strandedMembers === 1 ? 'administrator has' : 'administrators have'} no
+                          authenticator app and will not be able to sign in until they enrol.
+                        </p>
+                      )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    {savingKey === control.setting && (
+                      <Loader2
+                        className="size-3.5 animate-spin text-muted-foreground"
+                        aria-hidden
+                      />
+                    )}
+                    <Switch
+                      checked={Boolean(control.enabled)}
+                      disabled={savingKey !== null || Boolean(held)}
+                      aria-label={control.label}
+                      onCheckedChange={(next) => save(control.setting, next)}
+                    />
+                  </div>
+                </div>
+                {i < settable.length - 1 && <Separator />}
               </div>
-              {/* Badge then switch, as the patient Accessibility rows do, and
-                  only while the switch is on — the answer belongs to the moment
-                  somebody asks for the feature, not to the row at rest. */}
-              <div className="flex shrink-0 items-center gap-3">
-                {row.comingSoon && uiOnly[row.id] && (
-                  <span
-                    role="status"
-                    className="rounded-full border border-teal/20 bg-teal/10 px-2.5 py-1 text-xs font-semibold text-teal dark:border-emerald-800/40 dark:bg-emerald-950/40 dark:text-emerald-400"
-                  >
-                    Coming soon
-                  </span>
-                )}
-                <Switch
-                  // An unbuilt control's switch is local appearance; a real one
-                  // reports what the server holds.
-                  checked={row.comingSoon ? Boolean(uiOnly[row.id]) : isOn(row.id)}
-                  disabled={savingKey === row.setting}
-                  aria-label={row.title}
-                  onCheckedChange={(next) =>
-                    row.comingSoon
-                      ? setUiOnlySwitch(row.id, next)
-                      : save(row.setting, { [row.setting]: next }, 'Security policy saved')
+            )
+          })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Decided elsewhere</CardTitle>
+          <CardDescription>
+            Controls this console does not set. They are reported with where the answer really
+            comes from, rather than as a switch that could only misreport them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1">
+          {reported.map((control, i) => (
+            <div key={control.id}>
+              <div className="flex items-start justify-between gap-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{control.label}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{control.detail}</p>
+                  <p className="pt-1 text-[11px] text-muted-foreground">
+                    Configured by: <span className="font-mono">{control.configuredBy}</span>
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    control.state === 'enforced'
+                      ? 'success'
+                      : control.state === 'available'
+                        ? 'secondary'
+                        : 'outline'
                   }
-                />
+                  className="shrink-0"
+                >
+                  {CONTROL_STATE_LABEL[control.state] ?? control.state}
+                </Badge>
               </div>
+              {i < reported.length - 1 && <Separator />}
             </div>
-            {i < SECURITY_ROWS.length - 1 && <Separator />}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 

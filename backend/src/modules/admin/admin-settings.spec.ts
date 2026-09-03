@@ -136,6 +136,7 @@ describe('MSA-40 · organization profile', () => {
 describe('MSA-42 · security posture', () => {
   let prisma: {
     organization: { findUnique: jest.Mock; upsert: jest.Mock };
+    user: { findUnique: jest.Mock; count: jest.Mock };
   };
   let audit: { write: jest.Mock };
 
@@ -159,6 +160,13 @@ describe('MSA-42 · security posture', () => {
   beforeEach(() => {
     prisma = {
       organization: { findUnique: jest.fn(), upsert: jest.fn().mockResolvedValue({}) },
+      // Enrolled by default: requiring MFA of the workspace is refused unless
+      // the admin asking has an authenticator of their own, so the tests below
+      // that are about what gets written need an actor who is allowed to write.
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ mfaEnabledAt: new Date() }),
+        count: jest.fn().mockResolvedValue(0),
+      },
     };
     audit = { write: jest.fn() };
   });

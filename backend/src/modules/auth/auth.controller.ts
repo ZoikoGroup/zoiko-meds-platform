@@ -32,7 +32,11 @@ import { GoogleOAuthGuard } from './guards/oauth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { OAuthProfile } from './oauth-profile';
 import { MfaService } from './mfa/mfa.service';
-import { MfaCodeDto } from './mfa/mfa.dto';
+import {
+  MfaCodeDto,
+  EmailSecondFactorTokenDto,
+  EmailSecondFactorPreferenceDto,
+} from './mfa/mfa.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -106,6 +110,58 @@ export class AuthController {
     @Ip() ipAddress: string,
   ) {
     return this.mfa.disable(userId, dto.code, ipAddress);
+  }
+
+  // --- Emailed second factor (MSA-42) --------------------------------------
+  //
+  // The factor a patient or a pharmacy can actually use: no app to install and
+  // no enrolment step, because the inbox is one the account already proved it
+  // owns. Sign in with a password, open the link, and the session is issued.
+
+  @Get('mfa/email')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Whether this account uses the emailed sign-in link, and whether it may',
+  })
+  emailFactorStatus(@CurrentUser('id') userId: string) {
+    return this.auth.emailSecondFactorStatus(userId);
+  }
+
+  @Patch('mfa/email')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Turn the emailed sign-in link on or off',
+    description:
+      'Chosen by the member and never required of them. Refused for administrator accounts, which use an authenticator app and a workspace policy instead.',
+  })
+  setEmailFactor(
+    @CurrentUser('id') userId: string,
+    @Body() dto: EmailSecondFactorPreferenceDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.setEmailSecondFactor(userId, dto.enabled, ipAddress, userAgent);
+  }
+
+  @Post('mfa/email/verify')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Finish a sign-in from the emailed link',
+    description:
+      'Consumes a single-use token and issues the session. Unauthenticated by design: this call is what produces the session, so requiring one would be circular.',
+  })
+  // A guessable session is the thing this endpoint must not become. The token
+  // is 32 random bytes, so the limit is about denying a sustained attempt
+  // rather than a realistic one.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  verifyEmailFactor(
+    @Body() dto: EmailSecondFactorTokenDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.auth.completeEmailSecondFactor(dto.token, ipAddress, userAgent);
   }
 
   @Post('register')
