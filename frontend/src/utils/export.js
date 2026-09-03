@@ -18,6 +18,25 @@ export function downloadJson(filename, data) {
   triggerDownload(blob, filename.endsWith('.json') ? filename : `${filename}.json`)
 }
 
+/**
+ * Save bytes the API already produced.
+ *
+ * Unlike downloadJson, nothing here builds the content: a report's PDF is
+ * rendered by the server, so re-encoding it in the browser is how "PDF" ended
+ * up meaning a JSON file with the wrong extension (MSA-53).
+ */
+export function downloadBlob(filename, blob) {
+  triggerDownload(blob, filename)
+}
+
+/** The extension a report format is saved with. */
+export const FORMAT_EXTENSION = {
+  PDF: 'pdf',
+  CSV: 'csv',
+  XLSX: 'xlsx',
+  JSON: 'json',
+}
+
 export function downloadCsv(filename, rows) {
   if (!rows || rows.length === 0) return
   const headers = Object.keys(rows[0])

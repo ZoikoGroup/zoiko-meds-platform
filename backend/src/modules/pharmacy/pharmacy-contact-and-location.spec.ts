@@ -102,9 +102,17 @@ function buildService(
     user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: null }), update: jest.fn() },
     verificationRequest: {
       findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn(),
+      // Prisma's create returns the row it created; the submission reads the
+      // new request's id from it to attach the licence document.
+      create: jest.fn(async ({ data }: any) => ({ id: 'req_new', ...data })),
       update: jest.fn(),
       updateMany: jest.fn(),
+    },
+    verificationDocument: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+      upsert: jest.fn(),
     },
     $transaction: jest.fn(async (cb: any) => cb(tx)),
   };

@@ -1,4 +1,8 @@
 import { MeService } from './me.service';
+import {
+  PATIENT_VISIBLE_CLASSIFICATIONS,
+  PUBLIC_PHARMACY_WHERE,
+} from '../availability/availability.visibility';
 
 /**
  * Registered pharmacies in public medicine search.
@@ -107,6 +111,33 @@ describe('verified pharmacies in medicine search', () => {
     // withdrawn from the network stops speaking to patients, so its last
     // signal cannot keep reading as current.
     expect(args.where.isParticipating).toBe(true);
+  });
+
+  it('asks only for pharmacies somebody has claimed', async () => {
+    // Verification says the pharmacy is real; the classification says somebody
+    // has taken responsibility for what it reports. A preloaded directory
+    // record that a reviewer approved satisfied the first and not the second,
+    // and appeared in patient search anyway (MSA-54).
+    const { service, prisma } = buildService([pharmacy()], [medicine('med_1')]);
+
+    await search(service);
+
+    const [args] = prisma.pharmacy.findMany.mock.calls[0];
+    expect(args.where.commercialClassification).toEqual({
+      in: PATIENT_VISIBLE_CLASSIFICATIONS,
+    });
+    expect(PATIENT_VISIBLE_CLASSIFICATIONS).not.toContain('DIRECTORY_UNCLAIMED');
+  });
+
+  it('applies the shared rule rather than a filter of its own', async () => {
+    // /availability, saved medicines and ZoikoSignal read the same object.
+    // Copying the rule per service is how they drifted apart before.
+    const { service, prisma } = buildService([pharmacy()], [medicine('med_1')]);
+
+    await search(service);
+
+    const [args] = prisma.pharmacy.findMany.mock.calls[0];
+    expect(args.where).toMatchObject(PUBLIC_PHARMACY_WHERE);
   });
 
   it('restricts them to pharmacies stocking the searched medicine', async () => {

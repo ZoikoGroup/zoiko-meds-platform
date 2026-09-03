@@ -64,6 +64,9 @@ function buildService(rows: Record<string, unknown>[]) {
     },
     signalNotification: {
       findMany: jest.fn().mockResolvedValue([]),
+      // A restock does not demote a back-in-stock row the patient still has;
+      // null here means no such row, which is the default for these cases.
+      findFirst: jest.fn().mockResolvedValue(null),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       upsert: jest.fn().mockResolvedValue({}),
     },

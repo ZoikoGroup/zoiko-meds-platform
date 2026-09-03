@@ -4,6 +4,7 @@ import {
   LocationPrecision,
   MedicinePriority,
   Prisma,
+  SafetyAlertKind,
   SignalNotification,
   SignalNotificationPreference,
   SignalNotificationType,
@@ -290,16 +291,28 @@ export class PatientSignalService {
     const saved = await this.loadSavedWithSignals(userId);
 
     for (const s of saved) {
+      // The per-medicine switch on the Saved Medicines page. It gates only this
+      // row: the medicine keeps reporting its status everywhere else — the
+      // patient asked not to be *notified*, not to stop following it.
+      //
+      // Nothing used to read SavedMedicine.alertsEnabled here. The toggle
+      // persisted correctly and then changed nothing: ZoikoSignal went on
+      // generating running-low, back-in-stock, limited and restock
+      // notifications for a medicine whose alerts the patient had switched
+      // off.
+      const muted = s.alertsEnabled === false;
       const status = this.statusFor(s);
       const prev = s.notifiedStatus as PatientStatus | null;
       // No location here, and none needed: notification generation ranks on
       // confidence then freshness, and distance is only the last tie-break.
       const best = this.bestSignal(s.medicine.availabilitySignals ?? []);
-      const type = this.notificationTypeFor(status, prev, best);
+      const type = muted
+        ? null
+        : await this.currentTypeFor(userId, s.medicineId, status, prev, best);
       // A switch the patient turned off means no notification of that kind is
       // produced at all. `notifiedStatus` still advances below, so switching it
       // back on does not replay a transition that happened while it was off.
-      const suppressed = type !== null && !this.allows(prefs, type);
+      const suppressed = muted || (type !== null && !this.allows(prefs, type));
       const currentKey =
         type && !suppressed ? `med:${s.medicineId}:${TYPE_UI[type]}` : null;
 
@@ -363,6 +376,11 @@ export class PatientSignalService {
     userId: string,
     prefs: SignalNotificationPreference,
   ): Promise<void> {
+    // The recipient group is applied first, and it is applied here: ALL_USERS is
+    // the only target that addresses patients, so a safety alert sent to
+    // pharmacy managers, enterprise admins or government partners reaches no
+    // patient however their toggles are set. Each user's own preference is then
+    // checked below, per broadcast.
     const broadcasts = await this.prisma.notification.findMany({
       where: {
         status: 'DISPATCHED',
@@ -374,9 +392,7 @@ export class PatientSignalService {
     });
 
     for (const b of broadcasts) {
-      const type = /recall/i.test(b.title)
-        ? SignalNotificationType.RECALL
-        : SignalNotificationType.SAFETY;
+      const type = this.safetyTypeOf(b);
       const dedupeKey = `broadcast:${b.id}`;
       if (!this.allows(prefs, type)) {
         await this.prisma.signalNotification.deleteMany({ where: { userId, dedupeKey } });
@@ -401,6 +417,35 @@ export class PatientSignalService {
         },
       });
     }
+  }
+
+  /**
+   * Which of the patient's two safety categories a broadcast belongs to.
+   *
+   * The administrator dispatching it says so, on the Safety Alert Type field
+   * the compose dialog requires for an emergency alert. Before that field
+   * existed this was `/recall/i` against the title, which made the wording of a
+   * heading decide which of a patient's toggles governed the broadcast: "Urgent
+   * product withdrawal" reached them as a government advisory, and a recall
+   * drill announcement reached them as a recall.
+   *
+   * The title test survives only as the reading for records filed before the
+   * column existed. They keep a null `safetyKind` and are classified the way
+   * they always were rather than being rewritten.
+   */
+  private safetyTypeOf(broadcast: {
+    title: string;
+    safetyKind: SafetyAlertKind | null;
+  }): SignalNotificationType {
+    if (broadcast.safetyKind === SafetyAlertKind.MEDICINE_RECALL) {
+      return SignalNotificationType.RECALL;
+    }
+    if (broadcast.safetyKind === SafetyAlertKind.GOVERNMENT_SAFETY) {
+      return SignalNotificationType.SAFETY;
+    }
+    return /recall/i.test(broadcast.title)
+      ? SignalNotificationType.RECALL
+      : SignalNotificationType.SAFETY;
   }
 
   /**
@@ -433,6 +478,47 @@ export class PatientSignalService {
     // A type with no switch of its own is always delivered.
     if (!key) return true;
     return prefs[key as keyof SignalNotificationPreference] !== false;
+  }
+
+  /**
+   * The notification this medicine should be showing right now.
+   *
+   * `notificationTypeFor` decides from the state transition alone, which is
+   * why a genuine BACK_IN_STOCK could never be seen. Availability stays
+   * `available` for the whole three-hour restock window, so once
+   * `notifiedStatus` advanced the next derivation returned the informational
+   * NEARBY_RESTOCK instead — and the prune in `regenerate`, which keeps only
+   * the row matching the current key, deleted the unread back-in-stock row it
+   * had just written. Regeneration runs on every read of this surface and the
+   * page reads it several times per load, so the demotion happened inside the
+   * same page load: the "Back in Stock" filter could only ever report zero.
+   *
+   * A medicine that is back in stock stays back in stock. So while that row is
+   * still live, it is the current one; NEARBY_RESTOCK is the fallback for a
+   * fresh signal on a medicine that never went away.
+   */
+  private async currentTypeFor(
+    userId: string,
+    medicineId: string | null,
+    status: PatientStatus,
+    prev: PatientStatus | null,
+    best: RankedSignal | null,
+  ): Promise<SignalNotificationType | null> {
+    const type = this.notificationTypeFor(status, prev, best);
+    if (type !== SignalNotificationType.NEARBY_RESTOCK) return type;
+
+    const standing = await this.prisma.signalNotification.findFirst({
+      where: {
+        userId,
+        dedupeKey: `med:${medicineId}:${TYPE_UI[SignalNotificationType.BACK_IN_STOCK]}`,
+        // A row the patient dismissed or archived is not standing any more;
+        // read-but-kept still is.
+        dismissed: false,
+        archived: false,
+      },
+      select: { id: true },
+    });
+    return standing ? SignalNotificationType.BACK_IN_STOCK : type;
   }
 
   private notificationTypeFor(

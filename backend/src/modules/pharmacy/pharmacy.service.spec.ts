@@ -40,10 +40,17 @@ const portalNotificationStub = () =>
 
 describe('PharmacyService.resolvePharmacyId', () => {
   let service: PharmacyService;
-  let prisma: { pharmacy: { findFirst: jest.Mock } };
+  let prisma: { pharmacy: { findFirst: jest.Mock; updateMany: jest.Mock } };
 
   beforeEach(() => {
-    prisma = { pharmacy: { findFirst: jest.fn() } };
+    prisma = {
+      pharmacy: {
+        findFirst: jest.fn(),
+        // Reporting stock promotes an unclaimed directory record; the write is
+        // conditional, so it no-ops for a pharmacy that is already claimed.
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
     service = new PharmacyService(
       prisma as unknown as PrismaService,
       {} as unknown as AuditWriter,
@@ -84,7 +91,15 @@ describe('PharmacyService self-service profile onboarding', () => {
 
   beforeEach(() => {
     prisma = {
-      pharmacy: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
+      pharmacy: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+        // Reporting stock promotes an unclaimed directory record; the write is
+        // conditional, so it no-ops for a pharmacy that is already claimed.
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       user: { findUnique: jest.fn(), update: jest.fn() },
       signalNotification: { findMany: jest.fn().mockResolvedValue([]) },
       // The bell reads two sources: this account's own rows, and the
@@ -93,9 +108,17 @@ describe('PharmacyService self-service profile onboarding', () => {
       notification: { findMany: jest.fn().mockResolvedValue([]) },
       verificationRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn(),
+        // Prisma's create returns the row it created; the submission reads the
+        // new request's id from it to attach the licence document.
+        create: jest.fn(async ({ data }: any) => ({ id: 'req_new', ...data })),
         update: jest.fn(),
         updateMany: jest.fn(),
+      },
+      verificationDocument: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+        upsert: jest.fn(),
       },
       jurisdiction: {
         upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN', name: 'India' }),

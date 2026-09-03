@@ -31,6 +31,18 @@ export class NotificationController {
     return this.notifications.list();
   }
 
+  @Get('inbox')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Verification submissions awaiting Super Admin review',
+    description:
+      'The console bell used to read only the broadcast outbox, so a pharmacy submitting its licence told nobody. Derived from the review queue rather than written on submission, which is why it cannot duplicate. Names pharmacies under review, so it is role-guarded.',
+  })
+  inbox() {
+    return this.notifications.inbox();
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)

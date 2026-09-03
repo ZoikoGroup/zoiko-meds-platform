@@ -44,7 +44,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import * as admin from '@/services/admin-api'
-import { downloadJson } from '@/utils/export'
+import { downloadBlob, FORMAT_EXTENSION } from '@/utils/export'
 
 const STATUS_META = {
   READY: { tone: 'good', label: 'Ready' },
@@ -77,10 +77,23 @@ const FORMAT_OPTIONS = [
 ]
 const SCOPE_OPTIONS = Object.entries(SCOPE_LABEL).map(([value, label]) => ({ value, label }))
 
-const EMPTY_FORM = { name: '', type: 'EXECUTIVE_BRIEFING', format: 'PDF', scope: 'ALL', schedule: '' }
+/**
+ * What to call the saved file.
+ *
+ * Extension comes from the report's own format, so the Format column and the
+ * file on disk cannot disagree — which is the whole of MSA-53.
+ */
+function exportFilename(report) {
+  const base =
+    String(report?.name ?? 'report')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'report'
+  return `${base}.${FORMAT_EXTENSION[report?.format] ?? 'dat'}`
+}
 
-/** Slugify a report name for the download filename. */
-const slug = (name) => name.replace(/\s+/g, '-').toLowerCase()
+const EMPTY_FORM = { name: '', type: 'EXECUTIVE_BRIEFING', format: 'PDF', scope: 'ALL', schedule: '' }
 
 /** Reports created in the current calendar month. */
 function countThisMonth(rows) {
@@ -153,8 +166,10 @@ export default function Reports() {
   const handleDownload = async (r) => {
     setError('')
     try {
-      const payload = await admin.downloadReport(r.id)
-      downloadJson(slug(r.name), payload)
+      // The API renders the artifact; the browser only saves it. Re-encoding it
+      // here is what turned every "PDF" report into a .json file (MSA-53).
+      const blob = await admin.downloadReport(r.id)
+      downloadBlob(exportFilename(r), blob)
     } catch (err) {
       setError(err.message || 'Failed to download report')
     }
@@ -190,8 +205,8 @@ export default function Reports() {
         format: exportFormat,
         scope: exportScope,
       })
-      const payload = await admin.downloadReport(created.id)
-      downloadJson(slug(created.name), payload)
+      const blob = await admin.downloadReport(created.id)
+      downloadBlob(exportFilename(created), blob)
       await load()
     } catch (err) {
       setError(err.message || 'Failed to generate export')

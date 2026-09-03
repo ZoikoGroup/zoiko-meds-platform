@@ -45,24 +45,24 @@ model User {
   /// Base32 TOTP secret. Present from the moment enrolment starts, which is not
   /// the same as being enrolled: a secret with no mfaEnabledAt is a setup that
   /// was begun and never confirmed, and must not count as a second factor.
-  mfaSecret          String?
+  mfaSecret    String?
   /// When the first correct code was accepted. This, not mfaSecret, is what
   /// makes a second factor required at sign-in.
-  mfaEnabledAt       DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  mfaEnabledAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  savedMedicines               SavedMedicine[]
-  alertPreference              AlertPreference?
-  searchHistory                SearchHistory[]
-  passwordResets               PasswordResetToken[]
-  signalNotifications          SignalNotification[]
-  signalNotificationPreference SignalNotificationPreference?
+  savedMedicines                 SavedMedicine[]
+  alertPreference                AlertPreference?
+  searchHistory                  SearchHistory[]
+  passwordResets                 PasswordResetToken[]
+  signalNotifications            SignalNotification[]
+  signalNotificationPreference   SignalNotificationPreference?
   pharmacyNotificationPreference PharmacyNotificationPreference?
-  capabilityGrants             CapabilityGrant[]             @relation("CapabilityGrantUser")
-  capabilityGrantsIssued       CapabilityGrant[]             @relation("CapabilityGrantIssuer")
-  organizationsUpdated         Organization[]                @relation("OrganizationUpdatedBy")
-  platformApiKeys              PlatformApiKey[]              @relation("PlatformApiKeyCreatedBy")
+  capabilityGrants               CapabilityGrant[]               @relation("CapabilityGrantUser")
+  capabilityGrantsIssued         CapabilityGrant[]               @relation("CapabilityGrantIssuer")
+  organizationsUpdated           Organization[]                  @relation("OrganizationUpdatedBy")
+  platformApiKeys                PlatformApiKey[]                @relation("PlatformApiKeyCreatedBy")
 
   @@index([role])
 }
@@ -329,10 +329,10 @@ model Pharmacy {
   jurisdictionId String?
   jurisdiction   Jurisdiction? @relation(fields: [jurisdictionId], references: [id])
 
-  users                User[]
-  inventorySignals     InventorySignal[]
-  availabilitySignals  AvailabilitySignal[]
-  verificationRequests VerificationRequest[]
+  users                 User[]
+  inventorySignals      InventorySignal[]
+  availabilitySignals   AvailabilitySignal[]
+  verificationRequests  VerificationRequest[]
   verificationDocuments VerificationDocument[]
 
   /// The logo image itself lives in its own table so it is never loaded by the
@@ -587,12 +587,12 @@ model Organization {
   /// Require every password sign-in to present a second factor. Enforced in
   /// AuthService.login: a member who has not enrolled is refused a session and
   /// told to enrol, rather than being let in on the password alone.
-  requireMfa         Boolean  @default(false)
+  requireMfa Boolean @default(false)
 
   /// Whether members may sign in through Google. The provider must still be
   /// configured on the server; this decides whether the workspace accepts it
   /// when it is.
-  allowOauthSignIn   Boolean  @default(true)
+  allowOauthSignIn Boolean @default(true)
 
   updatedAt   DateTime @updatedAt
   /// Who last saved it, for the settings page to show and the audit log to match.
@@ -607,12 +607,12 @@ model Organization {
 /// moment it is issued. The prefix is kept so the console can identify which key
 /// a row refers to without being able to reconstruct it.
 model PlatformApiKey {
-  id     String @id @default(cuid())
-  label  String
+  id    String @id @default(cuid())
+  label String
   /// What this key may read. One of: availability | medibase | signal.
-  scope  String
+  scope String
 
-  keyHash   String  @unique
+  keyHash   String @unique
   /// First few characters of the key, for display. Never enough to use.
   keyPrefix String
 
@@ -761,15 +761,31 @@ enum NotificationStatus {
   DISPATCHED
 }
 
+/// Which of the patient's two safety categories an emergency broadcast is.
+///
+/// ZoikoSignal used to decide this with `/recall/i` against the broadcast title,
+/// so "Urgent product withdrawal" was filed as a government advisory and which
+/// of a patient's toggles governed an alert depended on its wording. The
+/// administrator dispatching it now says which it is.
+enum SafetyAlertKind {
+  MEDICINE_RECALL
+  GOVERNMENT_SAFETY
+}
+
 model Notification {
-  id        String             @id @default(cuid())
-  title     String
-  message   String
-  type      NotificationType   @default(SYSTEM_ANNOUNCEMENT)
-  target    NotificationTarget @default(ALL_USERS)
-  status    NotificationStatus @default(DRAFT)
-  createdBy String?
-  createdAt DateTime           @default(now())
+  id         String             @id @default(cuid())
+  title      String
+  message    String
+  type       NotificationType   @default(SYSTEM_ANNOUNCEMENT)
+  target     NotificationTarget @default(ALL_USERS)
+  status     NotificationStatus @default(DRAFT)
+  /// Set only on an EMERGENCY_ALERT, where it is the authoritative patient
+  /// safety classification. Null on every other broadcast type, and on
+  /// emergency records filed before this column existed — those still fall back
+  /// to the title so nothing historical had to be rewritten.
+  safetyKind SafetyAlertKind?
+  createdBy  String?
+  createdAt  DateTime           @default(now())
 
   @@index([status])
   @@index([type])
