@@ -109,3 +109,46 @@ export function mapsLinkFor(lat, lng) {
   if (!isValidCoordinate(Number(lat), Number(lng))) return null
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
 }
+
+/** A Maps search for a free-text place, when there is no pin to point at. */
+export function mapsSearchLink(query) {
+  const text = String(query ?? '').trim()
+  if (!text) return null
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}`
+}
+
+/**
+ * The address field a patient-visible pharmacy carries is joined server-side
+ * and falls back to an em dash when nothing is on record, so "—" means absent
+ * rather than being a place anyone can search for.
+ */
+function usableAddress(address) {
+  const text = String(address ?? '').trim()
+  if (!text || text === '—' || text === '-') return null
+  return text
+}
+
+/**
+ * Where to send someone who taps a pharmacy.
+ *
+ * Coordinates first, and by a wide margin: they are the pin an operator placed,
+ * so they land on the door. An address goes through Google's geocoder, which
+ * for an Indian address without a plus code can be a street or a neighbourhood.
+ * The name is carried alongside the address because it disambiguates a search
+ * that the address alone would leave ambiguous — it does not replace it.
+ *
+ * Returns null when there is nothing to point at, so a caller can render a
+ * plain row instead of a link to a search for nothing.
+ */
+export function pharmacyMapsLink(pharmacy) {
+  const { latitude, longitude, address, name } = pharmacy ?? {}
+
+  const pinned = mapsLinkFor(latitude, longitude)
+  if (pinned) return pinned
+
+  const street = usableAddress(address)
+  if (street) return mapsSearchLink(name ? `${name}, ${street}` : street)
+
+  const label = String(name ?? '').trim()
+  return label ? mapsSearchLink(label) : null
+}

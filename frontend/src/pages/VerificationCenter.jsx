@@ -362,6 +362,59 @@ export default function VerificationCenter() {
                         </div>
                       </div>
 
+                      {/*
+                        What the reviewer is actually being asked to decide.
+                        The panel used to show one identity — the pharmacy's live
+                        row, which had already been overwritten at submission —
+                        under a generic note saying only that "name or licence"
+                        had changed. Approving meant agreeing to something the
+                        page could not name.
+                      */}
+                      {activeRequest.changes?.length > 0 && (
+                        <div className="flex flex-col gap-2.5 border-b pb-5">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-warning flex items-center gap-1.5">
+                            <AlertCircle className="size-3.5" /> Changes Requiring Verification
+                          </h4>
+                          {activeRequest.reason && (
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                              {activeRequest.reason}
+                            </p>
+                          )}
+                          <div className="flex flex-col gap-2.5 rounded-lg border border-warning/30 bg-warning/5 p-3.5">
+                            {activeRequest.changes.map((change) => (
+                              <div key={change.field} className="flex flex-col gap-1.5">
+                                <span className="text-xs font-semibold text-foreground">
+                                  {change.label}
+                                </span>
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                  <div className="flex min-w-0 flex-col gap-0.5">
+                                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                      Current
+                                    </span>
+                                    {/* Struck through so the direction of the
+                                        change reads without being explained. */}
+                                    <span className="truncate text-xs text-muted-foreground line-through">
+                                      {change.current ?? 'Not set'}
+                                    </span>
+                                  </div>
+                                  <div className="flex min-w-0 flex-col gap-0.5">
+                                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                      Requested
+                                    </span>
+                                    <span className="truncate text-xs font-semibold text-foreground">
+                                      {change.requested}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            The pharmacy keeps its current identity until you approve. Patients see
+                            the current value, not the requested one.
+                          </p>
+                        </div>
+                      )}
                       <div className="flex flex-col gap-2.5 border-b pb-5">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                           <MapPin className="size-3.5" /> Pharmacy Profile Address

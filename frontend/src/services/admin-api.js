@@ -90,6 +90,15 @@ export const revokeApiKey = (id) =>
 // (MSA-36).
 export const getZoikoAvailTelemetry = () => apiFetch('/admin/zoikoavail/telemetry')
 
+/**
+ * The governed ZoikoAvail API contract, for the console's documentation page.
+ *
+ * A filtered view of the same OpenAPI document the Swagger UI renders, served
+ * behind the SUPER_ADMIN guard — which is what lets the console show the
+ * contract on a deployment that does not publish Swagger publicly.
+ */
+export const getZoikoAvailContract = () => apiFetch('/admin/zoikoavail/openapi')
+
 export const listAuditLogs = (params) =>
   apiFetch(`/admin/audit-logs${qs(params)}`)
 

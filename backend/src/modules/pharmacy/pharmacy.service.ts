@@ -720,11 +720,40 @@ export class PharmacyService {
       });
     }
 
+    // What the operator is asking the record to say.
+    const requestedName = name !== undefined ? name : existing.name;
+    const requestedLicense =
+      licenseNumber !== undefined ? licenseNumber : existing.licenseNumber;
+
+    // Whether that differs from what a reviewer has already approved.
+    const identityChanged =
+      existing.name !== requestedName ||
+      (existing.licenseNumber || '') !== (requestedLicense || '');
+
+    /**
+     * Held back rather than applied.
+     *
+     * A verified pharmacy's name and licence are what a reviewer signed off and
+     * what patients are shown. Writing an edit to them straight to this row made
+     * the new value authoritative the moment Save was clicked: Pharmacy
+     * Management, patient search and the Verification Center all read this row,
+     * so a pharmacy could rename itself and be listed under the new name while
+     * its request still said Pending. Approval then had nothing left to do and
+     * only moved a status, which is why re-verification decided nothing.
+     *
+     * Staged only where there is an approved identity to protect. A pharmacy
+     * still being verified for the first time has no such value — holding its
+     * name back would leave the record blank or stale, and there is nothing to
+     * contradict — so it writes through as before.
+     */
+    const stageIdentity =
+      existing.verificationStatus === VerificationStatus.VERIFIED && identityChanged;
+
     const updated = await this.prisma.pharmacy.update({
       where: { id: pharmacyId },
       data: {
-        name: name !== undefined ? name : existing.name,
-        licenseNumber: licenseNumber !== undefined ? licenseNumber : existing.licenseNumber,
+        name: stageIdentity ? existing.name : requestedName,
+        licenseNumber: stageIdentity ? existing.licenseNumber : requestedLicense,
         phone,
         addressLine1:
           dto.addressLine1 !== undefined ? dto.addressLine1.trim() || null : existing.addressLine1,
@@ -757,16 +786,6 @@ export class PharmacyService {
       },
     });
 
-    if (dto.name || dto.licenseNumber) {
-      await this.prisma.verificationRequest.updateMany({
-        where: { pharmacyId },
-        data: {
-          pharmacyName: updated.name,
-          licenseNumber: updated.licenseNumber || '',
-        },
-      });
-    }
-
     // A pharmacy that is not verified yet always goes (back) into the review
     // queue on save. A verified one only does so if the attested identity —
     // name or licence — actually changed.
@@ -774,9 +793,12 @@ export class PharmacyService {
     // SUSPENDED is deliberately excluded: it is an enforcement state, so letting
     // a save move it to PENDING would let a suspended pharmacy clear its own
     // suspension. Only an admin can lift it from the Verification Center.
-    const identityChanged =
-      existing.name !== updated.name ||
-      (existing.licenseNumber || '') !== (updated.licenseNumber || '');
+    //
+    // The sweep that used to sit here — rewriting `pharmacyName` on every
+    // request this pharmacy ever had, closed ones included — is gone. A request
+    // now records the identity it was raised about, so overwriting them all
+    // destroyed the history a reviewer needs and, worse, replaced the pending
+    // value with the verified one on the very request under review.
     const suspended = existing.verificationStatus === VerificationStatus.SUSPENDED;
     const needsReview =
       !suspended &&
@@ -789,7 +811,13 @@ export class PharmacyService {
     // fresh upload attached to the request the reviewer was not looking at.
     const submission =
       needsReview && user
-        ? await this.submitForReview(updated, user, identityChanged)
+        ? await this.submitForReview(
+            // The identity under review, which for a staged change is not the
+            // one on the row: `updated` still carries the approved values.
+            { id: updated.id, name: requestedName, licenseNumber: requestedLicense ?? null },
+            user,
+            identityChanged,
+          )
         : null;
 
     // Replaces the document on that same request, so a reviewer looking at a
@@ -906,7 +934,9 @@ export class PharmacyService {
   private async submitForReview(
     pharmacy: { id: string; name: string; licenseNumber: string | null },
     user: AuthenticatedUser,
-    identityChanged: boolean,
+    // Kept so the call site still reads as documentation: it says there whether
+    // this submission is a first review or a challenge to an approved identity.
+    _identityChanged: boolean,
   ): Promise<{ requestId: string; resubmitted: boolean }> {
     await this.prisma.pharmacy.update({
       where: { id: pharmacy.id },
@@ -922,18 +952,22 @@ export class PharmacyService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const note = identityChanged
-      ? 'Pharmacy updated its name or licence number — re-verification required.'
-      : 'Pharmacy updated its profile and resubmitted for verification.';
-
+    // No system note is written into `notes` any more. It said the same sentence
+    // every time and was appended on every resubmit, so a request corrected
+    // twice opened with the line three times over — stacked above the reviewer's
+    // own words and indistinguishable from them. The Verification Center now
+    // derives the reason from the difference between the approved identity and
+    // the requested one, which is specific and cannot accumulate. `notes` is
+    // only ever what a human wrote.
     if (open) {
       await this.prisma.verificationRequest.update({
         where: { id: open.id },
         data: {
+          // The identity being asked for. The pharmacy row keeps the approved
+          // one until a reviewer says otherwise.
           pharmacyName: pharmacy.name,
           licenseNumber: pharmacy.licenseNumber || '',
           status: VerificationRequestStatus.PENDING,
-          notes: open.notes ? `${open.notes}\n${note}` : note,
         },
       });
       return { requestId: open.id, resubmitted: true };
@@ -946,7 +980,6 @@ export class PharmacyService {
         licenseNumber: pharmacy.licenseNumber || '',
         submittedBy: `${user.fullName} (${user.email})`,
         status: VerificationRequestStatus.PENDING,
-        notes: note,
       },
     });
 

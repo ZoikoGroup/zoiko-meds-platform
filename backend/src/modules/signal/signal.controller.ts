@@ -1,5 +1,5 @@
 import { Controller, Get, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags , ApiResponse } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
 import { SignalService } from './signal.service';
@@ -21,6 +21,10 @@ import { GatewayTelemetryInterceptor } from '../admin/telemetry/gateway-telemetr
  * user/patient-level data, no exact stock, and MediBase-suppressed identities
  * are never named. Low-count cells are withheld.
  */
+/** Stated once so the three operation descriptions cannot drift apart. */
+const ROLES_DOC =
+  'Requires a bearer token whose role is ENTERPRISE, GOVERNMENT or ADMIN. API key scope: `signal`.';
+
 @ApiTags('signal')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -31,13 +35,27 @@ export class SignalController {
   constructor(private readonly signal: SignalService) {}
 
   @Get('intelligence')
-  @ApiOperation({ summary: 'Query time-bucketed, anonymized intelligence cells' })
+  @ApiOperation({
+    summary: 'Query time-bucketed, anonymized intelligence cells',
+    description:
+      'ZoikoSignal™ demand and shortage intelligence, bucketed by time and jurisdiction. Aggregate by construction: a cell records what happened and which governed identity it concerned, never who caused it, so there is no patient to re-identify. ' + ROLES_DOC,
+  })
+  @ApiResponse({ status: 200, description: 'Intelligence cells for the requested window.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid bearer token.' })
+  @ApiResponse({ status: 403, description: 'Token does not carry an eligible role.' })
   intelligence(@Query() query: QueryIntelligenceQuery) {
     return this.signal.getIntelligence(query);
   }
 
   @Get('intelligence/summary')
-  @ApiOperation({ summary: 'Aggregate demand / shortage summary over a window' })
+  @ApiOperation({
+    summary: 'Aggregate demand / shortage summary over a window',
+    description:
+      'The same intelligence rolled up to totals for a period — searches, unmet demand, restocks and confirmations. ' + ROLES_DOC,
+  })
+  @ApiResponse({ status: 200, description: 'Totals for the window.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid bearer token.' })
+  @ApiResponse({ status: 403, description: 'Token does not carry an eligible role.' })
   summary(@Query() query: QueryIntelligenceQuery) {
     return this.signal.getSummary({
       jurisdictionId: query.jurisdictionId,
@@ -48,7 +66,14 @@ export class SignalController {
   }
 
   @Get('intelligence/export')
-  @ApiOperation({ summary: 'Export anonymized intelligence (JSON or CSV)' })
+  @ApiOperation({
+    summary: 'Export anonymized intelligence (JSON or CSV)',
+    description:
+      'The same cells as a downloadable artifact. Aggregate-only, like everything on this scope: no patient data and no exact stock counts are present to export. ' + ROLES_DOC,
+  })
+  @ApiResponse({ status: 200, description: 'The export, in the requested format.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid bearer token.' })
+  @ApiResponse({ status: 403, description: 'Token does not carry an eligible role.' })
   async export(
     @Query() query: ExportIntelligenceQuery,
     @Res() res: Response,

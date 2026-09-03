@@ -12,6 +12,7 @@ import { StripeConfig } from './modules/commercial/stripe/stripe.config';
 import { appBaseUrl, appBaseUrlWarning } from './config/app-urls';
 import { MigrationStatusService } from './modules/health/migration-status.service';
 import { trustedProxyHops } from './common/client-ip';
+import { ZoikoAvailDocsService } from './modules/admin/telemetry/zoikoavail-docs.service';
 
 /**
  * Ceiling for the prescription-scan vision endpoint.
@@ -108,17 +109,74 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
   app.useGlobalInterceptors(new LoggingInterceptor());
 
-  // API docs — exposed only outside production so the full API surface is not
-  // published to the internet on the live deployment.
-  if (!isProd) {
+  // The OpenAPI document is generated on every deployment; only the public
+  // Swagger UI below is withheld in production.
+  //
+  // Generating it exposes nothing — createDocument only introspects the running
+  // app — and the admin console's ZoikoAvail documentation page reads a
+  // filtered view of it through an authenticated route. That is what lets the
+  // page work on the live deployment without publishing raw Swagger.
+  {
+    const publicUrl = (config.get<string>('API_PUBLIC_URL') || '').replace(/\/$/, '');
+    const port = config.get<string>('PORT', '8000');
+
     const swaggerConfig = new DocumentBuilder()
       .setTitle('ZoikoMeds API')
-      .setDescription('Governed medicine availability infrastructure API')
+      .setDescription(
+        [
+          'Governed medicine availability infrastructure API.',
+          '',
+          'ZoikoAvail™ is the governed API surface: availability confidence, the',
+          'MediBase medicine catalog, and anonymized ZoikoSignal™ intelligence.',
+          'Those three scopes are the same ones a platform API key is issued for,',
+          'so a key scoped to `medibase` opens exactly the endpoints tagged',
+          '`medibase` here.',
+          '',
+          'Aggregate-only by construction: no endpoint returns patient data, and',
+          'availability is a confidence band rather than an exact stock count.',
+          '',
+          'This reference is served only outside production. The live deployment',
+          'does not publish its full API surface, so there is no /docs there.',
+        ].join('\n'),
+      )
       .setVersion('0.1.0')
       .addBearerAuth()
+      // Declared rather than inferred from whichever origin served the page, so
+      // the reference reads the same whether it is opened locally or from a
+      // staging host.
+      .addServer(`http://localhost:${port}/${apiPrefix}`, 'Local development')
+      .addServer(
+        publicUrl ? `${publicUrl}/${apiPrefix}` : `/${apiPrefix}`,
+        publicUrl ? 'This deployment' : 'Same origin',
+      )
+      // Tag descriptions carry the grouping. The controllers keep their existing
+      // lowercase scope tags — they map one-to-one onto API-key scopes, which is
+      // information worth keeping — and these say which of them are ZoikoAvail.
+      .addTag(
+        'availability',
+        'ZoikoAvail™ · Availability — governed confidence that a medicine can be obtained nearby. API key scope: `availability`.',
+      )
+      .addTag(
+        'medibase',
+        'ZoikoAvail™ · MediBase — the governed medicine catalog: identity matching, external-identifier lookup and the schema contract. API key scope: `medibase`.',
+      )
+      .addTag(
+        'signal',
+        'ZoikoAvail™ · Signal — anonymized demand and shortage intelligence. API key scope: `signal`. Requires a bearer token with the ENTERPRISE, GOVERNMENT or ADMIN role.',
+      )
+      .addTag('health', 'Service health and readiness probes. Unauthenticated.')
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
+
+    // The console's source of truth, so its page and this UI cannot drift.
+    app.get(ZoikoAvailDocsService).register(document);
+
+    // The public UI, and only outside production: the full API surface is not
+    // published to the internet on the live deployment.
+    if (!isProd) {
+      SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
+      logger.log(`Swagger UI: ${publicUrl || `http://localhost:${port}`}/${apiPrefix}/docs`);
+    }
   }
 
   // Surface a dangerous billing configuration at boot rather than at first
