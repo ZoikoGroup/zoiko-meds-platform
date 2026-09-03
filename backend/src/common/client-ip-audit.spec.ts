@@ -161,6 +161,26 @@ describe('every audited handler resolves the address the same way', () => {
     expect(source(path)).not.toContain('@Ip()');
   });
 
+  it.each(CONTROLLERS)('%s imports the decorator it uses', (path) => {
+    // The gap that let a red CI through. These guards checked that the
+    // decorators in the method signatures were right and never that the file
+    // declared them, so auth.controller.ts shipped using @ClientIp() eleven
+    // times with no import — the body was correct and the file did not compile.
+    expect(source(path)).toMatch(
+      /import \{ ClientIp \} from '[^']*common\/decorators\/client-ip\.decorator';/,
+    );
+  });
+
+  it.each(CONTROLLERS)('%s declares every symbol its decorators use', (path) => {
+    // A cheap stand-in for the compiler, on the one thing that broke: a
+    // decorator used in a signature but absent from the import block.
+    const text = source(path);
+    for (const decorator of ['ClientIp', 'CurrentUser', 'Body', 'Param', 'Query']) {
+      if (!text.includes(`@${decorator}(`)) continue;
+      expect(text).toMatch(new RegExp(`import[\\s\\S]{0,400}\\b${decorator}\\b[\\s\\S]{0,200}from`));
+    }
+  });
+
   it('captures an address on the login route', async () => {
     expect(source('src/modules/auth/auth.controller.ts')).toMatch(
       /login[\s\S]{0,400}@ClientIp\(\)/,

@@ -31,7 +31,12 @@ import { GoogleOAuthGuard } from './guards/oauth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { OAuthProfile } from './oauth-profile';
 import { MfaService } from './mfa/mfa.service';
-import { MfaCodeDto } from './mfa/mfa.dto';
+import {
+  EmailSecondFactorPreferenceDto,
+  EmailSecondFactorTokenDto,
+  MfaCodeDto,
+} from './mfa/mfa.dto';
+import { ClientIp } from '../../common/decorators/client-ip.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -134,7 +139,7 @@ export class AuthController {
   setEmailFactor(
     @CurrentUser('id') userId: string,
     @Body() dto: EmailSecondFactorPreferenceDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.setEmailSecondFactor(userId, dto.enabled, ipAddress, userAgent);
@@ -153,7 +158,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verifyEmailFactor(
     @Body() dto: EmailSecondFactorTokenDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.completeEmailSecondFactor(dto.token, ipAddress, userAgent);
