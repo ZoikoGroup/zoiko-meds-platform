@@ -14,12 +14,70 @@ export function oauthUrl(provider) {
   return `${apiBaseUrl()}/auth/${provider}`
 }
 
-export function loginRequest(email, password) {
+/**
+ * Exchange credentials for a token, with a second factor when the account has
+ * one (MSA-42).
+ *
+ * `mfaCode` is omitted on the first attempt rather than sent empty: the client
+ * cannot know whether this account is enrolled until it has tried, and the
+ * server answers a missing factor with `mfaRequired` so the form knows to ask.
+ * The same call is then repeated with the code.
+ */
+export function loginRequest(email, password, mfaCode) {
   return apiFetch('/auth/login', {
     method: 'POST',
-    body: { email, password },
+    body: { email, password, ...(mfaCode ? { mfaCode } : {}) },
     auth: false,
   })
+}
+
+// --- Two-factor authentication (MSA-42) -------------------------------------
+//
+// Enrolment is two calls on purpose. `mfaSetupRequest` mints a secret and hands
+// back the URI to scan; nothing is required of the account until
+// `mfaConfirmRequest` proves a code against it. A setup that is begun and
+// abandoned leaves sign-in exactly as it was.
+
+export function mfaStatusRequest() {
+  return apiFetch('/auth/mfa')
+}
+
+export function mfaSetupRequest() {
+  return apiFetch('/auth/mfa/setup', { method: 'POST' })
+}
+
+export function mfaConfirmRequest(code) {
+  return apiFetch('/auth/mfa/confirm', { method: 'POST', body: { code } })
+}
+
+// Requires a current code, not just a session: an unattended browser is the
+// situation a second factor exists for, so removing it must not be the one
+// thing that session can do unchallenged.
+export function mfaDisableRequest(code) {
+  return apiFetch('/auth/mfa/disable', { method: 'POST', body: { code } })
+}
+
+// --- The emailed second factor (MSA-42) -------------------------------------
+//
+// The factor a patient or a pharmacy can actually use: no app to install and no
+// enrolment step, because the inbox is one the account already proved it owns.
+// `loginRequest` answers with { mfaEmailSent: true } instead of a session, and
+// the link the member opens is exchanged here for the real one.
+
+export function verifyLoginLinkRequest(token) {
+  return apiFetch('/auth/mfa/email/verify', {
+    method: 'POST',
+    body: { token },
+    auth: false,
+  })
+}
+
+export function emailFactorStatusRequest() {
+  return apiFetch('/auth/mfa/email')
+}
+
+export function setEmailFactorRequest(enabled) {
+  return apiFetch('/auth/mfa/email', { method: 'PATCH', body: { enabled } })
 }
 
 export function registerRequest({ email, fullName, password, phone }) {

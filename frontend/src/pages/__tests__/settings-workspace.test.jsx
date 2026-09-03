@@ -12,7 +12,7 @@
 //                 on by default, describing controls this platform does not have.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -30,6 +30,18 @@ vi.mock('@/services/admin-api', () => ({
   updateSecurityPolicy: (body) => updateSecurityPolicyMock(body),
   listUsers: (params) => listUsersMock(params),
   listIntegrations: () => listIntegrationsMock(),
+}))
+
+const mfaStatusMock = vi.fn()
+const mfaSetupMock = vi.fn()
+const mfaConfirmMock = vi.fn()
+const mfaDisableMock = vi.fn()
+
+vi.mock('@/services/auth-api', () => ({
+  mfaStatusRequest: () => mfaStatusMock(),
+  mfaSetupRequest: () => mfaSetupMock(),
+  mfaConfirmRequest: (code) => mfaConfirmMock(code),
+  mfaDisableRequest: (code) => mfaDisableMock(code),
 }))
 
 vi.mock('@/providers/auth-provider', () => ({
@@ -66,6 +78,11 @@ const MEMBERS = [
   },
 ]
 
+const POLICY = {
+  requireMfa: false,
+  allowOauthSignIn: true,
+}
+
 const CONTROLS = [
   {
     id: 'password-policy',
@@ -84,6 +101,15 @@ const CONTROLS = [
     enabled: false,
   },
   {
+    id: 'oauth-sign-in',
+    label: 'Allow single sign-on',
+    detail: 'Members may sign in with any identity provider configured below.',
+    state: 'enforced',
+    configuredBy: 'This page',
+    setting: 'allowOauthSignIn',
+    enabled: true,
+  },
+  {
     id: 'saml',
     label: 'SAML 2.0',
     detail:
@@ -93,10 +119,18 @@ const CONTROLS = [
   },
 ]
 
-const POLICY = {
-  requireMfa: false,
-  allowOauthSignIn: true,
-}
+// Six administrators with a password, two of them enrolled: four would lose
+// their sign-in the moment the switch went on. Patients and pharmacies are not
+// counted — the policy does not reach them.
+const READINESS = { actorEnrolled: true, passwordMembers: 6, enrolledMembers: 2 }
+
+const posture = (over = {}) => ({
+  controls: CONTROLS.map((c) =>
+    over.controls?.[c.id] ? { ...c, ...over.controls[c.id] } : c,
+  ),
+  policy: { ...POLICY, ...over.policy },
+  mfa: { ...READINESS, ...over.mfa },
+})
 
 function renderTab(tab) {
   return render(
@@ -110,8 +144,23 @@ beforeEach(() => {
   vi.clearAllMocks()
   getOrganizationMock.mockResolvedValue(ORG)
   updateOrganizationMock.mockResolvedValue({ ...ORG, name: 'Zoiko Health' })
-  getSecurityPostureMock.mockResolvedValue({ controls: CONTROLS, policy: POLICY })
-  updateSecurityPolicyMock.mockResolvedValue({ controls: CONTROLS, policy: POLICY })
+  getSecurityPostureMock.mockResolvedValue(posture())
+  updateSecurityPolicyMock.mockResolvedValue(posture())
+  // Enrolled by default. The switch that requires MFA of the workspace is held
+  // until this administrator has a factor of their own, so a test about saving
+  // needs an account that is allowed to save.
+  mfaStatusMock.mockResolvedValue({
+    enrolled: true,
+    pending: false,
+    enrolledAt: new Date().toISOString(),
+    required: false,
+  })
+  mfaSetupMock.mockResolvedValue({
+    secret: 'JBSWY3DPEHPK3PXP',
+    otpauthUri: 'otpauth://totp/ZoikoMeds:root@zoikomeds.test?secret=JBSWY3DPEHPK3PXP',
+  })
+  mfaConfirmMock.mockResolvedValue({ enrolled: true })
+  mfaDisableMock.mockResolvedValue({ enrolled: false })
   listUsersMock.mockResolvedValue({ items: MEMBERS, total: MEMBERS.length })
   listIntegrationsMock.mockResolvedValue([])
 })
@@ -229,170 +278,276 @@ describe('MSA-41 · members', () => {
 })
 
 describe('MSA-42 · security', () => {
-  // A switch is interactive only where the platform really enforces the control;
-  // the rest say Coming Soon rather than sitting at "off", which invites a click.
-  //
-  // The IP allowlist row is gone entirely. It was the one live switch here, and
-  // it worked: an operator saved a subnet mask as a range, switched it on, and
-  // every request from outside that list was refused — including the console
-  // session of the only account that could switch it back off.
-  const ROWS = [
-    ['Enforce multi-factor authentication', 'Require MFA for all members on every sign-in.'],
-    ['SSO (SAML 2.0)', 'Single sign-on via your identity provider (Okta).'],
-  ]
+  // The switches were bound to useState and nothing else, then pinned off and
+  // labelled "coming soon" — which stopped them lying, but left a workspace
+  // with no way to require a second factor at all. Enforcement was built the
+  // whole time. What was missing was somewhere to enrol, and anything stopping
+  // an unenrolled administrator from requiring of everybody a factor they did
+  // not have themselves: they were refused their own next sign-in by the rule
+  // they had just written, and no other account could lift it.
+
+  const notEnrolled = () =>
+    mfaStatusMock.mockResolvedValue({
+      enrolled: false,
+      pending: false,
+      enrolledAt: null,
+      required: false,
+    })
 
   const settled = () =>
-    waitFor(() => expect(screen.getByText('SSO (SAML 2.0)')).toBeDefined())
+    waitFor(() => expect(screen.getByText('Your authenticator app')).toBeDefined())
 
-  it('lists exactly the remaining rows, in order', async () => {
+  const mfaSwitch = () =>
+    screen.getByRole('switch', { name: 'Require two-factor authentication' })
+
+  it('renders a switch for every control the server says it can set', async () => {
     renderTab('security')
 
     await settled()
-    const switches = screen.getAllByRole('switch')
-    expect(switches.map((el) => el.getAttribute('aria-label'))).toEqual(ROWS.map(([t]) => t))
+    expect(screen.getAllByRole('switch').map((el) => el.getAttribute('aria-label'))).toEqual([
+      'Require two-factor authentication',
+      'Allow single sign-on',
+    ])
   })
 
-  it.each(ROWS)('keeps the original wording for %s', async (title, detail) => {
-    renderTab('security')
-
-    await waitFor(() => expect(screen.getByText(title)).toBeDefined())
-    expect(screen.getByText(detail)).toBeDefined()
-  })
-
-  it('shows none of the technical detail the redesign had added', async () => {
+  it('reports what the server holds rather than a default of its own', async () => {
+    // The bug in its first form: switches that opened on regardless, so the
+    // page read as active security whatever the workspace had stored.
+    getSecurityPostureMock.mockResolvedValue(
+      posture({ controls: { mfa: { enabled: true } }, policy: { requireMfa: true } }),
+    )
     renderTab('security')
 
     await settled()
-    for (const gone of [
-      /Password minimum length/i,
-      /Session lifetime/i,
-      /Single sign-on — Google/i,
-      /Set by/i,
-      /JWT_EXPIRES_IN/,
-      /Not available/i,
-    ]) {
-      expect(screen.queryByText(gone)).toBeNull()
-    }
+    expect(mfaSwitch().getAttribute('data-state')).toBe('checked')
   })
 
-  // The withdrawal, held as a test so the row cannot quietly come back.
-  it('offers no IP allowlist anywhere on the tab', async () => {
+  it('saves the change, which is the whole of the bug', async () => {
     const user = userEvent.setup()
+    renderTab('security')
+
+    await settled()
+    await user.click(mfaSwitch())
+
+    await waitFor(() =>
+      expect(updateSecurityPolicyMock).toHaveBeenCalledWith({ requireMfa: true }),
+    )
+    expect(await screen.findByText(/security policy saved/i)).toBeDefined()
+  })
+
+  it('sends only the control that was touched', async () => {
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await settled()
+    await user.click(screen.getByRole('switch', { name: 'Allow single sign-on' }))
+
+    await waitFor(() =>
+      expect(updateSecurityPolicyMock).toHaveBeenCalledWith({ allowOauthSignIn: false }),
+    )
+  })
+
+  it('takes the switch back to what the server accepted when a save is refused', async () => {
+    // A switch left sitting in a state the server rejected is the same lie the
+    // useState version told, arrived at a different way.
+    updateSecurityPolicyMock.mockRejectedValue(new Error('Could not save the security policy.'))
+    const user = userEvent.setup()
+    renderTab('security')
+
+    await settled()
+    await user.click(mfaSwitch())
+
+    expect(await screen.findByRole('alert')).toBeDefined()
+    await waitFor(() => expect(mfaSwitch().getAttribute('data-state')).toBe('unchecked'))
+  })
+
+  describe('not locking the workspace out of its own console', () => {
+    it('holds the MFA switch while this administrator has no factor of their own', async () => {
+      notEnrolled()
+      renderTab('security')
+
+      await settled()
+      expect(mfaSwitch().disabled).toBe(true)
+      expect(screen.getByText(/set up your own authenticator app first/i)).toBeDefined()
+    })
+
+    it('sends nothing at all from that held switch', async () => {
+      const user = userEvent.setup()
+      notEnrolled()
+      renderTab('security')
+
+      await settled()
+      await user.click(mfaSwitch())
+
+      expect(updateSecurityPolicyMock).not.toHaveBeenCalled()
+    })
+
+    it('never holds the switch that turns it back off', async () => {
+      // The way out of a workspace requiring more than it can supply. An
+      // unenrolled admin holding a session got there before the policy changed,
+      // and lifting it must not need the factor being demanded.
+      notEnrolled()
+      getSecurityPostureMock.mockResolvedValue(
+        posture({ controls: { mfa: { enabled: true } }, policy: { requireMfa: true } }),
+      )
+      renderTab('security')
+
+      await settled()
+      expect(mfaSwitch().disabled).toBe(false)
+    })
+
+    it('leaves the unrelated switch alone', async () => {
+      notEnrolled()
+      renderTab('security')
+
+      await settled()
+      expect(screen.getByRole('switch', { name: 'Allow single sign-on' }).disabled).toBe(false)
+    })
+
+    it('says how many administrators would lose their sign-in, before the switch is thrown', async () => {
+      // Administrators, not members. The policy reaches SUPER_ADMIN alone —
+      // patients and pharmacies use the opt-in emailed link, which this switch
+      // neither requires nor affects. Counting them here would report a lockout
+      // that cannot happen.
+      renderTab('security')
+
+      await settled()
+      expect(screen.getByText(/4 administrators have no\s+authenticator app/i)).toBeDefined()
+    })
+
+    it('says nothing of the sort once everybody is enrolled', async () => {
+      getSecurityPostureMock.mockResolvedValue(
+        posture({ mfa: { passwordMembers: 3, enrolledMembers: 3 } }),
+      )
+      renderTab('security')
+
+      await settled()
+      expect(screen.queryByText(/no authenticator app/i)).toBeNull()
+    })
+  })
+
+  describe('enrolling an authenticator', () => {
+    it('offers setup to an administrator who has none', async () => {
+      notEnrolled()
+      renderTab('security')
+
+      expect(await screen.findByText('Not enrolled')).toBeDefined()
+      expect(screen.getByRole('button', { name: /set up/i })).toBeDefined()
+    })
+
+    it('shows the setup key to enter into the app', async () => {
+      const user = userEvent.setup()
+      notEnrolled()
+      renderTab('security')
+
+      await user.click(await screen.findByRole('button', { name: /set up/i }))
+
+      // Grouped for reading, as every authenticator app displays it.
+      expect(await screen.findByText('JBSW Y3DP EHPK 3PXP')).toBeDefined()
+    })
+
+    it('turns the factor on only once a code has been proved against it', async () => {
+      const user = userEvent.setup()
+      notEnrolled()
+      renderTab('security')
+
+      await user.click(await screen.findByRole('button', { name: /set up/i }))
+      await user.type(await screen.findByLabelText(/6-digit code/i), '123456')
+      mfaStatusMock.mockResolvedValue({
+        enrolled: true,
+        pending: false,
+        enrolledAt: new Date().toISOString(),
+        required: false,
+      })
+      await user.click(screen.getByRole('button', { name: /^confirm$/i }))
+
+      await waitFor(() => expect(mfaConfirmMock).toHaveBeenCalledWith('123456'))
+      expect(await screen.findByText('Enrolled')).toBeDefined()
+    })
+
+    it('re-reads the posture after enrolling, which is what frees the switch', async () => {
+      const user = userEvent.setup()
+      notEnrolled()
+      renderTab('security')
+
+      await settled()
+      expect(mfaSwitch().disabled).toBe(true)
+
+      await user.click(screen.getByRole('button', { name: /set up/i }))
+      await user.type(await screen.findByLabelText(/6-digit code/i), '123456')
+      mfaStatusMock.mockResolvedValue({
+        enrolled: true,
+        pending: false,
+        enrolledAt: new Date().toISOString(),
+        required: false,
+      })
+      await user.click(screen.getByRole('button', { name: /^confirm$/i }))
+
+      await waitFor(() => expect(mfaSwitch().disabled).toBe(false))
+    })
+
+    it('keeps the setup key on screen when a code is mistyped', async () => {
+      // A wrong code should cost a retry, not the whole enrolment and another
+      // trip through the key.
+      mfaConfirmMock.mockRejectedValue(new Error('That code is not right. Try the current one.'))
+      const user = userEvent.setup()
+      notEnrolled()
+      renderTab('security')
+
+      await user.click(await screen.findByRole('button', { name: /set up/i }))
+      await user.type(await screen.findByLabelText(/6-digit code/i), '000000')
+      await user.click(screen.getByRole('button', { name: /^confirm$/i }))
+
+      expect(await screen.findByText(/not right/i)).toBeDefined()
+      expect(screen.getByText('JBSW Y3DP EHPK 3PXP')).toBeDefined()
+    })
+
+    it('asks for a current code before turning the factor off', async () => {
+      const user = userEvent.setup()
+      renderTab('security')
+
+      await user.click(await screen.findByRole('button', { name: /turn off/i }))
+      await user.type(await screen.findByLabelText(/current code/i), '654321')
+      await user.click(screen.getByRole('button', { name: /^turn off$/i }))
+
+      await waitFor(() => expect(mfaDisableMock).toHaveBeenCalledWith('654321'))
+    })
+
+    it('will not offer to turn it off while the workspace requires it', async () => {
+      mfaStatusMock.mockResolvedValue({
+        enrolled: true,
+        pending: false,
+        enrolledAt: new Date().toISOString(),
+        required: true,
+      })
+      renderTab('security')
+
+      await settled()
+      expect(screen.getByRole('button', { name: /turn off/i }).disabled).toBe(true)
+    })
+  })
+
+  // The withdrawal, held as a test so the row cannot quietly come back. An
+  // operator saved a subnet mask as a range, switched it on, and every request
+  // from outside that list was refused — including the console session of the
+  // only account that could switch it back off.
+  it('offers no IP allowlist anywhere on the tab', async () => {
     renderTab('security')
 
     await settled()
     expect(screen.queryByText(/ip allowlist/i)).toBeNull()
     expect(screen.queryByRole('switch', { name: /ip allowlist/i })).toBeNull()
     expect(screen.queryByText(/approved network/i)).toBeNull()
-    expect(screen.queryByRole('button', { name: /approved networks/i })).toBeNull()
     expect(screen.queryByLabelText(/approved networks/i)).toBeNull()
-
-    // And nothing left on the tab can send one.
-    for (const control of screen.getAllByRole('switch')) await user.click(control)
-    expect(updateSecurityPolicyMock).not.toHaveBeenCalled()
   })
 
-  describe('a control that is not built yet', () => {
-    const UNBUILT = ['Enforce multi-factor authentication', 'SSO (SAML 2.0)']
+  it('names SAML as absent rather than offering a switch for it', async () => {
+    renderTab('security')
 
-    it('opens as an ordinary off switch, saying nothing', async () => {
-      renderTab('security')
-
-      await settled()
-      expect(screen.queryByText(/coming soon/i)).toBeNull()
-      for (const title of UNBUILT) {
-        const control = screen.getByRole('switch', { name: title })
-        expect(control.getAttribute('data-state')).toBe('unchecked')
-        expect(control.disabled).toBe(false)
-      }
-    })
-
-    it.each(UNBUILT)('lets the %s switch move, so it does not read as broken', async (title) => {
-      // Pinning it off made a click look like a dead control rather than an
-      // unfinished feature.
-      const user = userEvent.setup()
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: title })
-      await user.click(control)
-
-      expect(control.getAttribute('data-state')).toBe('checked')
-    })
-
-    it.each(UNBUILT)('shows the answer beside %s once it is on', async (title) => {
-      const user = userEvent.setup()
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: title })
-      await user.click(control)
-
-      const badge = within(control.parentElement).getByText('Coming soon')
-      expect(badge).toBe(control.previousElementSibling)
-    })
-
-    it.each(UNBUILT)('turns %s back off, and takes the answer with it', async (title) => {
-      const user = userEvent.setup()
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: title })
-      await user.click(control)
-      await user.click(control)
-
-      expect(control.getAttribute('data-state')).toBe('unchecked')
-      expect(screen.queryByText(/coming soon/i)).toBeNull()
-    })
-
-    it.each(UNBUILT)('sends nothing when %s is switched either way', async (title) => {
-      const user = userEvent.setup()
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: title })
-      await user.click(control)
-      await user.click(control)
-
-      expect(updateSecurityPolicyMock).not.toHaveBeenCalled()
-    })
-
-    it('moves only the switch that was clicked', async () => {
-      const user = userEvent.setup()
-      renderTab('security')
-
-      await user.click(await screen.findByRole('switch', { name: /multi-factor/i }))
-
-      expect(screen.getAllByText('Coming soon')).toHaveLength(1)
-      expect(
-        screen.getByRole('switch', { name: 'SSO (SAML 2.0)' }).getAttribute('data-state'),
-      ).toBe('unchecked')
-    })
-
-    it('is off again on a remount, because the feature really is off', async () => {
-      const user = userEvent.setup()
-      const first = renderTab('security')
-      const control = await screen.findByRole('switch', { name: /multi-factor/i })
-      await user.click(control)
-      expect(control.getAttribute('data-state')).toBe('checked')
-
-      first.unmount()
-      renderTab('security')
-
-      const fresh = await screen.findByRole('switch', { name: /multi-factor/i })
-      expect(fresh.getAttribute('data-state')).toBe('unchecked')
-      expect(screen.queryByText(/coming soon/i)).toBeNull()
-    })
-
-    it('ignores what the server holds for it', async () => {
-      // requireMfa may well be true in the database; this switch is appearance
-      // only and must not report the platform as enforcing something it is not
-      // safe to operate from here.
-      getSecurityPostureMock.mockResolvedValue({
-        controls: CONTROLS.map((c) => (c.id === 'mfa' ? { ...c, enabled: true } : c)),
-        policy: { ...POLICY, requireMfa: true },
-      })
-      renderTab('security')
-
-      const control = await screen.findByRole('switch', { name: /multi-factor/i })
-      expect(control.getAttribute('data-state')).toBe('unchecked')
-    })
+    await settled()
+    expect(screen.getByText('SAML 2.0')).toBeDefined()
+    expect(screen.queryByRole('switch', { name: /saml/i })).toBeNull()
+    expect(screen.getByText('Not available')).toBeDefined()
   })
 
   it('reports a failure to load as a failure, not an empty tab', async () => {

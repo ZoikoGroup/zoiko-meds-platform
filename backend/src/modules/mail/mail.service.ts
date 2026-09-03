@@ -141,6 +141,43 @@ export class MailService {
     });
   }
 
+  /**
+   * The sign-in link that finishes a second factor (MSA-42).
+   *
+   * Sent only after a correct password, so it confirms possession of the inbox
+   * rather than granting access on its own. Short-lived and single use: the
+   * whole value of the factor is that a stolen password alone is not a sign-in,
+   * and a link that stayed valid would only move the thing worth stealing.
+   */
+  async sendLoginVerification(params: {
+    to: string;
+    fullName: string;
+    token: string;
+    minutes: number;
+  }): Promise<void> {
+    const link = `${this.appBaseUrl}/auth/verify-login?token=${encodeURIComponent(params.token)}`;
+    const body = `
+      ${this.greeting(params.fullName)}
+      <p>Somebody signed in to ZoikoMeds with your email address and password.
+      Confirm it was you to finish signing in.</p>
+      ${this.button(link, 'Confirm sign-in')}
+      <p class="muted">This link expires in ${params.minutes} minutes and can be
+      used once. If this was not you, do not click it — your password is known
+      to somebody else and should be changed.</p>
+    `;
+    await this.send({
+      to: params.to,
+      subject: 'Confirm your ZoikoMeds sign-in',
+      html: this.layout('Confirm your sign-in', body),
+      text:
+        `Confirm your ZoikoMeds sign-in: ${link}
+` +
+        `This link expires in ${params.minutes} minutes and can be used once.
+` +
+        `If this was not you, do not click it — change your password instead.`,
+    });
+  }
+
   /** Welcome message on self-service registration. */
   async sendWelcome(params: { to: string; fullName: string }): Promise<void> {
     const body = `

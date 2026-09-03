@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { EmailSecondFactorCard } from '@/components/shared/email-second-factor-card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -301,6 +302,10 @@ export default function UserProfile() {
               </form>
             </CardContent>
           </Card>
+
+          {/* Confirm each sign-in by email (MSA-42). Opt-in, and renders
+              nothing for an account the factor does not apply to. */}
+          <EmailSecondFactorCard />
         </div>
       </div>
     </div>

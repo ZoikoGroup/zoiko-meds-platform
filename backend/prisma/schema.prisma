@@ -49,6 +49,12 @@ model User {
   /// When the first correct code was accepted. This, not mfaSecret, is what
   /// makes a second factor required at sign-in.
   mfaEnabledAt DateTime?
+
+  /// Whether this account has chosen the emailed sign-in link as its second
+  /// factor. Opt-in, set by the member on their own profile, and never required
+  /// of them: the workspace policy covers administrators, who use an
+  /// authenticator app instead.
+  mfaEmailEnabled Boolean @default(false)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -147,7 +153,10 @@ model PasswordResetToken {
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   tokenHash String    @unique
-  purpose   String    @default("reset") // "reset" | "invite"
+  /// "reset" | "invite" | "login". A login token is the second factor itself:
+  /// the password has already been checked, and consuming this is what issues
+  /// the session.
+  purpose   String    @default("reset")
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())

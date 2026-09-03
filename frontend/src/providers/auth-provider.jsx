@@ -13,6 +13,7 @@ import {
   meRequest,
   updateProfileRequest,
   changePasswordRequest,
+  verifyLoginLinkRequest,
 } from '@/services/auth-api'
 import {
   roleLabel,
@@ -78,8 +79,32 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const login = useCallback(async (email, password) => {
-    const { accessToken, user: apiUser } = await loginRequest(email, password)
+  /**
+   * Sign in, which does not always end in a session (MSA-42).
+   *
+   * `mfaCode` is passed on the retry the form makes after the server answers
+   * `mfaRequired` — it is never known on the first attempt.
+   *
+   * An account using the emailed factor gets `{ mfaEmailSent: true }` and no
+   * token: the password was right, and the sign-in finishes when the link is
+   * opened. Returned as-is rather than thrown, and no token is stored, so a
+   * half-finished sign-in cannot leave the app looking signed in.
+   */
+  const login = useCallback(async (email, password, mfaCode) => {
+    const result = await loginRequest(email, password, mfaCode)
+    if (result?.mfaEmailSent) return result
+
+    const { accessToken, user: apiUser } = result
+    setToken(accessToken)
+    const clientUser = toClientUser(apiUser)
+    setUser(clientUser)
+    return clientUser
+  }, [])
+
+  // Finish a sign-in from an emailed link. The token in the URL is single use
+  // and is exchanged for the session here.
+  const completeLoginLink = useCallback(async (token) => {
+    const { accessToken, user: apiUser } = await verifyLoginLinkRequest(token)
     setToken(accessToken)
     const clientUser = toClientUser(apiUser)
     setUser(clientUser)
@@ -151,6 +176,7 @@ export function AuthProvider({ children }) {
       bootstrapping,
       login,
       loginWithToken,
+      completeLoginLink,
       register,
       logout,
       updateProfile,
@@ -161,6 +187,7 @@ export function AuthProvider({ children }) {
       bootstrapping,
       login,
       loginWithToken,
+      completeLoginLink,
       register,
       logout,
       updateProfile,
