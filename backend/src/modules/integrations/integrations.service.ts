@@ -110,6 +110,19 @@ export class IntegrationsService {
    * Email, with the delivery record behind it rather than a claim of health. A
    * transport that accepts everything and delivers nothing looks identical from
    * configuration alone.
+   *
+   * The count is of governed template dispatch only, because NotificationDelivery
+   * is the template library's own audit trail and nothing else writes to it. The
+   * mail that actually leaves this deployment today — welcome, password reset,
+   * invite, provisioned credentials — goes straight out through MailService, which
+   * records no row here and cannot: a delivery needs a NotificationEvent, and an
+   * event needs a template ID from the approved directory. Inventing one to make
+   * this number bigger would put a template in the audit trail that never passed
+   * acceptance, which is the failure the directory exists to prevent.
+   *
+   * So the line says which mail it is counting. It used to read "Nothing has been
+   * sent in the last seven days", which is a claim about all email and was false
+   * on any week that reset a single password.
    */
   private async email(): Promise<IntegrationStatus> {
     if (!this.mail.isEnabled) {
@@ -137,6 +150,8 @@ export class IntegrationsService {
     ]);
 
     const attempted = sent + failed;
+    // Named on both branches, so the number is never read as all outbound mail.
+    const DIRECT = 'Sign-in and password-reset mail sends directly and is not counted here.';
     return {
       id: 'smtp',
       name: 'Email (SMTP)',
@@ -144,8 +159,8 @@ export class IntegrationsService {
       status: failed > 0 && failed >= sent ? 'degraded' : 'operational',
       detail:
         attempted === 0
-          ? 'Configured. Nothing has been sent in the last seven days.'
-          : `${sent} delivered and ${failed} failed in the last seven days.`,
+          ? `Configured. No template-library mail in the last seven days. ${DIRECT}`
+          : `${sent} delivered and ${failed} failed through the template library in the last seven days. ${DIRECT}`,
       configured: true,
       manage: `${ADMIN_CONSOLE}/notifications`,
     };
