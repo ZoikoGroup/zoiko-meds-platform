@@ -7,6 +7,7 @@ import {
 import { Request, Response } from 'express';
 import { Observable, tap } from 'rxjs';
 import { AppLogger } from '../logger/app-logger.service';
+import { resolveClientIp } from '../client-ip';
 
 /**
  * Logs one structured line per HTTP request with method, path, status,
@@ -40,7 +41,10 @@ export class LoggingInterceptor implements NestInterceptor {
       url: req.originalUrl,
       statusCode,
       durationMs: Date.now() - startedAt,
-      ip: req.ip,
+      // The same address the audit log records. Request logs and audit rows
+      // naming different IPs for one request is how an incident review loses an
+      // hour.
+      ip: resolveClientIp(req),
     });
   }
 }

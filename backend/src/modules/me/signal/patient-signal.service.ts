@@ -510,15 +510,32 @@ export class PatientSignalService {
     const standing = await this.prisma.signalNotification.findFirst({
       where: {
         userId,
-        dedupeKey: `med:${medicineId}:${TYPE_UI[SignalNotificationType.BACK_IN_STOCK]}`,
+        // Either producer of a back-in-stock row for this medicine counts.
+        //
+        // SavedMedicineLinkService raises `saved-linked:<id>` when a pharmacy
+        // finally stocks an off-catalog save, and clears `notifiedStatus` so
+        // this generator treats the medicine as fresh. It then derived a
+        // NEARBY_RESTOCK for the very same event, under a key the prune below
+        // does not reach — so one restock produced two notifications, "X is now
+        // available" and "fresh stock nearby", minutes apart.
+        OR: [
+          { dedupeKey: `med:${medicineId}:${TYPE_UI[SignalNotificationType.BACK_IN_STOCK]}` },
+          { dedupeKey: `saved-linked:${medicineId}` },
+        ],
         // A row the patient dismissed or archived is not standing any more;
         // read-but-kept still is.
         dismissed: false,
         archived: false,
       },
-      select: { id: true },
+      select: { id: true, dedupeKey: true },
     });
-    return standing ? SignalNotificationType.BACK_IN_STOCK : type;
+    if (!standing) return type;
+
+    // The link service's row already says this medicine is available, so there
+    // is nothing for this generator to add. Returning null leaves that row
+    // alone rather than raising a second notification beside it.
+    if (standing.dedupeKey === `saved-linked:${medicineId}`) return null;
+    return SignalNotificationType.BACK_IN_STOCK;
   }
 
   private notificationTypeFor(

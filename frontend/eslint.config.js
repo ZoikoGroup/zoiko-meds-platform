@@ -35,4 +35,10 @@ export default [
       'no-unused-vars': ['warn', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // Developer tooling run from a terminal, not shipped to a browser. Same
+    // rules, Node's globals.
+    files: ['scripts/**/*.{js,mjs}'],
+    languageOptions: { globals: { ...globals.node } },
+  },
 ]

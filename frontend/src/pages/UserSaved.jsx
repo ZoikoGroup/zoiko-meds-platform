@@ -10,7 +10,12 @@ import { Search, Trash2, Heart, ArrowRight, MapPin, Clock } from 'lucide-react'
 import { ConfidenceBadge } from '@/components/shared/status'
 import { AVAILABILITY, CONFIRM_NOTE, telHref } from '@/lib/availability'
 import { formatDistanceKm } from '@/lib/user-location'
-import { useSavedMedicines, useUnsaveMedicine, useToggleSavedAlerts } from '@/hooks/use-saved-medicines'
+import {
+  useSavedMedicines,
+  useUnsaveMedicine,
+  useToggleSavedAlerts,
+  useSignalSettings,
+} from '@/hooks/use-saved-medicines'
 import { useLanguage } from '@/providers/language-provider'
 
 export default function UserSaved() {
@@ -18,6 +23,13 @@ export default function UserSaved() {
   const { data: saved = [], isLoading, isError, error, refetch } = useSavedMedicines()
   const unsaveMutation = useUnsaveMedicine()
   const toggleAlertsMutation = useToggleSavedAlerts()
+  // Two switches govern one alert: this per-medicine one, and the ZoikoSignal
+  // "Back in stock" category. That is the product's design — the category's own
+  // description is "Notify me when a saved medicine is available again" — but
+  // this page never said so, so turning this on while the category was off
+  // produced silence and read as a broken control.
+  const { data: signalSettings } = useSignalSettings()
+  const backInStockOff = signalSettings?.backInStock === false
   const [flashMsg, flash] = useFlash()
   const navigate = useNavigate()
 
@@ -183,13 +195,37 @@ export default function UserSaved() {
                 </div>
 
                 {/* Alerts toggle */}
-                <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3">
-                  <span className="text-sm font-medium text-foreground">{t('alertsEnabled', 'Alerts enabled')}</span>
-                  <Switch
-                    checked={med.alertsEnabled ?? true}
-                    onCheckedChange={() => toggleAlerts(med.id ?? med.name, med.alertsEnabled ?? true)}
-                    aria-label={`Toggle alerts for ${med.name}`}
-                  />
+                <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-foreground">{t('alertsEnabled', 'Alerts enabled')}</span>
+                    <Switch
+                      checked={med.alertsEnabled ?? true}
+                      onCheckedChange={() => toggleAlerts(med.id ?? med.name, med.alertsEnabled ?? true)}
+                      aria-label={`Toggle alerts for ${med.name}`}
+                    />
+                  </div>
+                  {/*
+                    Said only when it changes the outcome. This switch is the
+                    per-medicine half of the decision; with the category off, no
+                    availability alert is produced for any saved medicine, and a
+                    switch that reads "enabled" while nothing arrives is the
+                    reason this looked broken.
+                  */}
+                  {backInStockOff && (med.alertsEnabled ?? true) && (
+                    <p role="status" className="text-[11px] leading-relaxed text-warning">
+                      {t(
+                        'savedAlertsCategoryOff',
+                        'Availability alerts are switched off for every saved medicine in ZoikoSignal™, so this one will not notify you yet.',
+                      )}{' '}
+                      <button
+                        type="button"
+                        onClick={() => navigate('/signal')}
+                        className="font-semibold underline underline-offset-2"
+                      >
+                        {t('savedAlertsCategoryOffAction', 'Turn on “Back in stock”')}
+                      </button>
+                    </p>
+                  )}
                 </div>
 
                 {/* Actions */}

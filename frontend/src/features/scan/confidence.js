@@ -103,14 +103,54 @@ export function bandFor(confidence) {
   return BAND.REJECTED
 }
 
+/** Sources that only exist because a governed catalog identity was found. */
+const CATALOG_SOURCES = new Set([MATCH_SOURCE.MEDIBASE_EXACT, MATCH_SOURCE.MEDIBASE_FUZZY])
+
 /**
- * Only high-confidence governed-catalog matches are accepted without a human
- * look. Two sources always require confirmation regardless of score:
- * UNMATCHED (read off the page but absent from MediBase) and VISION (an
- * assisted second attempt at text on-device OCR could not resolve).
+ * How closely assisted reading must match the catalog before it is accepted
+ * without a human look.
+ *
+ * Higher than the 0.72 floor that lets a match be *used at all*, because the
+ * reading underneath it is a second attempt at text the on-device reader could
+ * not resolve. A near-identical catalog name is evidence the model read the
+ * line correctly; a merely plausible one is not.
  */
-export function needsConfirmation(confidence, source) {
-  if (source === MATCH_SOURCE.UNMATCHED || source === MATCH_SOURCE.VISION) return true
+export const VISION_AUTO_ACCEPT_MATCH = 0.9
+/** And the combined score still has to clear the ordinary auto-accept bar. */
+export const VISION_AUTO_ACCEPT_CONFIDENCE = HIGH_THRESHOLD
+
+/**
+ * Does a patient have to look at this before it is used?
+ *
+ * The rule used to be `source === VISION || source === UNMATCHED` — where the
+ * reading came from decided the answer on its own, so assisted reading could
+ * name a medicine, MediBase could match it exactly, and the patient was still
+ * asked to confirm what the catalog had already identified.
+ *
+ * What actually matters is whether a governed identity stands behind the name.
+ * Without one there is nothing to accept — the medicine may be real, but the
+ * platform cannot say which medicine it is, so UNMATCHED and an unrecognised
+ * assisted reading both still confirm. With one, the question is how strong the
+ * match is, and assisted reading is held to a higher bar than on-device text
+ * because its reading is the less certain half of the pair.
+ *
+ * @param {number} confidence  Combined score from computeConfidence.
+ * @param {string} source      One of MATCH_SOURCE.
+ * @param {object} [match]     `medicineId` and `matchScore` when the catalog matched.
+ */
+export function needsConfirmation(confidence, source, match = {}) {
+  const { medicineId = null, matchScore = null } = match
+
+  // A catalog source only exists because resolveCandidate found an identity, so
+  // it counts as one even when the caller passes no match detail.
+  const hasIdentity = CATALOG_SOURCES.has(source) || Boolean(medicineId)
+  if (!hasIdentity) return true
+
+  if (source === MATCH_SOURCE.VISION) {
+    if (matchScore === null || matchScore < VISION_AUTO_ACCEPT_MATCH) return true
+    return confidence < VISION_AUTO_ACCEPT_CONFIDENCE
+  }
+
   return confidence < HIGH_THRESHOLD
 }
 
@@ -124,7 +164,9 @@ export function explain(source, confidence) {
         ? 'Matched to the MediBase catalog'
         : 'Close match in the MediBase catalog — please confirm'
     case MATCH_SOURCE.VISION:
-      return 'Read by assisted reading — please confirm'
+      return confidence >= VISION_AUTO_ACCEPT_CONFIDENCE
+        ? 'Read by assisted reading and matched to the MediBase catalog'
+        : 'Read by assisted reading — please confirm'
     case MATCH_SOURCE.OFFLINE_DICTIONARY:
       return 'Matched offline — catalog was unreachable'
     case MATCH_SOURCE.UNMATCHED:

@@ -5,7 +5,6 @@ import {
   Delete,
   Get,
   Headers,
-  Ip,
   NotFoundException,
   Param,
   Patch,
@@ -42,6 +41,7 @@ import { PushInventoryDto } from './dto/push-inventory.dto';
 import { PharmacyIntegrationService } from './integration/pharmacy-integration.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { NotificationPreferencesService } from './notification-preferences.service';
+import { ClientIp } from '../../common/decorators/client-ip.decorator';
 
 @ApiTags('pharmacy')
 @Controller('pharmacies')
@@ -103,7 +103,7 @@ export class PharmacyController {
   })
   async updateProfile(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: UpdatePharmacyProfileDto,
   ) {
     return this.pharmacy.saveMyProfile(user, dto, ipAddress);
@@ -228,7 +228,7 @@ export class PharmacyController {
   })
   async saveIntegration(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: SaveIntegrationDto,
   ) {
     const pharmacyId = await this.pharmacy.resolvePharmacyId(
@@ -250,7 +250,7 @@ export class PharmacyController {
   })
   async disconnectIntegration(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     const pharmacyId = await this.pharmacy.resolvePharmacyId(
       user?.pharmacyId ?? null,
@@ -271,7 +271,7 @@ export class PharmacyController {
   })
   async syncIntegration(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     const pharmacyId = await this.pharmacy.resolvePharmacyId(
       user?.pharmacyId ?? null,
@@ -293,7 +293,7 @@ export class PharmacyController {
   })
   async issueIntegrationKey(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     const pharmacyId = await this.pharmacy.resolvePharmacyId(
       user?.pharmacyId ?? null,
@@ -317,7 +317,7 @@ export class PharmacyController {
   })
   async pushInventory(
     @Headers('x-zoiko-api-key') apiKey: string | undefined,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: PushInventoryDto,
   ) {
     return this.integrations.ingestPush(
@@ -360,7 +360,7 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Bulk import medicines from CSV rows or text into pharmacy inventory' })
   async importCsv(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() body: ImportInventoryDto,
   ) {
     const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
@@ -383,7 +383,7 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Add a medicine to the pharmacy inventory' })
   async addInventory(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: AddInventoryDto,
   ) {
     const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
@@ -397,7 +397,7 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Update availability of an inventory item' })
   async updateInventory(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Param('id') id: string,
     @Body() dto: UpdateInventoryDto,
   ) {
@@ -412,7 +412,7 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Remove an inventory item' })
   async deleteInventory(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Param('id') id: string,
   ) {
     const resolvedId = await this.pharmacy.resolvePharmacyId(user?.pharmacyId ?? null, user?.id);
@@ -442,7 +442,7 @@ export class PharmacyController {
   async uploadLogo(
     @CurrentUser() user: AuthenticatedUser,
     @UploadedFile() file: UploadedLogo | undefined,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     const pharmacyId = await this.pharmacy.resolvePharmacyId(
       user?.pharmacyId ?? null,
@@ -464,7 +464,7 @@ export class PharmacyController {
   @ApiOperation({ summary: "Remove this pharmacy's logo" })
   async removeLogo(
     @CurrentUser() user: AuthenticatedUser,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     const pharmacyId = await this.pharmacy.resolvePharmacyId(
       user?.pharmacyId ?? null,

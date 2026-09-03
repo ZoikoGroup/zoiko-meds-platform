@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Ip,
   Param,
   Post,
   Res,
@@ -19,6 +18,7 @@ import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../auth/strategies/jwt.strategy';
+import { ClientIp } from '../../../common/decorators/client-ip.decorator';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -39,7 +39,7 @@ export class ReportsController {
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateReportDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.reports.create(user.id, user.email, dto, ipAddress);
   }
@@ -49,7 +49,7 @@ export class ReportsController {
   duplicate(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.reports.duplicate(user.id, user.email, id, ipAddress);
   }
@@ -64,7 +64,7 @@ export class ReportsController {
   async download(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Res() res: Response,
   ) {
     const artifact = await this.reports.download(actorId, id, ipAddress);
@@ -92,7 +92,7 @@ export class ReportsController {
   remove(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.reports.remove(actorId, id, ipAddress);
   }

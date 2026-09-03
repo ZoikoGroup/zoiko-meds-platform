@@ -19,9 +19,15 @@ import { matchMedicines } from '@/services/medicine-api'
 import { recognize, OcrUnavailableError } from './ocr-worker'
 import { prepareImageForOcr } from './image-preprocess'
 import { extractPdf } from './pdf-text'
-import { extractCandidateLines, parseCandidate, titleCase } from './candidate-extract'
+import {
+  extractCandidateLines,
+  isNonMedicineProse,
+  parseCandidate,
+  titleCase,
+} from './candidate-extract'
 import { bestSimilarity, containsName, similarity } from './text-normalize'
 import { matchOfflineDictionary } from './known-drugs'
+import { assessScanQuality } from './scan-quality'
 import {
   BAND,
   MATCH_SOURCE,
@@ -245,7 +251,13 @@ function toMedicine(resolved, parsed) {
     source: resolved.source,
     confidence,
     band: bandFor(confidence),
-    needsConfirmation: needsConfirmation(confidence, resolved.source),
+    // The identity and how closely it matched, not just where the text came
+    // from. A catalog source carries an identity by construction; passing both
+    // keeps the two paths deciding on the same evidence.
+    needsConfirmation: needsConfirmation(confidence, resolved.source, {
+      medicineId: resolved.medicineId,
+      matchScore: resolved.nameSimilarity,
+    }),
     reason: explain(resolved.source, confidence),
     sourceText: parsed.raw,
   }
@@ -331,13 +343,20 @@ export async function extractPrescriptionMeds(file, { onProgress } = {}) {
   const rawText = extracted.text ?? ''
 
   if (!rawText.trim()) {
+    const quality = assessScanQuality({
+      rawText,
+      ocrConfidence: extracted.ocrConfidence,
+      candidateCount: 0,
+      medicines: [],
+    })
     return {
       medicines: [],
       confident: [],
       unconfirmed: [],
       warnings,
       stats: { pages: extracted.pages.length, candidates: 0, ocrConfidence: extracted.ocrConfidence },
-      needsVisionFallback: true,
+      quality,
+      needsVisionFallback: quality.shouldOfferVision,
       pageImages: extracted.pageImages,
       rawText,
     }
@@ -367,6 +386,18 @@ export async function extractPrescriptionMeds(file, { onProgress } = {}) {
   const confident = medicines.filter((medicine) => !medicine.needsConfirmation)
   const unconfirmed = medicines.filter((medicine) => medicine.needsConfirmation)
 
+  // Whether the extraction is worth standing behind, rather than whether it
+  // produced anything. `confident.length === 0` was the old test, and it called
+  // a scan of three genuinely uncatalogued medicines a failure while passing a
+  // page of instruction text that happened to contain one recognisable brand.
+  const quality = assessScanQuality({
+    rawText,
+    ocrConfidence: extracted.ocrConfidence,
+    candidateCount: parsedCandidates.length,
+    medicines,
+    catalogReachable: catalogReachable.value,
+  })
+
   return {
     medicines,
     confident,
@@ -377,50 +408,116 @@ export async function extractPrescriptionMeds(file, { onProgress } = {}) {
       candidates: parsedCandidates.length,
       ocrConfidence: extracted.ocrConfidence,
     },
-    // Offer assisted reading when OCR found nothing, or found nothing it could
-    // stand behind without a human check.
-    needsVisionFallback: medicines.length === 0 || confident.length === 0,
+    quality,
+    needsVisionFallback: quality.shouldOfferVision,
     pageImages: extracted.pageImages,
     rawText,
   }
 }
 
 /**
- * Fold AI/Vision results into an existing extraction result.
- * Vision candidates are always confirmable — they never auto-accept.
+ * Fold assisted-reading results into an existing extraction.
+ *
+ * Vision output used to be trusted as far as its own name string: it was turned
+ * straight into a card without passing the non-medicine filter every on-device
+ * candidate goes through, and without ever being looked up in MediBase. So an
+ * instruction the model transcribed became a medicine the patient was asked to
+ * confirm, and a medicine it read perfectly arrived with no governed identity
+ * behind it — the patient confirmed a free-text name rather than a catalog entry.
+ *
+ * Now it takes the same path everything else does: reject what is not a
+ * medicine, then resolve the name against the catalog so a match carries its
+ * MediBase id.
+ *
+ * What does NOT change is the confirmation rule. `needsConfirmation` keeps
+ * returning true for MATCH_SOURCE.VISION whatever the catalog says, because
+ * assisted reading is a second attempt at text the on-device reader could not
+ * resolve — a catalog hit makes the identity trustworthy, not the reading.
  */
-export function mergeVisionResults(result, visionMedicines) {
-  const converted = (visionMedicines ?? [])
+export async function mergeVisionResults(result, visionMedicines) {
+  const named = (visionMedicines ?? [])
     .filter((entry) => entry?.name && String(entry.name).trim().length >= 3)
-    .map((entry) => {
-      const confidence = computeConfidence({
-        nameSimilarity: typeof entry.confidence === 'number' ? Math.min(1, Math.max(0, entry.confidence)) : 0.7,
-        source: MATCH_SOURCE.VISION,
-        evidence: { strength: Boolean(entry.strength), form: Boolean(entry.form) },
-      })
-      const detailParts = [entry.genericName, entry.strength, entry.frequency].filter(Boolean)
-      return {
-        name: String(entry.name).trim(),
-        detail: detailParts.join(' · ') || 'Prescription medicine',
-        genericName: entry.genericName ?? '',
-        strength: entry.strength ?? '',
-        form: entry.form ?? '',
-        frequency: entry.frequency ?? '',
-        duration: entry.duration ?? '',
-        medicineId: null,
-        source: MATCH_SOURCE.VISION,
-        confidence,
-        band: bandFor(confidence),
-        // Always confirmed by the user: assisted reading is a fallback for text
-        // the on-device reader could not resolve, not a source of truth.
-        needsConfirmation: true,
-        reason: explain(MATCH_SOURCE.VISION, confidence),
-        sourceText: '',
-      }
-    })
-    .filter((medicine) => medicine.band !== BAND.REJECTED)
+    // The same prose filter the on-device path applies. A transcribed
+    // "Take after food" is not a medicine just because a model read it clearly.
+    .filter((entry) => !isNonMedicineProse(String(entry.name).trim()))
 
-  const medicines = dedupe([...result.medicines, ...converted])
+  const catalogReachable = { value: true }
+  const converted = await mapWithConcurrency(named, MATCH_CONCURRENCY, async (entry) => {
+    const name = String(entry.name).trim()
+    const modelConfidence =
+      typeof entry.confidence === 'number' ? Math.min(1, Math.max(0, entry.confidence)) : 0.7
+
+    // Resolve against MediBase. The identity is what makes acceptance possible
+    // at all, and the strength of the match is what decides whether it happens.
+    let medicineId = null
+    let matchScore = null
+    let genericName = entry.genericName ?? ''
+    let catalogName = null
+    if (catalogReachable.value) {
+      try {
+        const matches = await matchMedicines(name, 5)
+        const scored = (matches ?? [])
+          .map((match) => {
+            const references = [match.name, match.generic, ...(match.brands ?? [])].filter(Boolean)
+            const { score } = bestSimilarity(name, references)
+            return { match, score }
+          })
+          .sort((a, b) => b.score - a.score)
+        const best = scored[0]
+        if (best && best.score >= MEDIBASE_MATCH_FLOOR) {
+          medicineId = best.match.id ?? null
+          matchScore = best.score
+          catalogName = best.match.name
+          genericName = genericName || (best.match.generic ?? '')
+        }
+      } catch {
+        catalogReachable.value = false
+      }
+    }
+
+    // Scored the same way every other source is: the catalog match carries the
+    // name signal, and the model's own certainty about the line takes the place
+    // OCR confidence holds on the on-device path — it is the same quantity, how
+    // sure the reader was of the characters.
+    const confidence = computeConfidence({
+      nameSimilarity: matchScore ?? modelConfidence,
+      source: MATCH_SOURCE.VISION,
+      evidence: { strength: Boolean(entry.strength), form: Boolean(entry.form) },
+      ocrConfidence: modelConfidence,
+    })
+    const detailParts = [genericName, entry.strength, entry.frequency].filter(Boolean)
+
+    return {
+      // The catalog's spelling when it recognised the name, the model's
+      // otherwise — the same precedence the on-device path uses.
+      name: catalogName ?? name,
+      detail: detailParts.join(' · ') || 'Prescription medicine',
+      genericName,
+      strength: entry.strength ?? '',
+      form: entry.form ?? '',
+      frequency: entry.frequency ?? '',
+      duration: entry.duration ?? '',
+      medicineId,
+      source: MATCH_SOURCE.VISION,
+      confidence,
+      band: bandFor(confidence),
+      // Accepted only on a governed identity matched well above the floor that
+      // merely permits a match — see VISION_AUTO_ACCEPT_MATCH. Anything the
+      // catalog did not recognise, or recognised only loosely, still confirms.
+      needsConfirmation: needsConfirmation(confidence, MATCH_SOURCE.VISION, {
+        medicineId,
+        matchScore,
+      }),
+      reason: explain(MATCH_SOURCE.VISION, confidence),
+      sourceText: '',
+    }
+  })
+
+  const medicines = dedupe([
+    ...result.medicines,
+    ...converted.filter((medicine) => medicine.band !== BAND.REJECTED),
+  ])
+
   return {
     ...result,
     medicines,

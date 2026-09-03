@@ -418,7 +418,13 @@ describe('low-confidence medicine', () => {
     expect(result.medicines[0].needsConfirmation).toBe(true)
     expect(result.confident).toEqual([])
     expect(result.unconfirmed).toHaveLength(1)
-    expect(result.needsVisionFallback).toBe(true)
+    // Assisted reading is NOT offered. This assertion used to read `true`,
+    // because the old rule fired whenever nothing was confident — and an
+    // off-catalog medicine is never confident. A medicine MediBase has not seen
+    // is a fact about the catalog, not a sign the page was misread, and calling
+    // for a second attempt at a line that was read correctly wastes the call.
+    expect(result.needsVisionFallback).toBe(false)
+    expect(result.quality.quality).toBe('good')
   })
 
   it('degrades to needs-confirmation when the catalog is unreachable', async () => {
@@ -612,20 +618,25 @@ describe('HEIC/HEIF handling', () => {
 // --- Vision fallback merge --------------------------------------------------
 
 describe('mergeVisionResults', () => {
-  it('adds assisted-reading medicines as confirmable, never auto-accepted', async () => {
+  it('accepts an assisted reading the catalog identified, and confirms one it did not', async () => {
+    // This assertion used to read "never auto-accepted". Where the text came
+    // from decided the answer on its own, so assisted reading could name a
+    // medicine, MediBase could match it exactly, and the patient was still
+    // asked to confirm what the catalog had already identified. The identity
+    // decides now; the source only sets how strong the match has to be.
     const { extractPrescriptionMeds, mergeVisionResults } = await loadPipeline()
     mockOcrText('Patient Name: Thomas Okonkwo\nDate: 14/08/2026')
     const base = await extractPrescriptionMeds(imageFile())
     expect(base.needsVisionFallback).toBe(true)
 
-    const merged = mergeVisionResults(base, [
+    const merged = await mergeVisionResults(base, [
       { name: 'Amoxicillin', strength: '500 mg', form: 'tablet', confidence: 0.9 },
+      { name: 'Zafirlukastium', strength: '250 mg', confidence: 0.9 },
     ])
 
-    expect(merged.medicines).toHaveLength(1)
-    expect(merged.medicines[0].needsConfirmation).toBe(true)
-    expect(merged.unconfirmed).toHaveLength(1)
-    expect(merged.confident).toEqual([])
+    expect(merged.medicines).toHaveLength(2)
+    expect(merged.confident.map((m) => m.name)).toEqual(['Amoxicillin'])
+    expect(merged.unconfirmed.map((m) => m.name)).toEqual(['Zafirlukastium'])
     expect(merged.needsVisionFallback).toBe(false)
   })
 
@@ -634,7 +645,7 @@ describe('mergeVisionResults', () => {
     mockOcrText('Date: 14/08/2026')
     const base = await extractPrescriptionMeds(imageFile())
 
-    const merged = mergeVisionResults(base, [{ name: '' }, { name: 'x' }, null])
+    const merged = await mergeVisionResults(base, [{ name: '' }, { name: 'x' }, null])
     expect(merged.medicines).toEqual([])
   })
 })
