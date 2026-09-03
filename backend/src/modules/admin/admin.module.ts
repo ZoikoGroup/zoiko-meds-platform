@@ -22,6 +22,7 @@ import { RoleCapabilitiesService } from './roles/role-capabilities.service';
 import { PlatformApiKeyService } from './api-keys/platform-api-key.service';
 import { GatewayTelemetryController } from './telemetry/gateway-telemetry.controller';
 import { GatewayTelemetryService } from './telemetry/gateway-telemetry.service';
+import { ZoikoAvailDocsService } from './telemetry/zoikoavail-docs.service';
 import { GatewayRequestRecorder } from './telemetry/gateway-telemetry.recorder';
 import { GatewayTelemetryInterceptor } from './telemetry/gateway-telemetry.interceptor';
 
@@ -56,6 +57,7 @@ import { GatewayTelemetryInterceptor } from './telemetry/gateway-telemetry.inter
     RoleCapabilitiesService,
     PlatformApiKeyService,
     GatewayTelemetryService,
+    ZoikoAvailDocsService,
     GatewayRequestRecorder,
     GatewayTelemetryInterceptor,
   ],

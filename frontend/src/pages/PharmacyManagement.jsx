@@ -334,12 +334,29 @@ export default function PharmacyManagement() {
       key: 'name',
       header: 'Pharmacy Name',
       sortable: true,
-      cell: (row) => (
-        <div className="flex items-center gap-2 font-medium text-foreground">
-          <Building2 className="size-4 text-muted-foreground shrink-0" />
-          <span>{row.name}</span>
-        </div>
-      ),
+      cell: (row) => {
+        // The approved name, and only ever that. A pharmacy that has asked to
+        // rename itself keeps the identity a reviewer signed off until one
+        // signs off the new one — this column used to show the requested name
+        // the moment Save was clicked, which is what made re-verification
+        // decide nothing.
+        const pending = requestByPharmacy.get(row.id)?.changes ?? []
+        return (
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="flex items-center gap-2 font-medium text-foreground">
+              <Building2 className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{row.name}</span>
+            </span>
+            {/* A note, not a substitution: it says an edit is waiting without
+                letting the unapproved value stand in for the approved one. */}
+            {pending.length > 0 && (
+              <span className="ps-6 text-[11px] font-medium text-warning">
+                Pending profile update
+              </span>
+            )}
+          </div>
+        )
+      },
     },
     {
       // Commercial standing, separate from verification status: a pharmacy can be

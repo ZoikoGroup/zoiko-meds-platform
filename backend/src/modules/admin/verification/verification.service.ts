@@ -132,6 +132,12 @@ export class VerificationService {
 
       let pharmacyId = existing.pharmacyId;
 
+      /** Identity fields this decision made authoritative, for the audit trail. */
+      let appliedIdentity: {
+        name?: { from: string | null; to: string };
+        licenseNumber?: { from: string | null; to: string };
+      } = {};
+
       // Does this member still want to hear about verification changes? Asked
       // once, inside the transaction, and before any of the branches below
       // create a notification — a switch that is only honoured on the way out
@@ -202,11 +208,26 @@ export class VerificationService {
         // starts by itself the moment the operator or a reviewer sets one.
         const approved = await tx.pharmacy.findUnique({
           where: { id: pharmacyId },
-          select: { latitude: true, longitude: true },
+          select: { latitude: true, longitude: true, name: true, licenseNumber: true },
         });
+
+        // Approval is where the requested identity becomes the real one.
+        //
+        // It used to change a status and nothing else, because the pharmacy row
+        // had already been overwritten at submission time — so approving decided
+        // nothing that had not already happened, and rejecting could not undo
+        // it. The request now carries what was asked for and this row carries
+        // what was approved; this write is the moment the two meet, inside the
+        // same transaction as the status so a half-applied identity cannot
+        // exist.
+        const requestedName = existing.pharmacyName?.trim();
+        const requestedLicense = existing.licenseNumber?.trim();
+
         await tx.pharmacy.update({
           where: { id: pharmacyId },
           data: {
+            ...(requestedName ? { name: requestedName } : {}),
+            ...(requestedLicense ? { licenseNumber: requestedLicense } : {}),
             verificationStatus: VerificationStatus.VERIFIED,
             isParticipating: canParticipate({
               verificationStatus: VerificationStatus.VERIFIED,
@@ -216,6 +237,20 @@ export class VerificationService {
             updatedAt: new Date(),
           },
         });
+
+        // What actually changed, recorded before and after, so the trail answers
+        // "what did this reviewer approve" without re-deriving it from two rows
+        // that have since moved on.
+        appliedIdentity = {
+          name:
+            requestedName && requestedName !== approved?.name
+              ? { from: approved?.name ?? null, to: requestedName }
+              : undefined,
+          licenseNumber:
+            requestedLicense && requestedLicense !== (approved?.licenseNumber ?? '')
+              ? { from: approved?.licenseNumber ?? null, to: requestedLicense }
+              : undefined,
+        };
 
         if (targetUser && wantsVerificationUpdates) {
           await tx.signalNotification.create({
@@ -293,7 +328,7 @@ export class VerificationService {
         include: { pharmacy: true },
       });
 
-      return req;
+      return { req, appliedIdentity };
     });
 
     await this.audit.write(
@@ -301,10 +336,18 @@ export class VerificationService {
       `admin.verification.${(dto.status ?? 'update').toLowerCase()}`,
       'VerificationRequest',
       id,
-      { pharmacy: result.pharmacyName, status: result.status },
+      {
+        pharmacy: result.req.pharmacyName,
+        status: result.req.status,
+        // Old and requested values for whatever this decision made
+        // authoritative, so the trail answers what was approved rather than
+        // only that something was. Empty on a rejection or an info request,
+        // which change no identity by design.
+        appliedIdentity: result.appliedIdentity,
+      },
       ipAddress,
     );
-    return this.toDto(result);
+    return this.toDto(result.req);
   }
 
   private async require(id: string) {
@@ -316,14 +359,71 @@ export class VerificationService {
     return req;
   }
 
+  /**
+   * Which attested fields this request is asking to change.
+   *
+   * Computed from the two rows rather than stored: the pharmacy holds what a
+   * reviewer approved, the request holds what is being asked for, and the
+   * difference is the thing a reviewer actually has to decide. Nothing is
+   * listed that did not move, so a resubmitted address change shows an empty
+   * list rather than the whole identity restated.
+   *
+   * A pharmacy being verified for the first time has no approved identity to
+   * differ from, so `current` is null and the row reads as new information
+   * rather than as a change.
+   */
+  private identityChanges(r: VerificationRequest & { pharmacy?: any }) {
+    const rows: Array<{ field: string; label: string; current: string | null; requested: string }> =
+      [];
+
+    const requestedName = r.pharmacyName?.trim();
+    if (requestedName && requestedName !== r.pharmacy?.name) {
+      rows.push({
+        field: 'name',
+        label: 'Pharmacy name',
+        current: r.pharmacy?.name ?? null,
+        requested: requestedName,
+      });
+    }
+
+    const requestedLicense = r.licenseNumber?.trim();
+    if (requestedLicense && requestedLicense !== (r.pharmacy?.licenseNumber ?? '')) {
+      rows.push({
+        field: 'licenseNumber',
+        label: 'Licence number',
+        current: r.pharmacy?.licenseNumber ?? null,
+        requested: requestedLicense,
+      });
+    }
+
+    return rows;
+  }
+
   private toDto(r: VerificationRequest & { pharmacy?: any }) {
+    // The approved identity, which is what every other surface shows. It used
+    // to be `r.pharmacy?.name || r.pharmacyName` on both — one value doing the
+    // work of two, which is why the Verification Center could not tell a
+    // reviewer what they were being asked to approve.
     const pharmacyName = r.pharmacy?.name || r.pharmacyName;
     const licenseNumber = r.pharmacy?.licenseNumber || r.licenseNumber;
+    const changes = this.identityChanges(r);
+
     return {
       id: r.id,
       pharmacy: pharmacyName,
       pharmacyId: r.pharmacyId,
       licenseNumber,
+      // What the pharmacy is asking for, and how it differs from the above.
+      requestedName: r.pharmacyName ?? null,
+      requestedLicenseNumber: r.licenseNumber ?? null,
+      changes,
+      // Generated from the diff, kept apart from `notes` so a reviewer can tell
+      // the system's explanation from a colleague's.
+      reason: changes.length
+        ? `Re-verification requested because the pharmacy changed: ${changes
+            .map((c) => c.label.toLowerCase())
+            .join(', ')}.`
+        : null,
       submittedBy: r.submittedBy,
       date: r.createdAt,
       status: r.status,

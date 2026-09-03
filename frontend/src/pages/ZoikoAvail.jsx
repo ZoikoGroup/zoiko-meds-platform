@@ -11,6 +11,7 @@ import {
   Webhook,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { SectionHeading } from '@/components/shared/section-heading'
 import { StatTile } from '@/components/shared/stat-tile'
@@ -23,7 +24,6 @@ import { Badge } from '@/components/ui/badge'
 import { TrendChart } from '@/components/charts/trend-chart'
 import { cn } from '@/lib/utils'
 import { formatMs, formatNumber } from '@/utils/format'
-import { apiBaseUrl } from '@/lib/api-client'
 import { getZoikoAvailTelemetry } from '@/services/admin-api'
 import { authSteps } from '@/services/api-data'
 
@@ -53,6 +53,7 @@ const STATUS_SEVERITY = {
 }
 
 export default function ZoikoAvail() {
+  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -122,7 +123,13 @@ export default function ZoikoAvail() {
         actions={
           <Button
             variant="outline"
-            onClick={() => window.open(`${apiBaseUrl()}/docs`, '_blank', 'noopener')}
+            // An in-platform page, not the backend's Swagger UI. Opening
+            // /api/docs never worked where it mattered: production withholds it
+            // deliberately, and locally the relative URL resolved against the
+            // Vite origin and hit this app's own 404. Routing inside the console
+            // behaves identically in local, staging and production, and stays
+            // behind the Super Admin guard.
+            onClick={() => navigate('/admin/zoikoavail/documentation')}
           >
             <BookOpen />
             Documentation
