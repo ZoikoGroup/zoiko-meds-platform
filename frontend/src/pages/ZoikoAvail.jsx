@@ -6,13 +6,11 @@ import {
   CheckCircle2,
   Gauge,
   Loader2,
-  Terminal,
   Timer,
   Waves,
   Webhook,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { SectionHeading } from '@/components/shared/section-heading'
 import { StatTile } from '@/components/shared/stat-tile'
@@ -55,7 +53,6 @@ const STATUS_SEVERITY = {
 }
 
 export default function ZoikoAvail() {
-  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -123,19 +120,13 @@ export default function ZoikoAvail() {
         ]}
         meta={<ServiceStatusBadge status={data.health.status} size="sm" />}
         actions={
-          <>
-            <Button
-              variant="outline"
-              onClick={() => window.open(`${apiBaseUrl()}/docs`, '_blank', 'noopener')}
-            >
-              <BookOpen />
-              Documentation
-            </Button>
-            <Button onClick={() => navigate('/admin/zoikoavail/sandbox')}>
-              <Terminal />
-              Open sandbox
-            </Button>
-          </>
+          <Button
+            variant="outline"
+            onClick={() => window.open(`${apiBaseUrl()}/docs`, '_blank', 'noopener')}
+          >
+            <BookOpen />
+            Documentation
+          </Button>
         }
       />
 

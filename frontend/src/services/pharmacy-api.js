@@ -392,5 +392,15 @@ export const removePharmacyLogo = () =>
 export const startBillingCheckout = (body) =>
   apiFetch('/pharmacies/me/billing/checkout', { method: 'POST', body: body || {} })
 
+// Confirm the session the browser has just returned from (MP-52). The server
+// reads it back from the provider and runs the same reconciliation the webhook
+// runs, so a webhook that never arrives no longer means a plan that never
+// activates.
+export const confirmBillingCheckout = (sessionId) =>
+  apiFetch('/pharmacies/me/billing/checkout/confirm', {
+    method: 'POST',
+    body: { sessionId },
+  })
+
 export const openBillingPortal = () =>
   apiFetch('/pharmacies/me/billing/portal', { method: 'POST', body: {} })

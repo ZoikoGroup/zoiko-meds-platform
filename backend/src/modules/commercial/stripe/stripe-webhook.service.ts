@@ -137,14 +137,34 @@ export class StripeWebhookService {
    * This is where the internal subscription comes into existence: creating it when
    * checkout *starts* would grant paid entitlement to anyone who opened the payment
    * page and walked away. The provider confirming payment is the only trustworthy
-   * signal, and it arrives here.
-   *
-   * Idempotent on providerSubscriptionId, so a redelivery cannot produce a second
-   * subscription for the same purchase.
+   * signal.
    */
   private async onCheckoutCompleted(event: Stripe.Event): Promise<void> {
-    const session = event.data.object as Stripe.Checkout.Session;
+    await this.reconcileCheckoutSession(
+      event.data.object as Stripe.Checkout.Session,
+      'webhook',
+    );
+  }
 
+  /**
+   * Turn a paid checkout session into the internal subscription (MP-52).
+   *
+   * Public and separate from the event handler because the webhook is not the only
+   * way this platform learns a payment succeeded, and it must not be the only way.
+   * A webhook endpoint that is misconfigured, unreachable, or simply slower than
+   * the browser redirect left the pharmacy looking at "your plan activates as soon
+   * as the payment provider confirms it" over a plan that never activated, with
+   * nothing recorded for an administrator to find either. The pharmacy returning
+   * from checkout now reconciles its own session directly, and lands here.
+   *
+   * Idempotent on providerSubscriptionId, which is what makes it safe to run from
+   * both routes: whichever arrives first creates the subscription, and the other
+   * finds it and stops. `source` is recorded so an operator can tell which one did.
+   */
+  async reconcileCheckoutSession(
+    session: Stripe.Checkout.Session,
+    source: 'webhook' | 'return',
+  ): Promise<{ reconciled: boolean; reason?: string }> {
     const rawSub = (session as unknown as { subscription?: string | { id: string } }).subscription;
     const providerSubscriptionId = typeof rawSub === 'string' ? rawSub : rawSub?.id;
     const billingProfileId = session.metadata?.billingProfileId;
@@ -153,16 +173,27 @@ export class StripeWebhookService {
 
     if (!providerSubscriptionId || !billingProfileId || !pharmacyId) {
       this.logger.warn(
-        `checkout.session.completed ${session.id} lacks subscription or metadata; nothing to reconcile.`,
+        `checkout session ${session.id} (${source}) lacks subscription or metadata; nothing to reconcile.`,
       );
-      return;
+      return { reconciled: false, reason: 'incomplete' };
+    }
+
+    // Only a paid session becomes a subscription. The webhook only fires on
+    // completion so this is normally moot, but the return route can be reached
+    // with a session that is still processing — an asynchronous payment method,
+    // or a browser that beat the provider to it.
+    if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+      return { reconciled: false, reason: 'unpaid' };
     }
 
     const existing = await this.prisma.subscription.findFirst({
       where: { providerSubscriptionId },
       select: { id: true },
     });
-    if (existing) return; // already reconciled
+    // Already reconciled, by whichever route got here first. Reported as done
+    // rather than as nothing having happened: the plan is active, and the caller
+    // is asking whether it is.
+    if (existing) return { reconciled: true, reason: 'already' };
 
     const now = new Date();
     const created = await this.prisma.$transaction(async (tx) => {
@@ -200,7 +231,12 @@ export class StripeWebhookService {
       pharmacyId,
       billingProfileId,
       sessionId: session.id,
+      // Which route confirmed it. When this reads "return" repeatedly, webhook
+      // delivery is broken and the redirect is carrying the whole flow.
+      source,
     });
+
+    return { reconciled: true };
   }
 
   private async onInvoicePaid(event: Stripe.Event): Promise<void> {
