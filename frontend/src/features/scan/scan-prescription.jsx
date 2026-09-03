@@ -178,7 +178,9 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
         flash?.('Assisted reading could not identify any medicines either.')
         return
       }
-      setResult((current) => (current ? mergeVisionResults(current, medicines) : current))
+      // mergeVisionResults now consults MediBase, so it is async.
+      const merged = await mergeVisionResults(result, medicines)
+      setResult(merged)
     } catch (err) {
       flash?.(err?.message ?? 'Assisted reading is unavailable right now.')
     } finally {

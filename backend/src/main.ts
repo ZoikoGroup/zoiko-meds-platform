@@ -11,6 +11,7 @@ import { AppLogger } from './common/logger/app-logger.service';
 import { StripeConfig } from './modules/commercial/stripe/stripe.config';
 import { appBaseUrl, appBaseUrlWarning } from './config/app-urls';
 import { MigrationStatusService } from './modules/health/migration-status.service';
+import { trustedProxyHops } from './common/client-ip';
 
 /**
  * Ceiling for the prescription-scan vision endpoint.
@@ -41,9 +42,16 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   const isProd = config.get<string>('NODE_ENV') === 'production';
 
-  // Behind a proxy/load balancer (Cloud Run, nginx), trust X-Forwarded-* so
-  // req.ip and rate-limiting key off the real client address.
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  // Behind a proxy chain — Vercel's /internal rewrite, then Cloudflare, then the
+  // load balancer — so X-Forwarded-* is trusted to the configured depth and no
+  // further. One setting rather than two: req.ip, the rate limiter's key and
+  // resolveClientIp() all have to agree about where the trusted boundary is, or
+  // a request gets throttled under one address and audited under another.
+  //
+  // Hard-coded 1 is what recorded the Cloudflare edge node against every login.
+  // The default is still 1 so deploying this changes nothing on its own; set
+  // TRUSTED_PROXY_HOPS from what GET /api/admin/diagnostics/client-ip reports.
+  app.getHttpAdapter().getInstance().set('trust proxy', trustedProxyHops());
 
   const apiPrefix = config.get<string>('API_PREFIX', 'api');
   app.setGlobalPrefix(apiPrefix);

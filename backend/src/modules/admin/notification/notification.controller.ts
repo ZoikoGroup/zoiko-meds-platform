@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Ip,
   Param,
   Post,
   UseGuards,
@@ -17,6 +16,7 @@ import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../auth/strategies/jwt.strategy';
+import { ClientIp } from '../../../common/decorators/client-ip.decorator';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -50,7 +50,7 @@ export class NotificationController {
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateNotificationDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.notifications.create(user.id, user.email, dto, ipAddress);
   }
@@ -61,7 +61,7 @@ export class NotificationController {
   remove(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.notifications.remove(actorId, id, ipAddress);
   }

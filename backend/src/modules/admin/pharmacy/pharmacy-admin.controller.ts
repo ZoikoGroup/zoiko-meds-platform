@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Ip,
   Param,
   Patch,
   Post,
@@ -21,6 +20,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { ClientIp } from '../../../common/decorators/client-ip.decorator';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -41,7 +41,7 @@ export class PharmacyAdminController {
   create(
     @CurrentUser('id') actorId: string,
     @Body() dto: CreatePharmacyDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.pharmacies.create(actorId, dto, ipAddress);
   }
@@ -51,7 +51,7 @@ export class PharmacyAdminController {
   bulk(
     @CurrentUser('id') actorId: string,
     @Body() dto: BulkStatusDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.pharmacies.bulkSetStatus(actorId, dto.ids, dto.status, ipAddress);
   }
@@ -66,7 +66,7 @@ export class PharmacyAdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdatePharmacyDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.pharmacies.update(actorId, id, dto, ipAddress);
   }
@@ -76,7 +76,7 @@ export class PharmacyAdminController {
   verify(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.pharmacies.setStatus(actorId, id, VerificationStatus.VERIFIED, ipAddress);
   }
@@ -86,7 +86,7 @@ export class PharmacyAdminController {
   suspend(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.pharmacies.setStatus(actorId, id, VerificationStatus.SUSPENDED, ipAddress);
   }
@@ -95,7 +95,7 @@ export class PharmacyAdminController {
   remove(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.pharmacies.remove(actorId, id, ipAddress);
   }

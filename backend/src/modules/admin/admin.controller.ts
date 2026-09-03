@@ -3,11 +3,11 @@ import {
   Controller,
   Delete,
   Get,
-  Ip,
   Param,
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -32,6 +32,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { ClientIp } from '../../common/decorators/client-ip.decorator';
+import type { Request } from 'express';
+import { describeForwarding } from '../../common/client-ip';
 
 /**
  * Platform administration. Every route requires a valid JWT AND the
@@ -73,7 +76,7 @@ export class AdminController {
   })
   updateOrganization(
     @CurrentUser('id') actorId: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: UpdateOrganizationDto,
   ) {
     return this.organization.update(actorId, dto, ipAddress);
@@ -97,7 +100,7 @@ export class AdminController {
   })
   updateSecurityPosture(
     @CurrentUser('id') actorId: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: UpdateSecurityPolicyDto,
   ) {
     return this.security.update(actorId, dto, ipAddress);
@@ -146,7 +149,7 @@ export class AdminController {
   createUser(
     @CurrentUser('id') actorId: string,
     @Body() dto: CreateUserDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.createUser(actorId, dto, ipAddress);
   }
@@ -163,7 +166,7 @@ export class AdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.updateUser(actorId, id, dto, ipAddress);
   }
@@ -174,7 +177,7 @@ export class AdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdateRoleDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.setRole(actorId, id, dto.role, ipAddress);
   }
@@ -185,7 +188,7 @@ export class AdminController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: ResetPasswordDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.resetPassword(actorId, id, dto.password, ipAddress);
   }
@@ -195,7 +198,7 @@ export class AdminController {
   activate(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.setActive(actorId, id, true, ipAddress);
   }
@@ -205,7 +208,7 @@ export class AdminController {
   deactivate(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.setActive(actorId, id, false, ipAddress);
   }
@@ -215,7 +218,7 @@ export class AdminController {
   deleteUser(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.admin.deleteUser(actorId, id, ipAddress);
   }
@@ -248,7 +251,7 @@ export class AdminController {
   })
   createApiKey(
     @CurrentUser('id') actorId: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Body() dto: CreateApiKeyDto,
   ) {
     return this.apiKeys.create(actorId, dto.label, dto.scope, ipAddress);
@@ -263,7 +266,7 @@ export class AdminController {
   revokeApiKey(
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.apiKeys.revoke(actorId, id, ipAddress);
   }
@@ -272,5 +275,15 @@ export class AdminController {
   @ApiOperation({ summary: 'Read the platform audit trail (paginated & filtered)' })
   auditLogs(@Query() query: ListAuditLogsQuery) {
     return this.admin.listAuditLogs(query);
+  }
+
+  @Get('diagnostics/client-ip')
+  @ApiOperation({
+    summary: 'What the proxy chain said about this request',
+    description:
+      'Addresses only — no credentials, cookies or body. Call it from the browser you want audited and set TRUSTED_PROXY_HOPS so `resolved` is that browser’s public address. Evidence rather than a diagram: a bypassed CDN or a direct health check changes the real depth.',
+  })
+  clientIpDiagnostics(@Req() req: Request) {
+    return describeForwarding(req);
   }
 }

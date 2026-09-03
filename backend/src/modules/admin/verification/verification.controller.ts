@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Ip,
   Param,
   Patch,
   Post,
@@ -19,6 +18,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { ClientIp } from '../../../common/decorators/client-ip.decorator';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -60,7 +60,7 @@ export class VerificationController {
   create(
     @CurrentUser('id') actorId: string,
     @Body() dto: CreateVerificationDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.verification.create(actorId, dto, ipAddress);
   }
@@ -71,7 +71,7 @@ export class VerificationController {
     @CurrentUser('id') actorId: string,
     @Param('id') id: string,
     @Body() dto: UpdateVerificationDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.verification.update(actorId, id, dto, ipAddress);
   }

@@ -4,7 +4,6 @@ import {
   Get,
   Headers,
   HttpCode,
-  Ip,
   Patch,
   Post,
   Req,
@@ -32,11 +31,7 @@ import { GoogleOAuthGuard } from './guards/oauth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { OAuthProfile } from './oauth-profile';
 import { MfaService } from './mfa/mfa.service';
-import {
-  MfaCodeDto,
-  EmailSecondFactorTokenDto,
-  EmailSecondFactorPreferenceDto,
-} from './mfa/mfa.dto';
+import { MfaCodeDto } from './mfa/mfa.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -45,7 +40,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly config: ConfigService,
     private readonly mfa: MfaService,
-  ) {}
+  ) { }
 
   // --- Two-factor authentication (MSA-42) ----------------------------------
   //
@@ -89,7 +84,7 @@ export class AuthController {
   mfaConfirm(
     @CurrentUser('id') userId: string,
     @Body() dto: MfaCodeDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.mfa.confirmEnrolment(userId, dto.code, ipAddress);
   }
@@ -107,7 +102,7 @@ export class AuthController {
   mfaDisable(
     @CurrentUser('id') userId: string,
     @Body() dto: MfaCodeDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
   ) {
     return this.mfa.disable(userId, dto.code, ipAddress);
   }
@@ -169,7 +164,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Create a public account and receive a JWT' })
   register(
     @Body() dto: RegisterDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.register(dto, ipAddress, userAgent);
@@ -181,7 +176,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Exchange credentials for a JWT' })
   login(
     @Body() dto: LoginDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.login(dto, ipAddress, userAgent);
@@ -205,7 +200,7 @@ export class AuthController {
   async googleCallback(
     @Req() req: Request,
     @Res() res: Response,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     await this.completeOAuth(req, res, ipAddress, userAgent);
@@ -241,7 +236,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Log out and record audit event' })
   logout(
     @CurrentUser('id') userId: string,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.logout(userId, ipAddress, userAgent);
@@ -273,7 +268,7 @@ export class AuthController {
   changePassword(
     @CurrentUser('id') userId: string,
     @Body() dto: ChangePasswordDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.changePassword(userId, dto, ipAddress, userAgent);
@@ -285,7 +280,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Request a password reset link by email' })
   forgotPassword(
     @Body() dto: ForgotPasswordDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.forgotPassword(dto, ipAddress, userAgent);
@@ -297,7 +292,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Set a new password using a reset/invite token' })
   resetPassword(
     @Body() dto: ResetPasswordDto,
-    @Ip() ipAddress: string,
+    @ClientIp() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
     return this.auth.resetPassword(dto, ipAddress, userAgent);

@@ -240,12 +240,10 @@ describe('a back-in-stock notification survives long enough to be seen', () => {
     await service.listNotifications(USER);
 
     const [args] = prisma.signalNotification.findFirst.mock.calls[0];
-    expect(args.where).toMatchObject({
-      userId: USER,
-      dedupeKey: BACK_IN_STOCK_KEY,
-      dismissed: false,
-      archived: false,
-    });
+    expect(args.where).toMatchObject({ userId: USER, dismissed: false, archived: false });
+    // Either producer's row counts now — the link service raises the same
+    // announcement under its own key, and one event must not yield two rows.
+    expect(args.where.OR).toContainEqual({ dedupeKey: BACK_IN_STOCK_KEY });
   });
 
   it('falls back to a restock when there is no back-in-stock row to keep', async () => {

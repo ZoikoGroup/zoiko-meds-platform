@@ -33,6 +33,8 @@ let savedQueryError = null
 const refetchMock = vi.fn()
 const unsaveMock = vi.fn(async () => ({ saved: false }))
 const toggleAlertsMock = vi.fn(async () => ({ success: true }))
+// The global 'Back in stock' category, as the settings endpoint reports it.
+let signalSettings = { backInStock: true }
 
 vi.mock('@/hooks/use-saved-medicines', () => ({
   useSavedMedicines: () => ({
@@ -44,6 +46,9 @@ vi.mock('@/hooks/use-saved-medicines', () => ({
   }),
   useUnsaveMedicine: () => ({ mutate: (id, opts) => { unsaveMock(id); opts?.onSuccess?.() }, isPending: false }),
   useToggleSavedAlerts: () => ({ mutate: (vars, opts) => { toggleAlertsMock(vars); opts?.onSuccess?.() }, isPending: false }),
+  // The page reads the ZoikoSignal category to say when it would silence
+  // these switches. Defaults on, which is the ordinary case.
+  useSignalSettings: () => ({ data: signalSettings }),
 }))
 
 const SAVED = [
@@ -171,5 +176,81 @@ describe('Saved Medicines page', () => {
 
     expect(screen.getByText('No saved medicines yet')).toBeDefined()
     expect(container.textContent).not.toMatch(/not exact stock/i)
+  })
+})
+
+/**
+ * Two switches govern one alert, and this page used to mention only one.
+ *
+ * Turning "Alerts enabled" on for a medicine while ZoikoSignal's "Back in
+ * stock" category was off produced silence, with nothing on screen to say why
+ * — so the per-medicine switch read as a control wired to nothing. It is
+ * wired; it is the per-medicine half of a decision the category also governs.
+ * The page now says so, and only when it changes the outcome.
+ */
+describe('the ZoikoSignal category that also governs these switches', () => {
+  afterEach(() => {
+    signalSettings = { backInStock: true }
+  })
+
+  it('says nothing while the category is on', () => {
+    render(<UserSaved />)
+    expect(screen.queryByText(/switched off for every saved medicine/i)).toBeNull()
+  })
+
+  it('says nothing while the category is still loading', () => {
+    // An absent answer is not a "no". Warning on undefined would flash the
+    // notice on every page load.
+    signalSettings = undefined
+    render(<UserSaved />)
+    expect(screen.queryByText(/switched off for every saved medicine/i)).toBeNull()
+  })
+
+  it('warns on a medicine whose alerts are on when the category is off', () => {
+    signalSettings = { backInStock: false }
+    render(<UserSaved />)
+
+    // SAVED[0] has alertsEnabled: true, SAVED[1] has false.
+    expect(screen.getAllByText(/switched off for every saved medicine/i)).toHaveLength(1)
+  })
+
+  it('stays quiet on a medicine whose own alerts are off', () => {
+    // Nothing is being silenced that the patient did not already silence.
+    signalSettings = { backInStock: false }
+    render(<UserSaved />)
+
+    const card = screen.getByText('Metformin 500 mg').closest('div[data-slot="card"]')
+    expect(within(card).queryByText(/switched off for every saved medicine/i)).toBeNull()
+  })
+
+  it('offers the way to fix it', () => {
+    signalSettings = { backInStock: false }
+    render(<UserSaved />)
+
+    expect(screen.getByRole('button', { name: /Turn on .Back in stock./i })).toBeDefined()
+  })
+
+  it('does not touch the per-medicine switch itself', () => {
+    // The notice explains; it does not silently flip or disable the control the
+    // patient set. Faking the switch would hide the real cause all over again.
+    signalSettings = { backInStock: false }
+    render(<UserSaved />)
+
+    const toggle = screen.getByLabelText('Toggle alerts for Amoxicillin 500 mg')
+    expect(toggle.getAttribute('data-state')).toBe('checked')
+    expect(toggle.disabled).toBeFalsy()
+  })
+
+  it('still sends only the per-medicine value when toggled', async () => {
+    // The two settings stay separate: this page never writes the category.
+    signalSettings = { backInStock: false }
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<UserSaved />)
+
+    await user.click(screen.getByLabelText('Toggle alerts for Metformin 500 mg'))
+
+    await waitFor(() =>
+      expect(toggleAlertsMock).toHaveBeenCalledWith({ medicineId: 'med_2', alertsEnabled: true }),
+    )
   })
 })
