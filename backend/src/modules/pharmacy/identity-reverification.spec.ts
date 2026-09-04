@@ -58,6 +58,9 @@ function buildService(existing = verified()) {
     },
     user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: PHARMACY_ID }), update: jest.fn() },
     verificationRequest: {
+      // The request's recorded submission facts, read before this save appends
+      // to them so an earlier save's record is not lost.
+      findUnique: jest.fn().mockResolvedValue({ changeKinds: [] }),
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn(async ({ data }: any) => {
         requests.push(data);

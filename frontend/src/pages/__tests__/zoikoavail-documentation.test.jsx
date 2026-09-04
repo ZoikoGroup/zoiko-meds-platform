@@ -426,51 +426,46 @@ describe('10. the dashboard is otherwise unchanged', () => {
   })
 })
 
-describe('11-12. the optional Swagger link', () => {
-  it('points at the backend, never at the origin serving this page', async () => {
-    // The whole bug in one assertion: 8000, not 5173. The URL comes from the
-    // servers block the backend declares, not from this app's own location.
+describe('11-12. the Swagger explorer link', () => {
+  it('is offered whatever the environment — production included', async () => {
+    // It used to appear only in development, because the only explorer was the
+    // backend's own /api/docs, withheld on the live deployment. The explorer it
+    // opens is now rendered inside the console, so there is nothing
+    // environment-specific left to hide.
     await openDocs()
-    const link = screen.queryByRole('button', { name: /Open Swagger UI/i })
 
-    if (!link) {
-      // Not offered outside dev, which is also correct.
-      expect(link).toBeNull()
-      return
-    }
-    const user = userEvent.setup({ pointerEventsCheck: 0 })
-    await user.click(link)
-
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost:8000/api/docs',
-      '_blank',
-      expect.stringContaining('noopener'),
-    )
+    expect(screen.getByRole('button', { name: /Open Swagger UI/i })).toBeDefined()
   })
 
-  it('is absent when the contract declares no local server', async () => {
-    // Which is what a production contract looks like: no localhost entry, so no
-    // link is offered and the page does not depend on one.
-    contractMock.mockResolvedValue({
-      ...CONTRACT,
-      servers: [{ url: 'https://get.zoikomeds.com/api', description: 'This deployment' }],
-    })
-    await openDocs()
+  it('navigates in-app rather than opening the backend', async () => {
+    const { user } = await openDocs()
 
-    expect(screen.queryByRole('button', { name: /Open Swagger UI/i })).toBeNull()
+    await user.click(screen.getByRole('button', { name: /Open Swagger UI/i }))
+
+    expect(navigateMock).toHaveBeenCalledWith('/admin/zoikoavail/swagger')
+    expect(window.open).not.toHaveBeenCalled()
   })
 
-  it('renders the whole contract with or without it', async () => {
+  it('no longer depends on the contract declaring a local server', async () => {
+    // Which is what a production contract looks like: production only.
     contractMock.mockResolvedValue({
       ...CONTRACT,
-      servers: [{ url: 'https://get.zoikomeds.com/api', description: 'This deployment' }],
+      servers: [CONTRACT.servers[0]],
     })
-    await openDocs()
+    const { user } = await openDocs()
 
-    expect(screen.getByText('/availability')).toBeDefined()
-    expect(screen.getByText('/signal/intelligence')).toBeDefined()
+    await user.click(screen.getByRole('button', { name: /Open Swagger UI/i }))
+
+    expect(navigateMock).toHaveBeenCalledWith('/admin/zoikoavail/swagger')
   })
 })
+
+// The three tests that stood here asserted the old behaviour: that the link
+// opened http://localhost:8000/api/docs, and that it disappeared when no local
+// server was declared. Both were correct then and are wrong now — the button
+// navigates in-app and is offered everywhere. The raw-Swagger link still
+// exists, moved onto the explorer page and covered by
+// zoikoavail-swagger.test.jsx, which is where it now lives.
 
 describe('when the contract cannot be read', () => {
   it('says so and offers a retry rather than an empty page', async () => {

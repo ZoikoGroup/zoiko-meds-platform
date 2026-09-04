@@ -46,3 +46,17 @@ export function formatBytes(bytes) {
   const mb = bytes / (1024 * 1024)
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
+
+/**
+ * A MIME type as a reviewer would name it.
+ *
+ * The type is decided by the API from the file's own bytes, so this is a label
+ * for a value that was already checked — never a guess from the extension.
+ */
+export function formatDocType(mimeType) {
+  if (!mimeType) return null
+  if (mimeType === 'application/pdf') return 'PDF'
+  if (mimeType === 'image/jpeg') return 'JPG'
+  if (mimeType === 'image/png') return 'PNG'
+  return mimeType
+}

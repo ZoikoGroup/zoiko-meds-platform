@@ -348,3 +348,80 @@ describe('nothing is invented', () => {
     );
   });
 });
+
+// --- The OpenAPI rendering the Swagger explorer consumes ---------------------
+
+describe('the specification is the same surface, in OpenAPI form', () => {
+  /** Every "METHOD path" the reading view describes. */
+  const contractPaths = (service: ZoikoAvailDocsService) =>
+    allEndpoints(service)
+      .map((e) => `${e.method.toLowerCase()} ${e.path}`)
+      .sort();
+
+  /** Every "METHOD path" the specification describes. */
+  const specPaths = (service: ZoikoAvailDocsService) =>
+    Object.entries(service.specification().paths)
+      .flatMap(([path, methods]) => Object.keys(methods).map((m) => `${m} ${path}`))
+      .sort();
+
+  it('covers exactly the endpoints the reading view covers', () => {
+    // The property that makes "one contract, two renderings" true rather than
+    // aspirational: neither can widen or narrow without the other.
+    const service = build();
+
+    expect(specPaths(service)).toEqual(contractPaths(service));
+  });
+
+  it('is a valid OpenAPI document', () => {
+    const spec = build().specification();
+
+    expect(spec.openapi).toMatch(/^3\./);
+    expect(spec.info.title).toBe('ZoikoAvail™ API');
+    expect(spec.paths['/availability'].get).toBeDefined();
+  });
+
+  it('leads with the production server, so the explorer does not default to a laptop', () => {
+    expect(build().specification().servers[0]).toEqual({
+      url: 'https://get.zoikomeds.com/api',
+      description: 'Production API',
+    });
+  });
+
+  it.each(['/admin/zoikoavail/telemetry', '/admin/users', '/auth/login'])(
+    'omits %s from the document itself, not merely from the view',
+    (path) => {
+      // Absent from the object the browser receives, so no UI toggle can reveal it.
+      expect(build().specification().paths[path]).toBeUndefined();
+    },
+  );
+
+  it('carries no /admin path at all', () => {
+    expect(Object.keys(build().specification().paths).some((p) => p.startsWith('/admin'))).toBe(
+      false,
+    );
+  });
+
+  it('keeps the security schemes so Authorize works', () => {
+    const withSchemes = {
+      ...DOCUMENT,
+      components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } },
+    };
+
+    expect(build(withSchemes).specification().components).toEqual({
+      securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+    });
+  });
+
+  it('keeps the per-operation security, so protected routes stay marked', () => {
+    const spec = build().specification();
+
+    expect(spec.paths['/signal/intelligence'].get.security).toEqual([{ bearer: [] }]);
+    expect(spec.paths['/availability'].get.security).toBeUndefined();
+  });
+
+  it('refuses rather than serving an empty document', () => {
+    const service = new ZoikoAvailDocsService(config());
+
+    expect(() => service.specification()).toThrow(ServiceUnavailableException);
+  });
+});

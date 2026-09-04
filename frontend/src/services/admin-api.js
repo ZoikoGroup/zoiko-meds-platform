@@ -99,6 +99,15 @@ export const getZoikoAvailTelemetry = () => apiFetch('/admin/zoikoavail/telemetr
  */
 export const getZoikoAvailContract = () => apiFetch('/admin/zoikoavail/openapi')
 
+/**
+ * The same governed contract as an OpenAPI document, for the Swagger explorer.
+ *
+ * Fetched through this client rather than let Swagger UI load a URL itself:
+ * the route is SUPER_ADMIN-guarded, and the library's own fetch would carry no
+ * Authorization header.
+ */
+export const getZoikoAvailSpec = () => apiFetch('/admin/zoikoavail/openapi/spec')
+
 export const listAuditLogs = (params) =>
   apiFetch(`/admin/audit-logs${qs(params)}`)
 

@@ -51,6 +51,8 @@ const PROFILE = {
   reliabilityScore: 90,
   logoUrl: null,
   commercialClassification: 'VERIFIED_NETWORK_CORE',
+  patientVisible: true,
+  visibilityState: 'VERIFIED_VISIBLE',
   reviewStatus: null,
   reviewedBy: null,
   submittedAt: null,
@@ -72,25 +74,33 @@ describe('a verified pharmacy that patients cannot find yet', () => {
   })
 
   it('says the licence is approved but the listing is waiting on a location', async () => {
+    // The explanation is now whatever the API says is holding this pharmacy
+    // back, rendered as given. The portal composed this sentence itself before,
+    // which only worked while a missing location was the single possible
+    // reason — it never was, and the page had nothing to say about the others.
     await renderProfile({
+      patientVisible: false,
+      visibilityState: 'VERIFIED_NOT_VISIBLE',
       isParticipating: false,
       latitude: null,
       longitude: null,
       locationPrecision: null,
       listingBlockedReason:
-        'Verified, but not listed to patients yet: this pharmacy has no map location.',
+        'Verified, but not listed to patients yet: this pharmacy has no map location, ' +
+        'and every patient search is distance-bounded. It is listed automatically as ' +
+        'soon as a location is set.',
     })
 
-    expect(await screen.findByText(/patients cannot find you yet/i)).toBeTruthy()
+    expect(await screen.findByText('Verification complete')).toBeTruthy()
     // And what to do about it, in the same breath — a warning with no action is
     // just an operator watching their own pharmacy stay invisible.
-    expect(screen.getByText(/set your location below/i)).toBeTruthy()
+    expect(screen.getByText(/listed automatically as soon as a location is set/i)).toBeTruthy()
   })
 
   it('says nothing when the pharmacy is listed', async () => {
     await renderProfile()
 
-    expect(screen.queryByText(/patients cannot find you yet/i)).toBeNull()
+    expect(screen.queryByText('Verification complete')).toBeNull()
   })
 
   it('flags an area-level pin as approximate so the operator can improve it', async () => {

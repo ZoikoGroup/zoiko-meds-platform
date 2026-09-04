@@ -46,7 +46,7 @@ const SECTION_FOR_SCOPE: Record<string, string> = {
   signal: 'Signal',
 };
 
-interface OpenApiOperation {
+export interface OpenApiOperation {
   summary?: string;
   description?: string;
   security?: unknown[];
@@ -124,6 +124,66 @@ export class ZoikoAvailDocsService {
       servers: this.servers(doc),
       sections: [...sections.entries()].map(([name, endpoints]) => ({ name, endpoints })),
     };
+  }
+
+  /**
+   * The same filtered surface, as a real OpenAPI document.
+   *
+   * `contract()` above shapes it for the console's own reading view; Swagger UI
+   * needs the specification itself. Both are built from the same two sources —
+   * `GATEWAY_ROUTE_LIST` and `HEALTH_PATHS` — so they describe exactly the same
+   * endpoints. This is one contract in two renderings, not a second contract,
+   * and a test asserts the two path sets are identical so they cannot diverge.
+   *
+   * The full document is never returned. Paths are rebuilt from the allowlist,
+   * so /admin, /auth and every other application route is absent from the
+   * object the browser receives rather than merely hidden by the UI.
+   */
+  specification() {
+    if (!this.document) {
+      throw new ServiceUnavailableException(
+        'The API contract has not been generated on this instance.',
+      );
+    }
+
+    const doc = this.document as OpenApiDocument & Record<string, unknown>;
+    const paths: OpenApiDocument['paths'] = {};
+
+    for (const [path, method] of this.allowedPaths()) {
+      const operation = doc.paths?.[path]?.[method];
+      if (!operation) continue;
+      paths[path] = { ...(paths[path] ?? {}), [method]: operation };
+    }
+
+    return {
+      openapi: (doc as { openapi?: string }).openapi ?? '3.0.0',
+      info: {
+        title: 'ZoikoAvail™ API',
+        version: doc.info?.version ?? '0.1.0',
+        description: doc.info?.description ?? undefined,
+      },
+      // Production first, so the explorer does not default anyone to a laptop.
+      servers: this.servers(doc).map((s) => ({ url: s.url, description: s.description ?? undefined })),
+      paths,
+      // Only the security schemes, so the Authorize control works. Schemas are
+      // carried through because the operations reference them.
+      components: (doc as { components?: Record<string, unknown> }).components ?? {},
+    };
+  }
+
+  /**
+   * Every (path, method) the governed surface covers.
+   *
+   * The single allowlist both renderings read, so neither can widen without the
+   * other. Anything not named here is absent from both by construction.
+   */
+  private allowedPaths(): Array<[string, string]> {
+    const rows: Array<[string, string]> = GATEWAY_ROUTE_LIST.map((route) => [
+      route.path.replace(/:(\w+)/g, '{$1}'),
+      route.method.toLowerCase(),
+    ]);
+    for (const path of HEALTH_PATHS) rows.push([path, 'get']);
+    return rows;
   }
 
   /**

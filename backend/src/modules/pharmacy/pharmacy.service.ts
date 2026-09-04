@@ -14,6 +14,7 @@ import {
   QualityState,
   SignalEventType,
   SignalNotificationType,
+  VerificationChangeKind,
   UserRole,
   VerificationRequestStatus,
   VerificationStatus,
@@ -32,7 +33,12 @@ import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.serv
 import { assertLocationIsFree } from './location-identity';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { resolvePharmacyCoordinates } from './pharmacy-coordinates';
-import { canParticipate, participationBlockedReason } from './participation';
+import {
+  canParticipate,
+  patientListingBlockedReason,
+  pharmacyVisibilityState,
+} from './participation';
+import { isPatientVisible } from '../availability/availability.visibility';
 import {
   NotificationCategory,
   NotificationPreferencesService,
@@ -44,7 +50,7 @@ import {
   PharmacyNotificationService,
 } from './notifications/pharmacy-notification.service';
 import { AcceptedDocument, readVerificationDocument } from './verification-document';
-import { VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
+import { PUBLIC_PHARMACY_WHERE, VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
 
 /** Is this broadcast addressed to pharmacy staff at all? */
 /** Verification-request states that are still waiting on a reviewer. */
@@ -261,7 +267,12 @@ export class PharmacyService {
 
   async listVerified() {
     const pharmacies = await this.prisma.pharmacy.findMany({
-      where: { verificationStatus: 'VERIFIED', isParticipating: true },
+      // The shared rule, not a local restatement of it. This asked for
+      // verification and participation and stopped there, so a pharmacy nobody
+      // had claimed was listed on this public route while /me/search and
+      // /availability correctly hid it — the same inconsistency MSA-54 closed
+      // everywhere else, left open here because this query predates the rule.
+      where: PUBLIC_PHARMACY_WHERE,
       select: {
         id: true,
         name: true,
@@ -279,8 +290,25 @@ export class PharmacyService {
     }));
   }
 
+  /**
+   * A pharmacy by id, for the public route.
+   *
+   * Scoped by the same rule as every other patient surface. It used to be
+   * scoped by nothing: any id returned a full row, so a pending, rejected or
+   * suspended pharmacy's licence number, address, phone, reliability score and
+   * commercial standing were readable by anyone holding its id, on a route with
+   * no guard on it. A pharmacy under review is not part of the verified network
+   * and a patient surface that answers for it presents it as one.
+   *
+   * Not found and not visible are deliberately the same answer. Telling them
+   * apart would make this a way to confirm that a named pharmacy is on the
+   * platform and under review, which is the pharmacy's business and a
+   * reviewer's, not a caller's.
+   */
   async findById(id: string) {
-    const pharmacy = await this.prisma.pharmacy.findUnique({ where: { id } });
+    const pharmacy = await this.prisma.pharmacy.findFirst({
+      where: { id, ...PUBLIC_PHARMACY_WHERE },
+    });
     // Returning null here would serialize as a 200 with an empty body, which
     // clients cannot distinguish from a successful fetch — surface a 404.
     if (!pharmacy) throw new NotFoundException('Pharmacy not found');
@@ -326,10 +354,20 @@ export class PharmacyService {
       licenseNumber: pharmacy.licenseNumber || '',
       verificationStatus: pharmacy.verificationStatus,
       isParticipating: pharmacy.isParticipating,
+      // Whether patients can actually find this pharmacy, answered by the same
+      // rule the patient queries run — approval, participation and a claimed
+      // commercial standing, all three. The portal shows "verified and visible"
+      // from this and from nothing else: deciding it there from
+      // verificationStatus alone would congratulate an operator whose pharmacy
+      // no search returns, which is the one thing this screen must not do.
+      patientVisible: isPatientVisible(pharmacy),
+      // The same answer as one value, so the portal picks a banner instead of
+      // re-deriving the rule. See pharmacyVisibilityState.
+      visibilityState: pharmacyVisibilityState(pharmacy),
       // Null unless something is holding an approved pharmacy back. Verified
       // and listed are separate answers now, and an operator who has been
       // approved but cannot be found needs to be told which one is missing.
-      listingBlockedReason: participationBlockedReason(pharmacy),
+      listingBlockedReason: patientListingBlockedReason(pharmacy),
       phone: pharmacy.phone || '',
       email: user?.email || '',
       addressLine1: pharmacy.addressLine1 || '',
@@ -426,6 +464,9 @@ export class PharmacyService {
       reviewedBy: pending?.reviewer ?? null,
       submittedAt: pending?.createdAt ?? null,
       notes: pending?.notes ?? null,
+      patientVisible: false,
+      // No pharmacy record yet, so there is nothing submitted to review.
+      visibilityState: 'NOT_SUBMITTED' as const,
       document: null,
     };
   }
@@ -725,10 +766,12 @@ export class PharmacyService {
     const requestedLicense =
       licenseNumber !== undefined ? licenseNumber : existing.licenseNumber;
 
-    // Whether that differs from what a reviewer has already approved.
-    const identityChanged =
-      existing.name !== requestedName ||
-      (existing.licenseNumber || '') !== (requestedLicense || '');
+    // Whether that differs from what a reviewer has already approved, field by
+    // field: the reviewer's summary says which one moved, not merely that
+    // something did.
+    const nameChanged = existing.name !== requestedName;
+    const licenseChanged = (existing.licenseNumber || '') !== (requestedLicense || '');
+    const identityChanged = nameChanged || licenseChanged;
 
     /**
      * Held back rather than applied.
@@ -817,14 +860,28 @@ export class PharmacyService {
             { id: updated.id, name: requestedName, licenseNumber: requestedLicense ?? null },
             user,
             identityChanged,
+            [
+              ...(nameChanged ? [VerificationChangeKind.PHARMACY_NAME_CHANGED] : []),
+              ...(licenseChanged ? [VerificationChangeKind.LICENCE_NUMBER_CHANGED] : []),
+            ],
           )
         : null;
 
     // Replaces the document on that same request, so a reviewer looking at a
     // resubmitted profile sees the file that came with it rather than the one
     // before the correction.
+    //
+    // Where this save did not already raise a request, the upload raises one of
+    // its own. It used to fall back to "the current request", which for an
+    // approved pharmacy is its last APPROVED one — so a verified pharmacy that
+    // replaced its licence scan and changed nothing else filed the new document
+    // onto a closed row. No queue lists a closed request, so the reviewer saw
+    // no request at all, while the portal read that same latest request back,
+    // found the document on it, and reported the file as attached. Both pages
+    // were honest about different rows.
     if (document) {
-      const requestId = submission?.requestId ?? (await this.currentRequestId(pharmacyId));
+      const requestId =
+        submission?.requestId ?? (await this.openRequestForDocument(existing, user));
       if (!requestId) {
         throw new BadRequestException(
           'There is no open verification request to attach this document to. Save your profile first.',
@@ -848,7 +905,13 @@ export class PharmacyService {
       ipAddress,
     );
 
-    return this.getProfile(pharmacyId, user);
+    // Whether this save put something in front of a reviewer, which the portal
+    // needs to say so out loud. It cannot be inferred from the returned status:
+    // a verified pharmacy that edits only its address while an unrelated
+    // request happens to be open would read as having just submitted one.
+    // Answered here, where what this particular save did is actually known.
+    const profile = await this.getProfile(pharmacyId, user);
+    return { ...profile, submittedForReview: Boolean(submission) || Boolean(document) };
   }
 
   /**
@@ -870,6 +933,15 @@ export class PharmacyService {
     uploadedById: string | null,
     document: AcceptedDocument,
   ) {
+    // What was on the request before this write, so the reviewer can be told
+    // whether a document arrived or replaced one. Read first: the upsert below
+    // overwrites the row in place and the previous filename is not recoverable
+    // from anywhere else afterwards.
+    const previous = await this.prisma.verificationDocument.findUnique({
+      where: { verificationRequestId: requestId },
+      select: { filename: true },
+    });
+
     await this.prisma.verificationDocument.upsert({
       where: { verificationRequestId: requestId },
       create: {
@@ -891,15 +963,97 @@ export class PharmacyService {
       },
     });
 
+    const replaced = Boolean(previous && previous.filename !== document.filename);
+
     await this.prisma.verificationRequest.update({
       where: { id: requestId },
       data: {
         docName: document.filename,
         docUrl: `/admin/verification-requests/${requestId}/document`,
+        // Only when the name actually moved: re-saving the same file is not a
+        // replacement, and telling a reviewer a document changed when it did
+        // not is the kind of noise that makes them stop reading the summary.
+        ...(replaced ? { previousDocName: previous!.filename } : {}),
       },
     });
 
+    await this.recordChangeKinds(requestId, [
+      previous
+        ? VerificationChangeKind.DOCUMENT_REPLACED
+        : VerificationChangeKind.DOCUMENT_SUBMITTED,
+    ]);
+
     return document;
+  }
+
+  /**
+   * Append what this save did to the request, without losing what earlier
+   * saves recorded.
+   *
+   * A pharmacy can correct its profile several times against one open request,
+   * and the reviewer decides on the whole of it. Overwriting would leave the
+   * summary describing only the last touch — a licence change filed on Monday
+   * and a document added on Tuesday would read as a document submission with no
+   * licence change in sight.
+   *
+   * Read-modify-write rather than a push: the set is tiny, duplicates are
+   * meaningless here, and this keeps it order-stable and idempotent.
+   */
+  private async recordChangeKinds(requestId: string, kinds: VerificationChangeKind[]) {
+    if (!kinds.length) return;
+    const existing = await this.prisma.verificationRequest.findUnique({
+      where: { id: requestId },
+      select: { changeKinds: true },
+    });
+    const merged = [...new Set([...(existing?.changeKinds ?? []), ...kinds])];
+    await this.prisma.verificationRequest.update({
+      where: { id: requestId },
+      data: { changeKinds: merged },
+    });
+  }
+
+  /**
+   * The open request a newly uploaded licence document belongs to, opening one
+   * if the pharmacy has none.
+   *
+   * A licence document is the evidence verification runs on, so submitting one
+   * is a request for review in its own right — a verified pharmacy replacing an
+   * expiring certificate is asking a reviewer to look at it, even though no
+   * name or licence number changed and nothing else about the save needs review.
+   *
+   * Unlike `submitForReview` this does not touch `verificationStatus` or
+   * `isParticipating`. Sending a document is not a retraction of an approved
+   * identity: dropping the pharmacy back to PENDING would delist it from
+   * patient search for however long the reviewer takes to open the file, and
+   * for a SUSPENDED pharmacy writing a status here would be a way to clear its
+   * own suspension. The approved identity stays authoritative, and the request
+   * carries the identity as it stands rather than a new claim about it.
+   */
+  private async openRequestForDocument(
+    pharmacy: { id: string; name: string; licenseNumber: string | null },
+    user?: AuthenticatedUser,
+  ): Promise<string | null> {
+    const open = await this.prisma.verificationRequest.findFirst({
+      where: { pharmacyId: pharmacy.id, status: { in: OPEN_REVIEW_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (open) return open.id;
+
+    // Without an authenticated submitter there is no one to record as having
+    // filed it, so the caller reports that rather than inventing an author.
+    if (!user) return null;
+
+    const created = await this.prisma.verificationRequest.create({
+      data: {
+        pharmacyId: pharmacy.id,
+        pharmacyName: pharmacy.name,
+        licenseNumber: pharmacy.licenseNumber || '',
+        submittedBy: `${user.fullName} (${user.email})`,
+        status: VerificationRequestStatus.PENDING,
+      },
+    });
+    return created.id;
   }
 
   /**
@@ -937,6 +1091,8 @@ export class PharmacyService {
     // Kept so the call site still reads as documentation: it says there whether
     // this submission is a first review or a challenge to an approved identity.
     _identityChanged: boolean,
+    // Which attested fields this save moved, as facts to record on the request.
+    identityKinds: VerificationChangeKind[] = [],
   ): Promise<{ requestId: string; resubmitted: boolean }> {
     await this.prisma.pharmacy.update({
       where: { id: pharmacy.id },
@@ -960,6 +1116,12 @@ export class PharmacyService {
     // the requested one, which is specific and cannot accumulate. `notes` is
     // only ever what a human wrote.
     if (open) {
+      // Answering a reviewer's question is the one fact this write destroys:
+      // the resubmission sets the status back to PENDING, and REQUEST_INFO —
+      // the only trace that the pharmacy was replying rather than volunteering
+      // a change — is gone the moment it lands.
+      const answeringInfoRequest = open.status === VerificationRequestStatus.REQUEST_INFO;
+
       await this.prisma.verificationRequest.update({
         where: { id: open.id },
         data: {
@@ -970,6 +1132,10 @@ export class PharmacyService {
           status: VerificationRequestStatus.PENDING,
         },
       });
+      await this.recordChangeKinds(open.id, [
+        ...identityKinds,
+        ...(answeringInfoRequest ? [VerificationChangeKind.REQUEST_INFO_RESPONSE] : []),
+      ]);
       return { requestId: open.id, resubmitted: true };
     }
 
@@ -990,6 +1156,7 @@ export class PharmacyService {
     // sat on the closed request before it, and the pharmacy's own page reverted
     // to "No document uploaded yet" under a banner saying it was in review.
     await this.carryForwardDocument(pharmacy.id, created.id);
+    await this.recordChangeKinds(created.id, identityKinds);
 
     return { requestId: created.id, resubmitted: false };
   }
