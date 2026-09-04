@@ -63,6 +63,31 @@ export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
 };
 
 /**
+ * The same rule as `PUBLIC_PHARMACY_WHERE`, asked of a row already in hand.
+ *
+ * The where-clause decides which pharmacies a patient query returns. This
+ * answers whether one particular pharmacy is among them — which is what the
+ * pharmacy's own portal has to know before it can tell an operator that
+ * patients can see them. Re-deriving the rule there would let the two drift,
+ * and the failure is silent and in the worst direction: a portal cheerfully
+ * reporting "visible to users" about a pharmacy no search returns.
+ *
+ * Built from the same constant, not a second copy of the list, so a
+ * classification added to or removed from the allowlist moves both at once.
+ */
+export function isPatientVisible(pharmacy: {
+  verificationStatus: VerificationStatus;
+  isParticipating: boolean;
+  commercialClassification: CommercialClassification;
+}): boolean {
+  return (
+    pharmacy.verificationStatus === VerificationStatus.VERIFIED &&
+    pharmacy.isParticipating === true &&
+    PATIENT_VISIBLE_CLASSIFICATIONS.includes(pharmacy.commercialClassification)
+  );
+}
+
+/**
  * A signal that may be shown publicly, for queries already scoped to a public
  * pharmacy (e.g. an include on a Pharmacy row that PUBLIC_PHARMACY_WHERE
  * selected).

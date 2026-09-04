@@ -65,33 +65,70 @@ const VERIFY_META = {
   SUSPENDED: { variant: 'danger', label: 'Suspended' },
 }
 
-// What the operator is told about where their record stands with the reviewers.
+// What the operator is told about where their record stands, keyed by the
+// backend's own `visibilityState`.
+//
+// Not by `verificationStatus`, which cannot answer the question this banner
+// asks. VERIFIED splits into "patients can find you" and "patients cannot",
+// and which one you are in depends on participation and commercial standing —
+// gates the operator never sees and this page must not try to re-derive. The
+// API decides; this table only supplies the words.
 const REVIEW_NOTICE = {
-  UNVERIFIED: {
+  NOT_SUBMITTED: {
     tone: 'info',
     title: 'Your pharmacy is not submitted for verification yet',
     body: 'Fill in your pharmacy name, licence number and address, then save. Your details go to the ZoikoMeds team for verification.',
   },
-  PENDING: {
+  PENDING_REVIEW: {
     tone: 'info',
-    title: 'Awaiting verification',
-    body: 'Your details are with the ZoikoMeds team for review. You can keep editing them — saving again updates the open request. Your pharmacy stays out of patient search results until it is approved.',
-  },
-  INFO_REQUESTED: {
-    tone: 'warning',
-    title: 'Information requested by reviewer',
-    body: 'Please update your pharmacy information or licence details as requested, then save to resubmit.',
+    title: 'Verification under review',
+    body: 'Your pharmacy is currently being reviewed and is not visible to users yet. You can continue updating your profile and inventory while the review is in progress.',
   },
   REJECTED: {
     tone: 'warning',
     title: 'Verification rejected',
-    body: 'Correct the details below and save to submit a fresh request, or contact support if you believe this is an error.',
+    body: 'Your pharmacy is not visible to users. Correct the details below and submit a new verification request.',
   },
   SUSPENDED: {
     tone: 'warning',
     title: 'Pharmacy suspended',
-    body: 'Your pharmacy has been suspended by the ZoikoMeds team. Contact support to resolve this.',
+    body: 'Your pharmacy has been suspended by the ZoikoMeds team and is not visible to users. Contact support to resolve this.',
   },
+  VERIFIED_VISIBLE: {
+    tone: 'success',
+    title: "You're all set!",
+    body: 'Your pharmacy is verified and is now visible to users on ZoikoMeds.',
+  },
+  VERIFIED_NOT_VISIBLE: {
+    tone: 'warning',
+    title: 'Verification complete',
+    body: 'Your pharmacy has been verified, but it is not currently visible to users.',
+  },
+}
+
+/**
+ * The state this profile is in, as the API reported it.
+ *
+ * The fallback exists for a response from a build that predates
+ * `visibilityState`. It deliberately never resolves to VERIFIED_VISIBLE:
+ * without the backend's answer the other gates are unknown, and guessing in
+ * the congratulatory direction is the one mistake worth ruling out here.
+ */
+function visibilityStateOf(profile) {
+  if (profile.visibilityState) return profile.visibilityState
+  switch (profile.verificationStatus) {
+    case 'VERIFIED':
+      return profile.patientVisible ? 'VERIFIED_VISIBLE' : 'VERIFIED_NOT_VISIBLE'
+    case 'REJECTED':
+      return 'REJECTED'
+    case 'SUSPENDED':
+      return 'SUSPENDED'
+    case 'PENDING':
+    case 'INFO_REQUESTED':
+      return 'PENDING_REVIEW'
+    default:
+      return 'NOT_SUBMITTED'
+  }
 }
 
 // A draft whose account already has a request queued by an admin. The pharmacy
@@ -107,10 +144,11 @@ const AWAITING_DETAILS_NOTICE = {
 const TONE_CLASS = {
   info: 'border-info/40 bg-info/10 text-info',
   warning: 'border-warning/40 bg-warning/10 text-warning',
+  success: 'border-success/40 bg-success/10 text-success',
 }
 
 function Notice({ tone, title, body, detail }) {
-  const Icon = tone === 'warning' ? AlertCircle : Info
+  const Icon = tone === 'warning' ? AlertCircle : tone === 'success' ? ShieldCheck : Info
   return (
     <div className={`flex flex-col gap-2 rounded-xl border p-4 max-w-4xl ${TONE_CLASS[tone]}`}>
       <div className="flex items-center gap-2 font-bold text-sm">
@@ -521,7 +559,11 @@ export default function PharmacyProfile() {
       // stored file as an upload of a new one, so a save that changed only the
       // licence number failed on a document nobody had touched. Only a file the
       // operator has just chosen is submitted.
-      const { document: _attached, ...profileFields } = profile
+      // `submittedForReview` is the API's report on the previous save, not a
+      // profile field. It is stored in state to flash the right message and
+      // must not travel back: the API rejects unknown properties outright, so
+      // echoing it would make every save after the first one fail.
+      const { document: _attached, submittedForReview: _submitted, ...profileFields } = profile
       const updated = await updateProfile(
         pendingDoc ? { ...profileFields, document: pendingDoc.document } : profileFields,
       )
@@ -538,10 +580,16 @@ export default function PharmacyProfile() {
         })
       }
       dirtyRef.current = false
+      // What the save actually did, as reported by the API. Deriving it from
+      // the returned status told the operator the wrong thing twice over: a
+      // verified pharmacy that replaced its licence document was told its
+      // profile was simply saved, with no sign a reviewer had been asked to
+      // look at it, while one editing its address with an unrelated request
+      // still open would have been told it had just submitted something.
       flash(
-        updated?.verificationStatus === 'VERIFIED'
-          ? 'Pharmacy profile saved'
-          : 'Profile saved and sent to the ZoikoMeds team for verification',
+        updated?.submittedForReview
+          ? 'Changes saved and submitted for verification.'
+          : 'Pharmacy profile updated.',
       )
     } catch (err) {
       setSaveError(err.message || 'Could not save your profile. Please try again.')
@@ -574,9 +622,16 @@ export default function PharmacyProfile() {
 
   const verify = VERIFY_META[profile.verificationStatus] ?? VERIFY_META.UNVERIFIED
   const awaitingDetails = profile.isDraft && !!profile.reviewStatus
+  const visibilityState = visibilityStateOf(profile)
+  const baseNotice = REVIEW_NOTICE[visibilityState]
   const notice = awaitingDetails
     ? AWAITING_DETAILS_NOTICE
-    : REVIEW_NOTICE[profile.verificationStatus]
+    : baseNotice && visibilityState === 'VERIFIED_NOT_VISIBLE'
+      ? // What is actually holding this pharmacy back, when the API says. It is
+        // not composed here: the portal does not know which gate closed, and a
+        // guess would read as fact.
+        { ...baseNotice, body: profile.listingBlockedReason || baseNotice.body }
+      : baseNotice
   const isVerified = profile.verificationStatus === 'VERIFIED'
   const initials = profile.name?.trim()?.slice(0, 2).toUpperCase()
   const logoUrl = resolveLogoUrl(profile.logoUrl)
@@ -621,22 +676,6 @@ export default function PharmacyProfile() {
               ? profile.notes
               : null
           }
-        />
-      )}
-
-      {/* Approved, and still not findable.
-          Verification and listing are separate now: a licence can be approved
-          while the record has no map position, and a pharmacy with no position
-          is returned by no patient search. Saying "Verified" and stopping there
-          would leave an operator believing patients could see them. */}
-      {profile.listingBlockedReason && (
-        <Notice
-          tone="warning"
-          title={t('notListedTitle', 'Verified, but patients cannot find you yet')}
-          body={t(
-            'notListedBody',
-            'Your licence is approved. Patient search only ever returns pharmacies within a distance of the person searching, so it cannot include you until your branch has a map position. Set your location below and you are listed straight away — no further review.',
-          )}
         />
       )}
 

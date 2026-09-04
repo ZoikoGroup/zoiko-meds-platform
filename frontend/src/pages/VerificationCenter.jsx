@@ -27,8 +27,37 @@ import {
   ListFilter,
   MapPin,
   Building2,
+  ClipboardList,
 } from 'lucide-react'
 import * as admin from '@/services/admin-api'
+
+/**
+ * What a single-value change row is called, when there is nothing to compare
+ * it against. Keyed on the API's `kind`, never on the filename or the notes.
+ */
+/**
+ * The queue card's one-line reason — shorter than the panel's label, because a
+ * card has room for a few words and a reviewer is scanning, not reading.
+ */
+const QUEUE_REASON = {
+  FIRST_TIME_VERIFICATION: 'Initial verification',
+  DOCUMENT_SUBMISSION: 'Document submitted',
+  DOCUMENT_REPLACEMENT: 'Document replaced',
+  PHARMACY_NAME_CHANGE: 'Name change',
+  LICENCE_NUMBER_CHANGE: 'Licence change',
+  NAME_AND_LICENCE_CHANGE: 'Name + licence change',
+  PROFILE_REVERIFICATION: 'Profile re-verification',
+  REQUEST_INFO_RESPONSE: 'Responded to info request',
+  UNRECORDED: 'Details not recorded',
+}
+
+const CHANGE_KIND_LABEL = {
+  DOCUMENT_SUBMITTED: 'New document',
+  DOCUMENT_REPLACED: 'New document',
+  SUBMITTED: 'Submitted',
+  CHANGED: 'Requested',
+}
+import { formatBytes, formatDocType } from './pharmacy/verification-document'
 import {
   REQUEST_STATUS_LABEL as STATUS_LABEL,
   REQUEST_STATUS_VARIANT as STATUS_VARIANT,
@@ -304,6 +333,16 @@ export default function VerificationCenter() {
                             <span>License: {r.licenseNumber}</span>
                             <span>{new Date(r.date).toLocaleDateString()}</span>
                           </div>
+                          {/* One line on why this is in the queue, so a
+                              reviewer can tell a document refresh from a licence
+                              change without opening every card. The label comes
+                              from the API's request type; the detail stays in
+                              the panel. */}
+                          {r.requestTypeLabel && (
+                            <span className="truncate text-left text-xs font-medium text-foreground/80">
+                              {QUEUE_REASON[r.requestType] ?? r.requestTypeLabel}
+                            </span>
+                          )}
                         </button>
                       )
                     })
@@ -363,6 +402,74 @@ export default function VerificationCenter() {
                       </div>
 
                       {/*
+                        Why this request exists.
+
+                        The panel showed a pharmacy, a licence, a document and a
+                        status, and nothing about the submission behind them — a
+                        reviewer opening a request could see a file was attached
+                        and not whether it was a first submission, a replacement,
+                        an answer to a question they had asked, or a licence
+                        change that happened to carry a file. The only free space
+                        was Reviewer Notes, which the reviewer writes themselves
+                        and is therefore empty exactly when it is needed.
+
+                        Every value here is computed by the API from recorded
+                        submission facts. Nothing is read out of notes or
+                        filenames.
+                      */}
+                      <div className="flex flex-col gap-2.5 border-b pb-5">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <ClipboardList className="size-3.5" /> Submission Summary
+                        </h4>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <div className="flex min-w-0 flex-col gap-0.5">
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                              Request type
+                            </span>
+                            <span className="text-xs font-semibold text-foreground">
+                              {activeRequest.requestTypeLabel ?? 'Submission details not recorded'}
+                            </span>
+                          </div>
+                          <div className="flex min-w-0 flex-col gap-0.5">
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                              Submitted
+                            </span>
+                            <span className="text-xs font-semibold text-foreground">
+                              {activeRequest.date
+                                ? new Date(activeRequest.date).toLocaleString()
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="flex min-w-0 flex-col gap-0.5">
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                              Submitted by
+                            </span>
+                            <span className="truncate text-xs font-semibold text-foreground">
+                              {activeRequest.submittedBy || '—'}
+                            </span>
+                          </div>
+                        </div>
+                        {/* Said out loud rather than left to be inferred from an
+                            empty section: "no identity change" and "we have not
+                            told you about the identity" look identical
+                            otherwise, and only one of them is safe to approve
+                            quickly. */}
+                        {activeRequest.identityUnchanged &&
+                          !activeRequest.isFirstTimeVerification && (
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                              No pharmacy identity fields were changed — the verified name and
+                              licence number stand as approved.
+                            </p>
+                          )}
+                        {activeRequest.isFirstTimeVerification && (
+                          <p className="text-xs leading-relaxed text-muted-foreground">
+                            This pharmacy has no previously approved identity, so the details below
+                            are what it is submitting for the first time.
+                          </p>
+                        )}
+                      </div>
+
+                      {/*
                         What the reviewer is actually being asked to decide.
                         The panel used to show one identity — the pharmacy's live
                         row, which had already been overwritten at submission —
@@ -386,26 +493,48 @@ export default function VerificationCenter() {
                                 <span className="text-xs font-semibold text-foreground">
                                   {change.label}
                                 </span>
-                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {/* A comparison needs two values. Where the
+                                    API reports no previous one — a first
+                                    submission, or a replaced document whose old
+                                    name the system genuinely did not keep — the
+                                    single value is shown as submitted rather
+                                    than as a change from "Not set", which reads
+                                    as a fact about the old record. */}
+                                {change.previousValue == null ? (
                                   <div className="flex min-w-0 flex-col gap-0.5">
                                     <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                                      Current
-                                    </span>
-                                    {/* Struck through so the direction of the
-                                        change reads without being explained. */}
-                                    <span className="truncate text-xs text-muted-foreground line-through">
-                                      {change.current ?? 'Not set'}
-                                    </span>
-                                  </div>
-                                  <div className="flex min-w-0 flex-col gap-0.5">
-                                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                                      Requested
+                                      {CHANGE_KIND_LABEL[change.kind] ?? 'Submitted'}
                                     </span>
                                     <span className="truncate text-xs font-semibold text-foreground">
-                                      {change.requested}
+                                      {change.requestedValue ?? '—'}
                                     </span>
                                   </div>
-                                </div>
+                                ) : (
+                                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                    <div className="flex min-w-0 flex-col gap-0.5">
+                                      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        {change.field === 'verificationDocument'
+                                          ? 'Previous document'
+                                          : 'Current verified'}
+                                      </span>
+                                      {/* Struck through so the direction of the
+                                          change reads without being explained. */}
+                                      <span className="truncate text-xs text-muted-foreground line-through">
+                                        {change.previousValue}
+                                      </span>
+                                    </div>
+                                    <div className="flex min-w-0 flex-col gap-0.5">
+                                      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        {change.field === 'verificationDocument'
+                                          ? 'New document'
+                                          : 'Requested'}
+                                      </span>
+                                      <span className="truncate text-xs font-semibold text-foreground">
+                                        {change.requestedValue ?? '—'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -446,15 +575,35 @@ export default function VerificationCenter() {
                       <div className="flex flex-col gap-2">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Uploaded Documents</h4>
                         <div className="flex items-center justify-between rounded-lg border border-border/80 bg-muted/20 p-3">
+                          {/*
+                            Read off `document`, the VerificationDocument row
+                            actually attached to this request, rather than the
+                            docName column copied beside it — that copy is
+                            written at upload time and a request whose copy
+                            drifted offered View File on a file that is not
+                            there. Nothing here consults the pharmacy's profile:
+                            what the operator sees on their own page is a
+                            different question from what is attached here.
+                          */}
                           <div className="flex items-center gap-2.5">
                             <FileText className="size-5 text-primary shrink-0" />
                             <div className="flex flex-col">
                               <span className="font-medium text-xs text-foreground">
-                                {activeRequest.docName || 'No document'}
+                                {activeRequest.document?.filename || 'No document'}
                               </span>
                               <span className="text-[10px] text-muted-foreground">
-                                {activeRequest.docName
-                                  ? 'Uploaded by the pharmacy · type verified from the file itself'
+                                {activeRequest.document
+                                  ? [
+                                      formatDocType(activeRequest.document.mimeType),
+                                      formatBytes(activeRequest.document.sizeBytes),
+                                      activeRequest.document.uploadedAt
+                                        ? `uploaded ${new Date(
+                                            activeRequest.document.uploadedAt,
+                                          ).toLocaleDateString()}`
+                                        : null,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ')
                                   : 'The pharmacy has not attached a document to this request'}
                               </span>
                             </div>
@@ -463,7 +612,7 @@ export default function VerificationCenter() {
                             variant="outline"
                             size="sm"
                             className="h-8 text-xs flex gap-1"
-                            disabled={!activeRequest.docName || openingDoc}
+                            disabled={!activeRequest.document || openingDoc}
                             onClick={() => openDocument(activeRequest)}
                           >
                             <Paperclip className="size-3.5" />

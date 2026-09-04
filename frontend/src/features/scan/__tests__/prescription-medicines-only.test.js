@@ -252,3 +252,81 @@ describe('PDF text and OCR text take the same path', () => {
     expect(medicinesFrom(asOcrBlock)).toEqual(medicinesFrom(asPdfText))
   })
 })
+
+/**
+ * Instruction text that carries a dosage form is still an instruction.
+ *
+ * `isNonMedicineProse` used to check for a strength or a dosage form first and
+ * return "not prose" the moment it found one. A prescription's direction column
+ * is full of both — "Take 1 tablet after food" names a form and a count because
+ * it is a direction about a medicine — so those lines were handed to the
+ * candidate tiers as medicine-shaped and reached the confirmation card.
+ *
+ * Grammar is now checked first: an imperative opener or a cadence opener wins
+ * over dosage evidence. The dosage guard still runs for everything else, which
+ * is what keeps a product whose name contains a symptom word from being thrown
+ * away.
+ */
+describe('an instruction carrying a dosage form', () => {
+  it.each([
+    'Take 1 tablet after food',
+    'Take two tablets daily',
+    'Apply 2 drops twice daily',
+    'Apply cream to affected area',
+    'Use cream twice daily',
+    'Use 5ml syrup at bedtime',
+    'Swallow 1 capsule with water',
+    'Dissolve one tablet in water',
+    'Inhale 2 puffs when required',
+    'Instil 1 drop in each eye',
+  ])('discards "%s"', (line) => {
+    expect(isNonMedicineProse(line)).toBe(true)
+  })
+
+  it.each([
+    'Daily 1 tablet',
+    'Weekly once 150mg',
+    'Morning 1 tablet after food',
+    'Twice daily 5ml',
+  ])('discards the schedule opener "%s" despite its dosage words', (line) => {
+    expect(isNonMedicineProse(line)).toBe(true)
+  })
+
+  it('keeps none of them out of the medicine list', async () => {
+    const text = [
+      'Medicines',
+      '1. Levosiz 5mg Tablet',
+      'Take 1 tablet after food',
+      '2. Zimig 1% w/w Cream',
+      'Apply 2 drops twice daily',
+      '3. Forcan 150mg Tablet',
+      'Use cream twice daily',
+    ].join('\n')
+
+    expect(medicinesFrom(text).map((m) => m.name)).toEqual(['Levosiz', 'Zimig', 'Forcan'])
+  })
+})
+
+describe('a medicine whose name looks like an instruction does not', () => {
+  it.each([
+    'Levosiz 5mg Tablet',
+    'Zimig 1% w/w Cream',
+    'Forcan 150mg Tablet',
+    'Paracetamol Oral Suspension 250mg/5ml',
+    'Pain Relief Gel 30 g',
+    'Cough Syrup 100ml',
+    'Burnol Cream',
+    'Becosules',
+  ])('keeps "%s"', (line) => {
+    expect(isNonMedicineProse(line)).toBe(false)
+  })
+
+  it.each(['Restore 10mg Tablet', 'Checkmate 5mg', 'Dabur Honey Syrup'])(
+    'does not mistake "%s" for an imperative',
+    (line) => {
+      // Word boundaries: \brest\b does not match "Restore", \bcheck\b does not
+      // match "Checkmate", \bdab\b does not match "Dabur".
+      expect(isNonMedicineProse(line)).toBe(false)
+    },
+  )
+})

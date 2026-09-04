@@ -54,9 +54,9 @@ model User {
   /// factor. Opt-in, set by the member on their own profile, and never required
   /// of them: the workspace policy covers administrators, who use an
   /// authenticator app instead.
-  mfaEmailEnabled Boolean @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  mfaEmailEnabled Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   savedMedicines                 SavedMedicine[]
   alertPreference                AlertPreference?
@@ -690,25 +690,61 @@ enum VerificationRequestStatus {
   REQUEST_INFO
 }
 
+/// What a pharmacy actually did in the save that raised or updated a request.
+///
+/// Recorded at submission time rather than derived later, because the two facts
+/// a reviewer most needs cannot be recovered from the rows afterwards. A
+/// document attached to a request may be one the pharmacy just uploaded or one
+/// carried forward from the previous request so the reviewer is not left with
+/// nothing — identical rows, opposite meanings. And a resubmission that answers
+/// a reviewer's REQUEST_INFO overwrites that status with PENDING, erasing the
+/// only trace that the pharmacy was replying to a question.
+///
+/// Identity changes are recorded here as well, but only as the fact that a
+/// field moved. The old and new values shown to a reviewer stay derived from
+/// the difference between the approved row and the requested one — that
+/// comparison is authoritative and cannot drift, whereas a copied-out value
+/// would. The recorded fact is what keeps the request readable after approval,
+/// once the two rows agree and the difference is empty.
+enum VerificationChangeKind {
+  DOCUMENT_SUBMITTED
+  DOCUMENT_REPLACED
+  PHARMACY_NAME_CHANGED
+  LICENCE_NUMBER_CHANGED
+  PROFILE_DETAILS_CHANGED
+  REQUEST_INFO_RESPONSE
+}
+
 model VerificationRequest {
-  id            String                    @id @default(cuid())
-  pharmacyId    String?
-  pharmacy      Pharmacy?                 @relation(fields: [pharmacyId], references: [id])
-  pharmacyName  String // denormalized label for display
-  licenseNumber String
-  submittedBy   String
-  status        VerificationRequestStatus @default(PENDING)
-  reviewer      String?
+  id              String                    @id @default(cuid())
+  pharmacyId      String?
+  pharmacy        Pharmacy?                 @relation(fields: [pharmacyId], references: [id])
+  pharmacyName    String // denormalized label for display
+  licenseNumber   String
+  submittedBy     String
+  status          VerificationRequestStatus @default(PENDING)
+  reviewer        String?
   /// Display name of the supporting document, and the authenticated path the
   /// reviewer fetches it from. Both were already here and never populated: the
   /// pharmacy had no way to send a document, so every self-submitted request
   /// left them null and the Verification Center showed "No document".
-  docName       String?
-  docUrl        String?
-  document      VerificationDocument?
-  notes         String?
-  createdAt     DateTime                  @default(now())
-  updatedAt     DateTime                  @updatedAt
+  docName         String?
+  docUrl          String?
+  /// What the pharmacy did in the saves that built this request, appended as
+  /// they happen. Empty for every request raised before this was recorded —
+  /// the reviewer-facing summary says "not recorded" rather than guessing.
+  changeKinds     VerificationChangeKind[]  @default([])
+  /// The document this request carried before the pharmacy replaced it.
+  ///
+  /// One document per request, replaced in place, so the previous filename is
+  /// overwritten by the upsert and is not recoverable from any other row.
+  /// Kept as a name only: the old bytes are genuinely gone, and offering a
+  /// reviewer a link to them would be a link to nothing.
+  previousDocName String?
+  document        VerificationDocument?
+  notes           String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
 
   @@index([status])
 }

@@ -78,6 +78,29 @@ function normalizeContrast(context, width, height) {
 }
 
 /**
+ * Grayscale and stretch an already-rendered canvas, in place.
+ *
+ * A scanned PDF took the render scale and the white ground but none of this,
+ * so a photocopied prescription — the low-contrast case this exists for —
+ * reached Tesseract untouched while a photo of the same page did not. Exposed
+ * separately because a rasterized page has no File to go back to.
+ *
+ * Returns the same canvas, normalized where the browser allowed pixel access
+ * and unchanged where it did not.
+ */
+export function normalizeCanvasForOcr(canvas) {
+  try {
+    if (!canvas?.width || !canvas?.height) return canvas
+    const context = canvas.getContext?.('2d')
+    if (!context) return canvas
+    normalizeContrast(context, canvas.width, canvas.height)
+  } catch {
+    // Non-fatal: OCR the canvas as rendered.
+  }
+  return canvas
+}
+
+/**
  * Prepare an image file for OCR.
  *
  * @returns the prepared canvas, or the original file when preprocessing is

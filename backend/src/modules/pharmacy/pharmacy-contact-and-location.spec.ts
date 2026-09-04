@@ -89,7 +89,10 @@ function buildService(
     // Registering with a country resolves it to a Jurisdiction row.
     jurisdiction: { upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN' }) },
     user: { update: jest.fn() },
-    verificationRequest: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
+    verificationRequest: {
+      // The request's recorded submission facts, read before this save appends
+      // to them so an earlier save's record is not lost.
+      findUnique: jest.fn().mockResolvedValue({ changeKinds: [] }), findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
   };
 
   const prisma: any = {

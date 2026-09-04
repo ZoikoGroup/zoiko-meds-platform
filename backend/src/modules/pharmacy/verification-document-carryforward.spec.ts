@@ -94,6 +94,7 @@ function buildService({
     },
     user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: 'ph_1' }), update: jest.fn() },
     verificationRequest: {
+      findUnique: jest.fn().mockResolvedValue({ changeKinds: [] }),
       // submitForReview asks for the open request first; currentRequestId then
       // asks the same way, so both calls are answered from the same fixture.
       findFirst: jest.fn(async ({ where }: any) =>

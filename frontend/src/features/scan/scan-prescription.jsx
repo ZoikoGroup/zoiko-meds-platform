@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   UploadCloud, Camera, Image as ImageIcon, ShieldCheck, MapPin, LocateFixed,
   Loader2, Pill, ArrowRight, RotateCcw, FileText, CheckCircle2, AlertTriangle,
-  HelpCircle, Sparkles,
+  HelpCircle,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -20,23 +20,9 @@ const ACCEPT = '.jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,appli
 // which has always taken `maxDistance` as a km ceiling.
 const DISTANCES_KM = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
-import {
-  extractPrescriptionMeds,
-  mergeVisionResults,
-  UnsupportedFormatError,
-} from './extract-prescription'
-import {
-  MAX_FALLBACK_IMAGES,
-  extractWithVision,
-  fileToDataUrl,
-  isVisionFallbackAvailable,
-} from './vision-fallback'
-import { renderPdfPageImages } from './pdf-text'
+import { extractPrescriptionMeds, UnsupportedFormatError } from './extract-prescription'
 import { terminateOcrWorker } from './ocr-worker'
 import { useLanguage } from '@/providers/language-provider'
-
-const isPdfFile = (file) =>
-  file?.type === 'application/pdf' || /\.pdf$/i.test(file?.name ?? '')
 
 function isAcceptedFile(file) {
   if (file.size > MAX_BYTES) {
@@ -80,8 +66,6 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
   const [result, setResult] = useState(null)
   const [errorMessage, setErrorMessage] = useState('')
   const [confirmed, setConfirmed] = useState(() => new Set())
-  const [visionAvailable, setVisionAvailable] = useState(false)
-  const [visionRunning, setVisionRunning] = useState(false)
   const [location, setLocation] = useState(() => localStorage.getItem(LOC_KEY) || '')
 
   useEffect(() => {
@@ -105,13 +89,6 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     onDetected?.(result?.medicines ?? [])
   }, [result, onDetected])
 
-  useEffect(() => {
-    let cancelled = false
-    isVisionFallbackAvailable().then((available) => {
-      if (!cancelled) setVisionAvailable(available)
-    })
-    return () => { cancelled = true }
-  }, [])
 
   const [distance, setDistance] = useState(25)
   const [locating, setLocating] = useState(false)
@@ -156,37 +133,14 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     }
   }
 
-  const runVisionFallback = async () => {
-    if (!result || visionRunning) return
-    setVisionRunning(true)
-    try {
-      let images = result.pageImages ?? []
-      if (!images.length && lastFile.current) {
-        // A PDF whose text layer read cleanly was never rasterized, so there was
-        // nothing to send and assisted reading simply refused. Render the pages
-        // now — only the ones that will be sent, and only because the user asked.
-        images = isPdfFile(lastFile.current)
-          ? await renderPdfPageImages(lastFile.current, { maxPages: MAX_FALLBACK_IMAGES })
-          : [await fileToDataUrl(lastFile.current)]
-      }
-      if (!images.length) {
-        flash?.('There is no page image available for assisted reading.')
-        return
-      }
-      const medicines = await extractWithVision(images)
-      if (!medicines.length) {
-        flash?.('Assisted reading could not identify any medicines either.')
-        return
-      }
-      // mergeVisionResults now consults MediBase, so it is async.
-      const merged = await mergeVisionResults(result, medicines)
-      setResult(merged)
-    } catch (err) {
-      flash?.(err?.message ?? 'Assisted reading is unavailable right now.')
-    } finally {
-      setVisionRunning(false)
-    }
-  }
+  // The assisted-reading handler stood here. It rendered the page to images and
+  // posted them to /scan/vision-extract, which is the one path by which a
+  // prescription left this browser. Reading is entirely on-device for this
+  // phase, so the call site is gone and the page cannot leave.
+  //
+  // Deliberately the call site rather than the service: vision-fallback.js and
+  // the backend route are untouched and still tested, so the model layer can be
+  // reattached here — behind explicit consent — without rebuilding any of it.
 
   const onDrop = (e) => {
     e.preventDefault()
@@ -379,29 +333,51 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
                 </p>
               )}
 
-              {result.needsVisionFallback && visionAvailable && !result.visionUsed && (
-                <div className="flex flex-col gap-2 rounded-xl border border-teal/30 bg-teal/[0.04] p-3.5">
+              {/*
+                Poor scan, handled locally.
+
+                This block used to offer assisted reading, which uploads the
+                page to the server for a model to read. That path still exists
+                end to end and is switched off here for this phase: reading is
+                entirely on-device, so the prescription does not leave the
+                browser at all, and there is no provider to consent to. The
+                button is what reached it, so removing the button is what
+                prevents it — the service and its route are untouched and will
+                be reached again deliberately, with consent, when the model
+                layer lands.
+
+                What replaces it is advice the patient can act on. An empty
+                result with no explanation reads as a broken feature; the
+                reasons the quality assessment already computed are what these
+                suggestions are for.
+              */}
+              {result.needsVisionFallback && !result.visionUsed && (
+                <div className="flex flex-col gap-2 rounded-xl border border-warning/30 bg-warning/[0.04] p-3.5">
                   <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <Sparkles className="size-4 text-teal" />
-                    {t('tryAssistedReading', 'Try assisted reading')}
+                    <AlertTriangle className="size-4 text-warning" />
+                    {t('couldNotReadClearly', "We couldn't read this prescription clearly.")}
                   </span>
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     {t(
-                      'assistedReadingNotice',
-                      'On-device reading could not identify the medicines with confidence. Assisted reading sends the prescription image to the ZoikoMeds server for a second attempt. The image is used only for this extraction and is not stored.',
+                      'poorScanGuidance',
+                      'Some of the page could not be read with confidence, so a medicine may be missing or misread. Check the list below against the prescription, and try again with a clearer copy.',
                     )}
                   </p>
+                  <ul className="flex list-disc flex-col gap-0.5 ps-4 text-xs text-muted-foreground">
+                    <li>{t('poorScanTipLighting', 'Retake the photo in good, even lighting.')}</li>
+                    <li>{t('poorScanTipFlat', 'Keep the prescription flat and square to the camera.')}</li>
+                    <li>{t('poorScanTipBlur', 'Hold steady so the text is sharp, not blurred.')}</li>
+                    <li>{t('poorScanTipWhole', 'Include the whole prescription in the frame.')}</li>
+                    <li>{t('poorScanTipPdf', 'If you have the original PDF, upload that instead of a photo.')}</li>
+                  </ul>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-fit border-teal/40 text-teal hover:bg-teal/5"
-                    onClick={runVisionFallback}
-                    disabled={visionRunning}
+                    className="w-fit"
+                    onClick={() => fileInput.current?.click()}
                   >
-                    {visionRunning ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                    {visionRunning
-                      ? t('readingPrescriptionShort', 'Reading…')
-                      : t('uploadAndRead', 'Upload image and read')}
+                    <UploadCloud className="size-3.5" />
+                    {t('uploadClearerCopy', 'Upload a clearer image or PDF')}
                   </Button>
                 </div>
               )}

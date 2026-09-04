@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
+import { buildSubmissionSummary } from './submission-summary';
 import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
 import { allowsCategory } from '../../pharmacy/notification-preferences.service';
@@ -61,10 +62,11 @@ export class VerificationService {
       data: { country: 'India' },
     });
     const rows = await this.prisma.verificationRequest.findMany({
-      include: { pharmacy: true },
+      include: VerificationService.REQUEST_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => this.toDto(r));
+    const firstTime = await this.firstTimePharmacyIds(rows);
+    return rows.map((r) => this.toDto(r, !!r.pharmacyId && firstTime.has(r.pharmacyId)));
   }
 
   async create(actorId: string, dto: CreateVerificationDto, ipAddress?: string) {
@@ -94,7 +96,8 @@ export class VerificationService {
       { pharmacy: req.pharmacyName },
       ipAddress,
     );
-    return this.toDto(req);
+    const firstTime = await this.firstTimePharmacyIds([req]);
+    return this.toDto(req, !!req.pharmacyId && firstTime.has(req.pharmacyId));
   }
 
   async update(
@@ -106,7 +109,7 @@ export class VerificationService {
     const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.verificationRequest.findUnique({
         where: { id },
-        include: { pharmacy: true },
+        include: VerificationService.REQUEST_INCLUDE,
       });
       if (!existing) throw new NotFoundException('Verification request not found');
 
@@ -325,7 +328,7 @@ export class VerificationService {
       const req = await tx.verificationRequest.update({
         where: { id },
         data,
-        include: { pharmacy: true },
+        include: VerificationService.REQUEST_INCLUDE,
       });
 
       return { req, appliedIdentity };
@@ -347,68 +350,88 @@ export class VerificationService {
       },
       ipAddress,
     );
-    return this.toDto(result.req);
+    const firstTime = await this.firstTimePharmacyIds([result.req]);
+    return this.toDto(result.req, !!result.req.pharmacyId && firstTime.has(result.req.pharmacyId));
   }
+
+  /**
+   * What every query feeding `toDto` has to fetch.
+   *
+   * Metadata only — `data` is deliberately absent. The bytes are the reason
+   * the document lives in its own table, and pulling them into the queue would
+   * put every licence scan on the wire to render a filename. The reviewer
+   * fetches the file itself from the protected document endpoint.
+   *
+   * Shared rather than repeated at four call sites: a query that forgot the
+   * include would report "No document" for a request that has one, which is
+   * the failure this whole path exists to stop.
+   */
+  private static readonly REQUEST_INCLUDE = {
+    pharmacy: true,
+    document: {
+      select: {
+        id: true,
+        filename: true,
+        mimeType: true,
+        sizeBytes: true,
+        updatedAt: true,
+      },
+    },
+  } as const;
 
   private async require(id: string) {
     const req = await this.prisma.verificationRequest.findUnique({
       where: { id },
-      include: { pharmacy: true },
+      include: VerificationService.REQUEST_INCLUDE,
     });
     if (!req) throw new NotFoundException('Verification request not found');
     return req;
   }
 
   /**
-   * Which attested fields this request is asking to change.
+   * Which pharmacies have never had a request approved.
    *
-   * Computed from the two rows rather than stored: the pharmacy holds what a
-   * reviewer approved, the request holds what is being asked for, and the
-   * difference is the thing a reviewer actually has to decide. Nothing is
-   * listed that did not move, so a resubmitted address change shows an empty
-   * list rather than the whole identity restated.
-   *
-   * A pharmacy being verified for the first time has no approved identity to
-   * differ from, so `current` is null and the row reads as new information
-   * rather than as a change.
+   * Asked once for a whole page of requests rather than per row: the queue
+   * renders every request, and a lookup inside the mapper would be one query
+   * per card. "First time" is the difference between showing a reviewer a
+   * comparison and showing them a submission, so it cannot be guessed from the
+   * pharmacy's current status — a resubmission sets that back to PENDING and
+   * would make an established pharmacy look new.
    */
-  private identityChanges(r: VerificationRequest & { pharmacy?: any }) {
-    const rows: Array<{ field: string; label: string; current: string | null; requested: string }> =
-      [];
+  private async firstTimePharmacyIds(rows: Array<{ pharmacyId: string | null }>) {
+    const ids = [...new Set(rows.map((r) => r.pharmacyId).filter((id): id is string => !!id))];
+    if (!ids.length) return new Set<string>();
 
-    const requestedName = r.pharmacyName?.trim();
-    if (requestedName && requestedName !== r.pharmacy?.name) {
-      rows.push({
-        field: 'name',
-        label: 'Pharmacy name',
-        current: r.pharmacy?.name ?? null,
-        requested: requestedName,
-      });
-    }
-
-    const requestedLicense = r.licenseNumber?.trim();
-    if (requestedLicense && requestedLicense !== (r.pharmacy?.licenseNumber ?? '')) {
-      rows.push({
-        field: 'licenseNumber',
-        label: 'Licence number',
-        current: r.pharmacy?.licenseNumber ?? null,
-        requested: requestedLicense,
-      });
-    }
-
-    return rows;
+    const approved = await this.prisma.verificationRequest.findMany({
+      where: { pharmacyId: { in: ids }, status: VerificationRequestStatus.APPROVED },
+      select: { pharmacyId: true },
+      distinct: ['pharmacyId'],
+    });
+    const everApproved = new Set(approved.map((a) => a.pharmacyId));
+    return new Set(ids.filter((id) => !everApproved.has(id)));
   }
 
-  private toDto(r: VerificationRequest & { pharmacy?: any }) {
+  private toDto(
+    r: VerificationRequest & { pharmacy?: any; document?: any },
+    isFirstTime = false,
+  ) {
     // The approved identity, which is what every other surface shows. It used
     // to be `r.pharmacy?.name || r.pharmacyName` on both — one value doing the
     // work of two, which is why the Verification Center could not tell a
     // reviewer what they were being asked to approve.
     const pharmacyName = r.pharmacy?.name || r.pharmacyName;
     const licenseNumber = r.pharmacy?.licenseNumber || r.licenseNumber;
-    const changes = this.identityChanges(r);
+    // One service turns a request into the reviewer's picture of it, so the
+    // console renders an answer instead of reconstructing one. See
+    // submission-summary.ts for why it reads two sources.
+    const summary = buildSubmissionSummary(r, {
+      documentName: r.document?.filename ?? r.docName ?? null,
+      isFirstTime,
+    });
+    const changes = summary.changes;
 
     return {
+      ...summary,
       id: r.id,
       pharmacy: pharmacyName,
       pharmacyId: r.pharmacyId,
@@ -417,10 +440,13 @@ export class VerificationService {
       requestedName: r.pharmacyName ?? null,
       requestedLicenseNumber: r.licenseNumber ?? null,
       changes,
-      // Generated from the diff, kept apart from `notes` so a reviewer can tell
-      // the system's explanation from a colleague's.
+      // Generated from the request, kept apart from `notes` so a reviewer can
+      // tell the system's explanation from a colleague's. This used to be built
+      // from the identity diff alone, so a document-only submission — nothing
+      // renamed, nothing relicensed — produced null and the reviewer was shown
+      // no reason at all. That was the reported case.
       reason: changes.length
-        ? `Re-verification requested because the pharmacy changed: ${changes
+        ? `${summary.requestTypeLabel}. Requires review: ${changes
             .map((c) => c.label.toLowerCase())
             .join(', ')}.`
         : null,
@@ -428,7 +454,20 @@ export class VerificationService {
       date: r.createdAt,
       status: r.status,
       reviewer: r.reviewer,
-      docName: r.docName,
+      // Read off the relation, not off the denormalized columns beside it.
+      // docName/docUrl are a copy written at upload time; the row in
+      // VerificationDocument is what "View File" actually serves, so a request
+      // whose copy drifted would have offered the reviewer a dead link.
+      document: r.document
+        ? {
+            id: r.document.id,
+            filename: r.document.filename,
+            mimeType: r.document.mimeType,
+            sizeBytes: r.document.sizeBytes,
+            uploadedAt: r.document.updatedAt,
+          }
+        : null,
+      docName: r.document?.filename ?? r.docName,
       docUrl: r.docUrl,
       notes: r.notes,
       addressLine1: r.pharmacy?.addressLine1 || '',

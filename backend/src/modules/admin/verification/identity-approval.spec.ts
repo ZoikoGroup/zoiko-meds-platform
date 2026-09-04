@@ -41,6 +41,9 @@ function buildService(request = REQUEST, approved = APPROVED) {
     verificationRequest: {
       update: jest.fn(async ({ data }: any) => ({ ...request, ...data })),
       findUnique: jest.fn().mockResolvedValue(request),
+      // Has this pharmacy ever had a request approved? The mapper asks so it
+      // can tell a first submission from a change to an approved identity.
+      findMany: jest.fn().mockResolvedValue([]),
     },
     user: {
       findUnique: jest.fn().mockResolvedValue({ id: 'admin_1', fullName: 'Super Admin' }),
@@ -66,7 +69,10 @@ function buildService(request = REQUEST, approved = APPROVED) {
 
   const audit = { write: jest.fn() };
   const prisma = {
-    verificationRequest: { findUnique: jest.fn().mockResolvedValue(request) },
+    verificationRequest: {
+      findUnique: jest.fn().mockResolvedValue(request),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn(async (cb: any) => cb(tx)),
   };
 
@@ -244,18 +250,22 @@ describe('2 & 7. what the reviewer is shown', () => {
 
     const [dto] = await service.list();
 
+    // previousValue/requestedValue, with a `kind`, so the console can tell a
+    // comparison from a single submitted value without re-deriving which it is.
     expect(dto.changes).toEqual([
       {
         field: 'name',
         label: 'Pharmacy name',
-        current: 'Zoiko Meds Pharmacy',
-        requested: 'Zoiko Meds',
+        kind: 'CHANGED',
+        previousValue: 'Zoiko Meds Pharmacy',
+        requestedValue: 'Zoiko Meds',
       },
       {
         field: 'licenseNumber',
         label: 'Licence number',
-        current: 'LIC-OLD',
-        requested: 'LIC-JHC951',
+        kind: 'CHANGED',
+        previousValue: 'LIC-OLD',
+        requestedValue: 'LIC-JHC951',
       },
     ]);
   });
@@ -315,12 +325,15 @@ describe('2 & 7. what the reviewer is shown', () => {
 
     const [dto] = await service.list();
 
+    // Now led by the request's own type: the reason line used to be built from
+    // the identity diff alone, so a submission that renamed nothing produced
+    // null and the reviewer was shown no reason at all.
     expect(dto.reason).toBe(
-      'Re-verification requested because the pharmacy changed: pharmacy name, licence number.',
+      'Re-verification — pharmacy identity changed. Requires review: pharmacy name, licence number.',
     );
     // The human's words stay in their own field, unmixed.
     expect(dto.notes).toBe('[2026-09-03]: Called the branch, awaiting callback.');
-    expect(dto.notes).not.toContain('Re-verification requested');
+    expect(dto.notes).not.toContain('Requires review');
   });
 
   it('treats a first-time request as new information, not a change', async () => {
@@ -336,6 +349,10 @@ describe('2 & 7. what the reviewer is shown', () => {
 
     const [dto] = await service.list();
 
-    expect(dto.changes[0]).toMatchObject({ field: 'name', current: null, requested: 'Zoiko Meds' });
+    expect(dto.changes[0]).toMatchObject({
+      field: 'name',
+      previousValue: null,
+      requestedValue: 'Zoiko Meds',
+    });
   });
 });

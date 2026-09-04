@@ -171,3 +171,98 @@ describe('what the page shows about the attached file', () => {
     expect(screen.getByRole('button', { name: /upload document/i })).toBeTruthy()
   })
 })
+
+/**
+ * What the operator is told a save did.
+ *
+ * "Upload document → Save changes → nothing visibly happens" was half the
+ * report. The other half is that the message has to be true: a save that put a
+ * document in front of a reviewer and one that only corrected an address are
+ * different events, and the API is the only side that knows which just
+ * happened — a verified pharmacy stays VERIFIED through both.
+ */
+describe('7. the save says what it did', () => {
+  it('says the change went for verification when one was submitted', async () => {
+    await renderProfile()
+    updateProfileMock.mockResolvedValue({
+      ...PROFILE,
+      verificationStatus: 'VERIFIED',
+      reviewStatus: 'PENDING',
+      submittedForReview: true,
+    })
+
+    await save()
+
+    expect(await screen.findByText(/submitted for verification/i)).toBeDefined()
+  })
+
+  it('says only that the profile was updated when nothing needed review', async () => {
+    await renderProfile()
+    updateProfileMock.mockResolvedValue({ ...PROFILE, submittedForReview: false })
+
+    await save()
+
+    expect(await screen.findByText(/Pharmacy profile updated/i)).toBeDefined()
+  })
+
+  it('does not decide from the verification status', async () => {
+    // A verified pharmacy that replaced its licence document is still VERIFIED,
+    // and used to be told its profile was simply saved — with no sign that a
+    // reviewer had been asked to look at anything.
+    await renderProfile()
+    updateProfileMock.mockResolvedValue({
+      ...PROFILE,
+      verificationStatus: 'VERIFIED',
+      submittedForReview: true,
+    })
+
+    await save()
+
+    expect(screen.queryByText(/Pharmacy profile updated/i)).toBeNull()
+  })
+
+  it('never echoes the API’s report back as a profile field', async () => {
+    // The API rejects unknown properties, so sending it back would fail every
+    // save after the first.
+    await renderProfile()
+    updateProfileMock.mockResolvedValue({ ...PROFILE, submittedForReview: true })
+    await save()
+
+    await save()
+
+    expect(sentBody()).not.toHaveProperty('submittedForReview')
+  })
+})
+
+describe('H. a failed save is not reported as a success', () => {
+  it('shows the backend error', async () => {
+    await renderProfile()
+    updateProfileMock.mockRejectedValue(new Error('Licence number is already registered.'))
+
+    await save()
+
+    expect(await screen.findByText(/Licence number is already registered/i)).toBeDefined()
+  })
+
+  it('shows no confirmation', async () => {
+    await renderProfile()
+    updateProfileMock.mockRejectedValue(new Error('Upload failed.'))
+
+    await save()
+
+    await waitFor(() => expect(screen.queryByText(/Upload failed/i)).toBeDefined())
+    expect(screen.queryByText(/submitted for verification/i)).toBeNull()
+    expect(screen.queryByText(/Pharmacy profile updated/i)).toBeNull()
+  })
+
+  it('keeps the chosen file so the operator can retry', async () => {
+    // Clearing it on failure would leave the page saying no document is
+    // attached while the operator had just chosen one.
+    await renderProfile()
+    updateProfileMock.mockRejectedValue(new Error('Network error.'))
+
+    await save()
+
+    expect(await screen.findByText(/Network error/i)).toBeDefined()
+  })
+})

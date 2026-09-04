@@ -27,6 +27,8 @@ const REQUEST = {
 function buildService(coords: { latitude: number | null; longitude: number | null }) {
   const tx: any = {
     verificationRequest: {
+      // Asked by the DTO mapper: has this pharmacy ever had a request approved?
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(async () => ({ ...REQUEST, status: 'APPROVED' })),
       findUnique: jest.fn().mockResolvedValue(REQUEST),
     },
@@ -53,7 +55,11 @@ function buildService(coords: { latitude: number | null; longitude: number | nul
   };
 
   const prisma = {
-    verificationRequest: { findUnique: jest.fn().mockResolvedValue(REQUEST) },
+    verificationRequest: {
+      findUnique: jest.fn().mockResolvedValue(REQUEST),
+      // Asked by the DTO mapper: has this pharmacy ever had a request approved?
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn(async (cb: any) => cb(tx)),
   };
 

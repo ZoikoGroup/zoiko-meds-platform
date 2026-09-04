@@ -193,11 +193,6 @@ export default function ZoikoAvailDocumentation() {
   const primary = servers[0] ?? null
   const secondary = servers.slice(1)
 
-  // Offered only where the backend actually mounts it, and pointed at the
-  // backend's own address rather than the origin serving this page — the
-  // mistake the old button made.
-  const swaggerBase = servers.find((s) => s.kind === 'local')?.url ?? null
-  const swaggerUrl = import.meta.env.DEV && swaggerBase ? `${swaggerBase}/docs` : null
 
   if (loading) {
     return (
@@ -234,17 +229,21 @@ export default function ZoikoAvailDocumentation() {
               <ArrowLeft />
               Back to ZoikoAvail
             </Button>
-            {/* Developer convenience, and only where the UI is mounted. The page
-                above does not depend on it. */}
-            {swaggerUrl && (
-              <Button
-                variant="outline"
-                onClick={() => window.open(swaggerUrl, '_blank', 'noopener,noreferrer')}
-              >
-                <ExternalLink />
-                Open Swagger UI
-              </Button>
-            )}
+            {/*
+              Shown everywhere now, production included.
+              It used to appear only in development, because the only explorer
+              was the backend's own /api/docs — withheld on the live deployment
+              so the full API surface is not published. The explorer it opens is
+              rendered inside the console from the filtered contract, so there
+              is nothing environment-specific left to hide.
+            */}
+            <Button
+              variant="outline"
+              onClick={() => navigate('/admin/zoikoavail/swagger')}
+            >
+              <ExternalLink />
+              Open Swagger UI
+            </Button>
           </>
         }
       />

@@ -325,14 +325,30 @@ function opensWithSchedule(text) {
 export function isNonMedicineProse(line) {
   const text = toAscii(line ?? '').trim()
   if (!text) return false
+
+  // Grammar first, and it outranks dosage evidence.
+  //
+  // The dosage guard below used to run before this, so any line carrying a
+  // strength or a dosage form was declared "not prose" whatever its shape —
+  // and a prescription's instruction column is full of exactly that. "Take 1
+  // tablet after food" and "Apply 2 drops twice daily" name a form and a count
+  // because they are directions about a medicine, which is what makes them
+  // instructions rather than medicines. Both reached the confirmation card.
+  //
+  // An imperative opener or a cadence opener is the stronger signal: a product
+  // name does not begin with a verb in the second person, and the word
+  // boundaries in these patterns keep them off brands that merely start with
+  // the same letters (rest does not match "Restore").
+  if (INSTRUCTION_VERB_RE.test(text)) return true
+  if (opensWithSchedule(text)) return true
+
+  // Past the openers, dosage evidence rescues the rest: a product whose name
+  // contains a symptom word — "Pain Relief Gel 30 g", "Burnol Cream" — is still
+  // a product, and this guard is why the vocabulary below can afford to be
+  // broad.
   if (STRENGTH_RE.test(text) || FORM_RE.test(text)) return false
 
-  return (
-    INSTRUCTION_VERB_RE.test(text) ||
-    opensWithSchedule(text) ||
-    INVESTIGATION_RE.test(text) ||
-    SYMPTOM_RE.test(text)
-  )
+  return INVESTIGATION_RE.test(text) || SYMPTOM_RE.test(text)
 }
 
 /** Headings that introduce the medicine list. */

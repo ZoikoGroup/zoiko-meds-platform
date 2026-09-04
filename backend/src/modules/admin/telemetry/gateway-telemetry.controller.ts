@@ -34,4 +34,14 @@ export class GatewayTelemetryController {
   contract() {
     return this.docs.contract();
   }
+
+  @Get('openapi/spec')
+  @ApiOperation({
+    summary: 'The same governed contract, as an OpenAPI document',
+    description:
+      'What the console’s Swagger explorer renders. Identical surface to /openapi above — both are built from one allowlist — in the specification format Swagger UI consumes. Behind the same SUPER_ADMIN guard, which is what lets an operator explore the API on a deployment that does not publish /api/docs publicly.',
+  })
+  specification() {
+    return this.docs.specification();
+  }
 }

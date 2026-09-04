@@ -16,6 +16,23 @@ import { cn } from '@/lib/utils'
 import { UploadCloud, FileText, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react'
 
 // CSV parser (comma-separated; first row = header).
+/**
+ * The sentence appended to an import's success message when the pharmacy is
+ * not patient-visible. Absent for a visible pharmacy, which needs no caveat.
+ */
+const PUBLICATION_CAVEAT = {
+  PENDING_REVIEW:
+    'Your pharmacy is still under review, so this inventory is not visible to users yet.',
+  REJECTED:
+    'Your pharmacy is not visible to users until the verification issue is resolved, so this inventory is stored but not published.',
+  SUSPENDED:
+    'Your pharmacy is suspended, so this inventory is stored but not visible to users.',
+  NOT_SUBMITTED:
+    'Your pharmacy has not been submitted for verification yet, so this inventory is not visible to users.',
+  VERIFIED_NOT_VISIBLE:
+    'Your pharmacy is verified but not currently visible to users, so this inventory is stored and not yet published.',
+}
+
 export default function PharmacyUpload() {
   const inputRef = useRef(null)
   const [profile, setProfile] = useState(null)
@@ -98,6 +115,14 @@ export default function PharmacyUpload() {
   }
 
   const canUpload = parsed && !parsed.error && parsed.rows.length > 0 && status !== 'uploading'
+
+  // What to add to the success message when the saved rows are not published.
+  // Keyed on the API's own visibility state — the page does not decide this,
+  // and while the profile is still loading it says nothing rather than guessing.
+  const publicationCaveat = !profile
+    ? null
+    : PUBLICATION_CAVEAT[profile.visibilityState] ??
+      (profile.patientVisible === false ? PUBLICATION_CAVEAT.VERIFIED_NOT_VISIBLE : null)
 
   return (
     <div className="flex flex-col gap-6">
@@ -267,11 +292,37 @@ export default function PharmacyUpload() {
               )}
 
               {status === 'success' && result && (
-                <div className="flex flex-col gap-2 rounded-lg bg-success/10 px-3 py-2.5 text-sm font-medium text-success">
+                <div
+                  className={cn(
+                    'flex flex-col gap-2 rounded-lg px-3 py-2.5 text-sm font-medium',
+                    publicationCaveat
+                      ? 'bg-warning/10 text-warning'
+                      : 'bg-success/10 text-success',
+                  )}
+                >
                   <span className="flex items-center gap-2">
-                    <CheckCircle2 className="size-4 shrink-0" />
-                    Inventory replaced successfully. ({result.imported} new, {result.updated} updated, {result.skipped} skipped).
+                    {publicationCaveat ? (
+                      <AlertTriangle className="size-4 shrink-0" />
+                    ) : (
+                      <CheckCircle2 className="size-4 shrink-0" />
+                    )}
+                    Inventory saved successfully. ({result.imported} new, {result.updated} updated, {result.skipped} skipped).
                   </span>
+                  {/*
+                    Saved is not the same as published.
+
+                    The import always succeeds — a pharmacy under review is meant
+                    to be able to prepare its catalogue — but the rows only reach
+                    patients once the pharmacy passes the same visibility rule
+                    patient search runs. Reporting a bare success would tell an
+                    operator their stock was live when no search returns it, and
+                    they would go looking for a fault that is not there.
+                  */}
+                  {publicationCaveat && (
+                    <span className="pl-6 text-xs font-normal leading-relaxed">
+                      {publicationCaveat}
+                    </span>
+                  )}
                 </div>
               )}
               {status === 'error' && (

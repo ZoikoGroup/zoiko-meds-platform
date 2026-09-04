@@ -58,11 +58,19 @@ function buildService({ requestId = 'req_1' }: { requestId?: string | null } = {
     user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: 'ph_1' }), update: jest.fn() },
     verificationRequest: {
       findFirst: jest.fn().mockResolvedValue(requestId ? { id: requestId } : null),
+      // The request's recorded submission facts, read before they are appended
+      // to so an earlier save's record is not lost.
+      findUnique: jest.fn().mockResolvedValue(requestId ? { id: requestId, changeKinds: [] } : null),
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
     },
-    verificationDocument: { upsert: jest.fn() },
+    verificationDocument: {
+      upsert: jest.fn(),
+      // Read before the upsert overwrites it, so a replacement can tell the
+      // reviewer which file it replaced. Null here: no document on file yet.
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     $transaction: jest.fn(async (cb: any) => cb(prisma)),
   };
 
@@ -105,7 +113,12 @@ describe('a document submitted with the profile', () => {
 
     await service.updateProfile('ph_1', withDocument() as never, USER);
 
-    const call = prisma.verificationRequest.update.mock.calls.at(-1)[0];
+    // The save now makes two updates on the request — the document fields, then
+    // the record of what the submission was. Pick the one under test rather
+    // than whichever landed last.
+    const call = prisma.verificationRequest.update.mock.calls
+      .map((c: any[]) => c[0])
+      .find((c: any) => c.data?.docName);
     expect(call.where).toEqual({ id: 'req_1' });
     expect(call.data).toEqual({
       docName: 'pharmacy-licence.pdf',
@@ -222,10 +235,31 @@ describe('a document can only be attached to the caller’s own request', () => 
     expect(args.update.pharmacyId).toBe('ph_1');
   });
 
-  it('refuses when the pharmacy has no verification request to attach to', async () => {
+  it('opens a request when the pharmacy has none to attach to', async () => {
+    // This used to be a refusal, and that was the reported bug: an approved
+    // pharmacy has no open request, so replacing its licence scan was either
+    // rejected or — once the lookup fell back to the latest request — filed
+    // onto a closed APPROVED row that no reviewer queue lists. Sending a
+    // licence document is itself a request for review, so one is opened.
+    const { service, prisma } = buildService({ requestId: null });
+    prisma.verificationRequest.create.mockResolvedValue({ id: 'req_new' });
+
+    await service.updateProfile('ph_1', withDocument() as never, USER);
+
+    expect(prisma.verificationRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ pharmacyId: 'ph_1' }) }),
+    );
+    expect(prisma.verificationDocument.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { verificationRequestId: 'req_new' } }),
+    );
+  });
+
+  it('refuses when there is no authenticated submitter to file it', async () => {
+    // A request records who filed it. With no session there is nobody to name,
+    // and inventing one would put an unattributable row in front of a reviewer.
     const { service } = buildService({ requestId: null });
 
-    await expect(service.updateProfile('ph_1', withDocument() as never, USER)).rejects.toThrow(
+    await expect(service.updateProfile('ph_1', withDocument() as never)).rejects.toThrow(
       /no open verification request/i,
     );
   });
