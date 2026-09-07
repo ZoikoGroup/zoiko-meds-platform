@@ -5,6 +5,10 @@ import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { assertLocationIsFree } from '../../pharmacy/location-identity';
 import { canParticipate, participationBlockedReason } from '../../pharmacy/participation';
+import {
+  PROMOTION_REASONS,
+  promoteClaimedByReporting,
+} from '../../pharmacy/classification-promotion';
 import { resolvePharmacyCoordinates } from '../../pharmacy/pharmacy-coordinates';
 import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
@@ -244,6 +248,16 @@ export class PharmacyAdminService {
       { changed: Object.keys(dto) },
       ipAddress,
     );
+
+    // An admin edit can supply the map location a reporting pharmacy was
+    // waiting on, which is the last of the three conditions the network
+    // classification needs. Nothing else re-asks the question, so a record
+    // located from this panel would otherwise stay DIRECTORY_UNCLAIMED — and
+    // invisible to patients — until it happened to touch inventory again.
+    if (pharmacy.isParticipating) {
+      await this.promoteIfListable(id, actorId, ipAddress);
+    }
+
     return this.toDto(pharmacy);
   }
 
@@ -286,6 +300,13 @@ export class PharmacyAdminService {
       { name: pharmacy.name, status },
       ipAddress,
     );
+
+    // Approving a located pharmacy that has already reported stock satisfies
+    // the last condition here rather than at an inventory write.
+    if (pharmacy.isParticipating) {
+      await this.promoteIfListable(id, actorId, ipAddress);
+    }
+
     return this.toDto(pharmacy);
   }
 
@@ -325,7 +346,35 @@ export class PharmacyAdminService {
       { ids, status },
       ipAddress,
     );
+
+    // One attempt per id, because the promotion is per-record: each row's own
+    // location, classification and signals decide it, and a batch approval must
+    // not promote a record on a neighbour's eligibility. Only VERIFIED can make
+    // one newly promotable; every other status leaves nothing to do.
+    if (status === VerificationStatus.VERIFIED) {
+      for (const id of ids) {
+        await this.promoteIfListable(id, actorId, ipAddress);
+      }
+    }
+
     return { updated: ids.length, status };
+  }
+
+  /**
+   * Re-ask whether this record now qualifies for the network classification.
+   *
+   * Every condition is in the write's own `where` (see
+   * `classification-promotion.ts`), so this is safe to call after any admin
+   * write and leaves an ineligible record exactly as it was. Run after the
+   * transaction, alongside the audit write, for the same reason: neither is
+   * part of the edit the admin asked for.
+   */
+  private async promoteIfListable(id: string, actorId: string, ipAddress?: string) {
+    await promoteClaimedByReporting(this.prisma, this.audit, id, {
+      actorId,
+      ipAddress,
+      reason: PROMOTION_REASONS.LISTABLE,
+    });
   }
 
   async remove(actorId: string, id: string, ipAddress?: string) {

@@ -69,6 +69,11 @@ function buildService(request = REQUEST, approved = APPROVED) {
 
   const audit = { write: jest.fn() };
   const prisma = {
+    pharmacy: {
+      // The conditional promotion attempted after an approval. Matches nothing
+      // in these fixtures, which is the ordinary case.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     verificationRequest: {
       findUnique: jest.fn().mockResolvedValue(request),
       findMany: jest.fn().mockResolvedValue([]),

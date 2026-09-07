@@ -101,6 +101,10 @@ function buildService(
       findMany: jest.fn().mockResolvedValue(neighbours),
       findUnique: jest.fn().mockResolvedValue(state.existing ?? null),
       update: jest.fn(async ({ data }: any) => ({ ...stored(), ...data })),
+      // The conditional promotion attempted after any write that could have
+      // made this pharmacy promotable. Matches nothing in these fixtures, which
+      // is the ordinary case.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: null }), update: jest.fn() },
     verificationRequest: {

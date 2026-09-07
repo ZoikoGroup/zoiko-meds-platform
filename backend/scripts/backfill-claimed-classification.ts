@@ -3,14 +3,21 @@
  *
  * A preloaded pharmacy stays DIRECTORY_UNCLAIMED through verification on
  * purpose: approving a licence says the pharmacy exists, not that anybody has
- * taken responsibility for what it reports. Reporting stock is that act, so
- * PharmacyService.promoteClaimedByReporting() now promotes on the first
- * patient-visible signal.
+ * taken responsibility for what it reports. Three things together say somebody
+ * has — approved, listable, reporting — and promoteClaimedByReporting() writes
+ * the classification once all three hold.
  *
- * Rows that reported stock *before* that existed never got the promotion, and
- * the patient-visibility allowlist hides DIRECTORY_UNCLAIMED — so they are
- * verified, participating, holding real signals, and invisible. This is the
- * one-off pass for them (MSA-54).
+ * Rows can be left behind two ways, and the patient-visibility allowlist hides
+ * DIRECTORY_UNCLAIMED, so both are verified, participating, holding real
+ * signals, and invisible:
+ *
+ *   - they reported stock before the promotion existed at all (MSA-54);
+ *   - they reported stock before they had a map location, and the promotion was
+ *     only ever attempted from the inventory writes — so nothing re-asked the
+ *     question when the pin arrived. Every path that can satisfy the last
+ *     condition now calls it, but rows stranded before that fix stay stranded.
+ *
+ * This is the one-off pass for both.
  *
  *   cd backend
  *   npx ts-node scripts/backfill-claimed-classification.ts            # dry run
@@ -20,17 +27,12 @@
  * to change and check the banner it prints before answering the prompt.
  *
  * Idempotent, and deliberately unable to do more than one thing: the conditions
- * below are the same ones promoteClaimedByReporting() uses, and the update can
- * only ever match DIRECTORY_UNCLAIMED — so no other classification can be
- * downgraded or overwritten, and a second run promotes nothing.
+ * are imported from the service rather than restated, and the update can only
+ * ever match DIRECTORY_UNCLAIMED — so no other classification can be downgraded
+ * or overwritten, and a second run promotes nothing.
  */
-import {
-  AvailabilityConfidence,
-  CommercialClassification,
-  Prisma,
-  PrismaClient,
-  VerificationStatus,
-} from '@prisma/client';
+import { CommercialClassification, PrismaClient } from '@prisma/client';
+import { PROMOTABLE_WHERE } from '../src/modules/pharmacy/classification-promotion';
 
 const prisma = new PrismaClient();
 const apply = process.argv.includes('--apply');
@@ -39,21 +41,15 @@ const apply = process.argv.includes('--apply');
 const ACTION = 'pharmacy.classification.backfill';
 
 /**
- * Eligibility, stated once.
+ * Eligibility — the live rule itself, imported rather than restated.
  *
- * Kept identical to promoteClaimedByReporting(): verified, participating, still
- * unclaimed, and holding at least one signal a patient could actually be shown.
- * A pharmacy whose only signals are SUPPRESSED has nothing to show and is not
- * promoted.
+ * Verified, participating, still unclaimed, and holding at least one signal a
+ * patient could actually be shown; a pharmacy whose only signals are SUPPRESSED
+ * has nothing to show and is not promoted. This used to be a hand-kept copy of
+ * the service's conditions, which is a copy that can only ever go stale in the
+ * direction of promoting rows the service would not.
  */
-const ELIGIBLE: Prisma.PharmacyWhereInput = {
-  commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
-  verificationStatus: VerificationStatus.VERIFIED,
-  isParticipating: true,
-  availabilitySignals: {
-    some: { confidence: { not: AvailabilityConfidence.SUPPRESSED } },
-  },
-};
+const ELIGIBLE = PROMOTABLE_WHERE;
 
 /** Which database this is about to read, without printing the credentials. */
 function describeTarget(): string {

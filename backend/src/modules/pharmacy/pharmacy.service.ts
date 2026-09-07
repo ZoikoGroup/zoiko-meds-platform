@@ -50,7 +50,11 @@ import {
   PharmacyNotificationService,
 } from './notifications/pharmacy-notification.service';
 import { AcceptedDocument, readVerificationDocument } from './verification-document';
-import { PUBLIC_PHARMACY_WHERE, VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
+import { PUBLIC_PHARMACY_WHERE } from '../availability/availability.visibility';
+import {
+  PROMOTION_REASONS,
+  promoteClaimedByReporting,
+} from './classification-promotion';
 
 /** Is this broadcast addressed to pharmacy staff at all? */
 /** Verification-request states that are still waiting on a reviewer. */
@@ -910,6 +914,24 @@ export class PharmacyService {
     // a verified pharmacy that edits only its address while an unrelated
     // request happens to be open would read as having just submitted one.
     // Answered here, where what this particular save did is actually known.
+    // A save that supplies the map location is the moment a pharmacy which had
+    // already reported stock becomes promotable — verified, listable and
+    // reporting — and the promotion is what the patient-visibility allowlist
+    // actually admits. Without this the operator pastes their Maps link, the
+    // profile says they are listed, and no patient search returns them until
+    // they happen to touch inventory again.
+    //
+    // Attempted rather than decided here: every condition is in the write's own
+    // `where`, so a record that is not eligible is left exactly as it was.
+    if (updated.isParticipating) {
+      await this.promoteClaimedByReporting(
+        pharmacyId,
+        user?.id,
+        ipAddress,
+        PROMOTION_REASONS.LISTABLE,
+      );
+    }
+
     const profile = await this.getProfile(pharmacyId, user);
     return { ...profile, submittedForReview: Boolean(submission) || Boolean(document) };
   }
@@ -1892,64 +1914,21 @@ export class PharmacyService {
   /**
    * Promote a directory record that has become a real, reporting pharmacy.
    *
-   * A preloaded record stays DIRECTORY_UNCLAIMED through verification on
-   * purpose: approving a licence says the pharmacy exists, not that anybody has
-   * taken responsibility for what it reports. Reporting stock is that act — it
-   * is the pharmacy speaking for itself — so the first patient-visible signal is
-   * what earns the network classification (MSA-54).
-   *
-   * Every precondition sits in the `where`, which is what makes this safe to
-   * call after any successful inventory write:
-   *
-   *   - it can only ever match DIRECTORY_UNCLAIMED, so no higher classification
-   *     is downgraded or overwritten, and nothing else is touched;
-   *   - it requires a signal that patients could actually be shown, so a failed
-   *     upload, an empty CSV or a feed configured but never synced promotes
-   *     nothing;
-   *   - matching nothing on the second call makes it idempotent;
-   *   - one statement, so two concurrent imports cannot race.
-   *
-   * The signal condition is VISIBLE_SIGNAL_WHERE — the same predicate the
-   * patient surfaces filter on — so "eligible to be shown" and "promoted" can
-   * never drift apart.
+   * The rule and the reasoning live in `classification-promotion.ts`, shared
+   * with the profile save and the admin paths so that whichever of the three
+   * conditions is satisfied last is the one that promotes.
    */
   private async promoteClaimedByReporting(
     pharmacyId: string,
     actorId?: string | null,
     ipAddress?: string,
+    reason: string = PROMOTION_REASONS.REPORTED,
   ): Promise<boolean> {
-    const { count } = await this.prisma.pharmacy.updateMany({
-      where: {
-        id: pharmacyId,
-        verificationStatus: VerificationStatus.VERIFIED,
-        isParticipating: true,
-        commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
-        availabilitySignals: { some: VISIBLE_SIGNAL_WHERE },
-      },
-      data: {
-        commercialClassification: CommercialClassification.VERIFIED_NETWORK_CORE,
-      },
-    });
-
-    if (count === 0) return false;
-
-    // A commercial classification changing on its own is worth being able to
-    // account for later.
-    await this.auditWriter.write(
-      actorId ?? null,
-      'pharmacy.classification.promote',
-      'Pharmacy',
-      pharmacyId,
-      {
-        pharmacyId,
-        from: CommercialClassification.DIRECTORY_UNCLAIMED,
-        to: CommercialClassification.VERIFIED_NETWORK_CORE,
-        reason: 'First patient-visible availability signal reported.',
-        module: 'Pharmacy Management',
-      },
+    return promoteClaimedByReporting(this.prisma, this.auditWriter, pharmacyId, {
+      actorId,
       ipAddress,
-    );
-    return true;
+      reason,
+    });
   }
 
   async addInventoryItem(
