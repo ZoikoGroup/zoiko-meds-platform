@@ -1,6 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { buildOpenApiDocument } from '../../../config/openapi-document';
+import { ZoikoAvailDocsService } from './zoikoavail-docs.service';
 import { AvailabilityController } from '../../availability/availability.controller';
 import { AvailabilityService } from '../../availability/availability.service';
 import { HealthController } from '../../health/health.controller';
@@ -28,6 +30,9 @@ import { GATEWAY_ROUTE_LIST } from './gateway-route-registry';
 
 const stub = () => ({}) as never;
 
+/** The prefix main.ts sets. Named so the assertion below can look for it. */
+const API_PREFIX = 'api';
+
 async function buildDocument() {
   const moduleRef = await Test.createTestingModule({
     controllers: [AvailabilityController, MedibaseController, SignalController, HealthController],
@@ -43,14 +48,17 @@ async function buildDocument() {
     .compile();
 
   const app: INestApplication = moduleRef.createNestApplication();
+  // The prefix is not incidental: main.ts sets one, and the app under test has
+  // to be the app that ships. Without it this described a prefix-free API that
+  // exists only here, and every assertion below passed while the real document
+  // keyed each route under /api and the console found none of them.
+  app.setGlobalPrefix(API_PREFIX);
   await app.init();
 
-  const config = new DocumentBuilder()
-    .setTitle('ZoikoMeds API')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
+  // buildOpenApiDocument rather than a second DocumentBuilder, so the options
+  // production generates with are the options asserted about. A local copy is
+  // what let the prefix mismatch through in the first place.
+  const document = buildOpenApiDocument(app, { apiPrefix: API_PREFIX, port: '8000' });
   await app.close();
   return document;
 }
@@ -195,5 +203,52 @@ describe('nothing internal leaks into the reference', () => {
     const serialised = JSON.stringify(doc);
 
     expect(serialised).not.toMatch(/DATABASE_URL|ANTHROPIC_API_KEY|JWT_SECRET|postgres:\/\//i);
+  });
+});
+
+/**
+ * The console reads this document, so the document has to be keyed the way the
+ * console looks it up.
+ *
+ * This is the gap that shipped: main.ts sets a global prefix before generating
+ * the document, so every path arrived as `/api/availability`, while the docs
+ * service looks routes up by their `gateway-route-registry.ts` path
+ * (`/availability`) and health probes by `/health`. Nothing matched, the
+ * contract came back with no sections, and the documentation page and Swagger
+ * explorer both rendered an API with zero endpoints in production while the
+ * routes themselves were live. The old test could not see it: it built its
+ * document without a prefix at all.
+ */
+describe('the document is keyed the way the console reads it', () => {
+  it('states each path without the global prefix, because the servers carry it', () => {
+    const prefixed = Object.keys(doc.paths).filter((p) => p.startsWith(`/${API_PREFIX}/`));
+
+    // A server of `https://host/api` plus a path of `/api/availability` composes
+    // into /api/api/availability — unreachable from the reference that names it.
+    expect(prefixed).toEqual([]);
+  });
+
+  it('resolves every governed route and health probe through the docs service', () => {
+    const service = new ZoikoAvailDocsService({
+      get: () => undefined,
+    } as never as ConfigService);
+    service.register(doc);
+
+    const contract = service.contract();
+    const documented = contract.sections.flatMap((s) => s.endpoints);
+
+    // Every governed route, plus the four health probes. An empty or short list
+    // here is the production symptom itself.
+    expect(documented.length).toBe(GATEWAY_ROUTE_LIST.length + 4);
+    expect(contract.sections.map((s) => s.name)).toContain('Health');
+  });
+
+  it('serves a specification with paths in it', () => {
+    const service = new ZoikoAvailDocsService({
+      get: () => undefined,
+    } as never as ConfigService);
+    service.register(doc);
+
+    expect(Object.keys(service.specification().paths).length).toBeGreaterThan(0);
   });
 });
