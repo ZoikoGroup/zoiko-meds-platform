@@ -57,6 +57,10 @@ function buildService(existing: Record<string, unknown>) {
     pharmacy: {
       findUnique: jest.fn().mockResolvedValue(existing),
       findMany: jest.fn().mockResolvedValue([]),
+      // The conditional promotion attempted after any write that could have
+      // made this pharmacy promotable. Matches nothing in these fixtures, which
+      // is the ordinary case.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     $transaction: jest.fn(async (cb: any) => cb(tx)),
   };

@@ -13,6 +13,10 @@ import { resolveCountryAlpha2 } from '../../../common/countries';
 import { resolveJurisdictionId } from '../../../common/jurisdiction';
 import { allowsCategory } from '../../pharmacy/notification-preferences.service';
 import { canParticipate } from '../../pharmacy/participation';
+import {
+  PROMOTION_REASONS,
+  promoteClaimedByReporting,
+} from '../../pharmacy/classification-promotion';
 import { CreateVerificationDto } from './dto/create-verification.dto';
 import { UpdateVerificationDto } from './dto/update-verification.dto';
 
@@ -350,6 +354,20 @@ export class VerificationService {
       },
       ipAddress,
     );
+    // Approving a located pharmacy that has already reported stock is the
+    // moment it becomes promotable. Nothing else re-asks the question, so
+    // without this such a record stays DIRECTORY_UNCLAIMED — approved, listed,
+    // holding real signals, and returned by no patient search — until it
+    // happens to touch inventory again. Every condition is in the write's own
+    // `where`, so an ineligible record is untouched.
+    if (dto.status === VerificationRequestStatus.APPROVED && result.req.pharmacyId) {
+      await promoteClaimedByReporting(this.prisma, this.audit, result.req.pharmacyId, {
+        actorId,
+        ipAddress,
+        reason: PROMOTION_REASONS.LISTABLE,
+      });
+    }
+
     const firstTime = await this.firstTimePharmacyIds([result.req]);
     return this.toDto(result.req, !!result.req.pharmacyId && firstTime.has(result.req.pharmacyId));
   }

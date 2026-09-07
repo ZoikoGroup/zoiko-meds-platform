@@ -55,6 +55,10 @@ function buildService(existing = verified()) {
         written.push(data);
         return { ...existing, ...data };
       }),
+      // The conditional promotion attempted after any write that could have
+      // made this pharmacy promotable. Matches nothing in these fixtures, which
+      // is the ordinary case.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: PHARMACY_ID }), update: jest.fn() },
     verificationRequest: {

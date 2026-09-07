@@ -55,6 +55,11 @@ function buildService(coords: { latitude: number | null; longitude: number | nul
   };
 
   const prisma = {
+    pharmacy: {
+      // The conditional promotion attempted after an approval. Matches nothing
+      // in these fixtures, which is the ordinary case.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     verificationRequest: {
       findUnique: jest.fn().mockResolvedValue(REQUEST),
       // Asked by the DTO mapper: has this pharmacy ever had a request approved?
