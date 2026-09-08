@@ -32,11 +32,11 @@ describe('PharmacyAdminService — jurisdiction on the pharmacy DTO', () => {
 
     await service.list({});
 
-    expect(prisma.pharmacy.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        include: { jurisdiction: { select: { code: true, name: true } } },
-      }),
-    );
+    // The jurisdiction clause specifically, not the whole include: the DTO also
+    // needs to know whether an active pharmacy account is linked, and pinning
+    // the entire object here would fail on any query the DTO later grows.
+    const [args]: any = prisma.pharmacy.findMany.mock.calls[0];
+    expect(args.include.jurisdiction).toEqual({ select: { code: true, name: true } });
   });
 
   it('maps the jurisdiction onto each pharmacy in the list', async () => {

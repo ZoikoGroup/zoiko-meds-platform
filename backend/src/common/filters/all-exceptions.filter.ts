@@ -51,10 +51,57 @@ function reasonPhrase(status: number): string {
 }
 
 /**
+ * The six fields this envelope owns.
+ *
+ * Named so they can be stripped out of an exception's payload before the rest
+ * of it is carried through: whatever a thrower puts in a `statusCode` or a
+ * `path`, the values below are the ones this filter computed, and a payload
+ * must not be able to restate — or forge — any of them.
+ */
+const RESERVED_ENVELOPE_KEYS = new Set([
+  'statusCode',
+  'error',
+  'message',
+  'path',
+  'requestId',
+  'timestamp',
+]);
+
+/**
+ * The part of an exception's payload that is not the envelope's own.
+ *
+ * Nest's built-in exceptions carry `{ statusCode, error, message }` and nothing
+ * else, so for almost everything this is empty. It exists for the throws that
+ * carry a fact the client has to act on rather than only display.
+ */
+function payloadExtras(body: object): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(body as Record<string, unknown>).filter(
+      ([key]) => !RESERVED_ENVELOPE_KEYS.has(key),
+    ),
+  );
+}
+
+/**
  * Catch-all exception filter producing a single, sanitized error envelope for
  * every failure. Client (4xx) messages are passed through; server (5xx) errors
  * are logged with their stack but return a generic message so internal details
  * (DB errors, stack traces, query fragments) never leak to callers.
+ *
+ * A client error's payload is carried through whole, not reduced to its
+ * sentence. The envelope used to be rebuilt from `message` and `error` alone,
+ * which discarded every other field a thrower had attached — and some failures
+ * are not just something to show a person. `AuthService.login` refuses an
+ * enrolled administrator with `{ message, mfaRequired: true }`, because a
+ * sign-in that needs a second factor is not a wrong password and the login form
+ * has to ask for a code; the flag was dropped here, so the form printed the
+ * sentence "Enter the code from your authenticator app" and offered nowhere to
+ * type one. Two correct halves, and a contract broken in the middle by a file
+ * that knows nothing about authentication (MSA-42).
+ *
+ * Client errors only, deliberately. A 5xx payload is the one place internal
+ * detail collects, and the whole point of the paragraph above it is that
+ * nothing from a server fault reaches the caller.
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -97,6 +144,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // without a second place naming it.
     let message: string | string[] = 'Internal server error';
     let error = reasonPhrase(status);
+    // What the exception carried beyond its sentence. Empty for everything that
+    // throws a string or a plain Nest exception; see payloadExtras.
+    let extras: Record<string, unknown> = {};
     if (isSchemaDrift) {
       message = SCHEMA_DRIFT_MESSAGE;
     } else if (tooLarge) {
@@ -111,11 +161,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = b.message ?? exception.message;
         // Only when the exception names one; otherwise keep the status's own name.
         error = b.error ?? error;
+        if (status < HttpStatus.INTERNAL_SERVER_ERROR) {
+          extras = payloadExtras(body);
+        }
       }
     }
 
     const requestId = req.id;
     const envelope = {
+      // First, so every field below overwrites it: the six are this filter's
+      // own answers, and a payload cannot displace them however it is shaped.
+      ...extras,
       statusCode: status,
       error,
       message,

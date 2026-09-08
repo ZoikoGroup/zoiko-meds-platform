@@ -79,6 +79,7 @@ export function patientListingBlockedReason(pharmacy: {
   verificationStatus: VerificationStatus;
   isParticipating: boolean;
   commercialClassification: CommercialClassification;
+  hasActiveManager: boolean;
   latitude: number | null;
   longitude: number | null;
 }): string | null {
@@ -99,6 +100,18 @@ export function patientListingBlockedReason(pharmacy: {
     );
   }
 
+  // Nobody is running it. Patients are only shown pharmacies with an operator
+  // answering for the stock they report, and this one has none — which happens
+  // when the last manager account is unlinked or deactivated.
+  if (!pharmacy.hasActiveManager) {
+    return (
+      'Your licence is approved, but no active pharmacy account is linked to ' +
+      'this branch, so patient searches do not include it. Your details and ' +
+      'inventory are safe — ask the ZoikoMeds team to link a pharmacy manager ' +
+      'account and the branch is listed again straight away.'
+    );
+  }
+
   // Approval says the pharmacy is real. It does not say anyone has taken
   // responsibility for what it reports, and patients are only shown pharmacies
   // where someone has.
@@ -106,6 +119,63 @@ export function patientListingBlockedReason(pharmacy: {
     'Your licence is approved. Your pharmacy account is still being set up on ' +
     'the ZoikoMeds network, so patient searches do not include it yet. The ' +
     'ZoikoMeds team completes this step — there is nothing for you to do.'
+  );
+}
+
+/**
+ * Why a pharmacy is not shown to patients, written for a reviewer.
+ *
+ * The same rule as `patientListingBlockedReason` above, in the other voice.
+ * That one addresses the operator — "your licence is approved", "there is
+ * nothing for you to do" — and putting those sentences in the Super Admin
+ * console would read as instructions to the reviewer, who is usually the person
+ * who has to act.
+ *
+ * The console needs the whole rule and not just the location question. It used
+ * to show "Listed to patients" from `isParticipating` alone, so a pharmacy that
+ * was verified, participating and returned by no patient search — because its
+ * classification was unclaimed, or because nobody is running it any more — was
+ * displayed to the reviewer as listed. That is the exact contradiction this
+ * audit was opened on: the console said networked, the portal said "you're all
+ * set", and patients could not find the pharmacy.
+ */
+export function reviewerListingBlockedReason(pharmacy: {
+  verificationStatus: VerificationStatus;
+  isParticipating: boolean;
+  commercialClassification: CommercialClassification;
+  hasActiveManager: boolean;
+  latitude: number | null;
+  longitude: number | null;
+}): string | null {
+  // An unapproved pharmacy is not being held back from anything: the queue
+  // already says where it stands, and a second notice reads as a second problem.
+  if (pharmacy.verificationStatus !== VerificationStatus.VERIFIED) return null;
+  if (isPatientVisible(pharmacy)) return null;
+
+  // The location question, unchanged and still first — it is the one a reviewer
+  // most often has to fix.
+  const location = participationBlockedReason(pharmacy);
+  if (location) return location;
+
+  if (!pharmacy.isParticipating) {
+    return (
+      'Verified, but not listed to patients: this pharmacy is not currently ' +
+      'taking part in the network.'
+    );
+  }
+
+  if (!pharmacy.hasActiveManager) {
+    return (
+      'Verified, but not listed to patients: no active pharmacy account is ' +
+      'linked to this record, so nobody is answering for the stock it reports. ' +
+      'Its details and inventory are intact — linking a pharmacy account lists ' +
+      'it again immediately.'
+    );
+  }
+
+  return (
+    'Verified, but not listed to patients: its commercial standing is ' +
+    `${pharmacy.commercialClassification}, which is not one patients are shown.`
   );
 }
 
@@ -135,6 +205,7 @@ export function pharmacyVisibilityState(pharmacy: {
   verificationStatus: VerificationStatus;
   isParticipating: boolean;
   commercialClassification: CommercialClassification;
+  hasActiveManager: boolean;
 }): PharmacyVisibilityState {
   switch (pharmacy.verificationStatus) {
     case VerificationStatus.VERIFIED:

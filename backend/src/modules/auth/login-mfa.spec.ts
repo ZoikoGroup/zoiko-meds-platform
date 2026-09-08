@@ -1,6 +1,8 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { ArgumentsHost, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { AllExceptionsFilter } from '../../common/filters/all-exceptions.filter';
+import { AppLogger } from '../../common/logger/app-logger.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { MailService } from '../mail/mail.service';
@@ -169,6 +171,101 @@ describe('login · second factor', () => {
       await expect(
         auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
       ).rejects.toMatchObject({ response: { mfaEnrolmentRequired: true } });
+    });
+  });
+
+  /**
+   * What the browser actually receives.
+   *
+   * Everything above asserts the exception this service throws. That is not
+   * what a login form reads: between the two sits AllExceptionsFilter, which
+   * rebuilds the response, and it used to rebuild it from `message` and `error`
+   * alone. `mfaRequired` never left the server, so the form printed "Enter the
+   * code from your authenticator app" and rendered no field to type one in —
+   * and an enrolled administrator could not sign in at all.
+   *
+   * Both sides had passing tests. These are the ones that would have failed:
+   * the real refusal, through the real filter, asserted on the real body.
+   */
+  describe('the refusal as the login form receives it', () => {
+    /** Run a login that is expected to fail, and return the serialized body. */
+    const wireBody = async (dto: Parameters<AuthService['login']>[0]) => {
+      const json = jest.fn();
+      const host = {
+        switchToHttp: () => ({
+          getResponse: () => ({ status: () => ({ json }) }),
+          getRequest: () => ({ method: 'POST', originalUrl: '/api/auth/login', id: 'req_1' }),
+        }),
+      } as unknown as ArgumentsHost;
+
+      // The filter builds its own logger; a warn line per 4xx is not the subject.
+      const warn = jest
+        .spyOn(AppLogger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      try {
+        await auth.login(dto);
+        throw new Error('login was expected to be refused');
+      } catch (err) {
+        new AllExceptionsFilter().catch(err, host);
+      } finally {
+        warn.mockRestore();
+      }
+      return json.mock.calls[0][0] as Record<string, unknown>;
+    };
+
+    const enrolled = () => account({ mfaSecret: SECRET, mfaEnabledAt: new Date() });
+
+    it('tells the form to ask for a code', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolled());
+
+      const body = await wireBody({ email: 'root@zoikomeds.test', password: PASSWORD });
+
+      expect(body.statusCode).toBe(401);
+      expect(body.mfaRequired).toBe(true);
+      expect(body.message).toBe('Enter the code from your authenticator app.');
+    });
+
+    it('still tells it so when the code was wrong, so the field stays up', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolled());
+
+      const body = await wireBody({
+        email: 'root@zoikomeds.test',
+        password: PASSWORD,
+        mfaCode: '000000',
+      });
+
+      expect(body.mfaRequired).toBe(true);
+      expect(body.message).toBe('That code is not right. Try the current one.');
+    });
+
+    it('asks for enrolment instead when there is no code to give', async () => {
+      prisma.organization.findUnique.mockResolvedValue({ requireMfa: true });
+      prisma.user.findUnique.mockResolvedValue(account());
+
+      const body = await wireBody({ email: 'root@zoikomeds.test', password: PASSWORD });
+
+      expect(body.mfaEnrolmentRequired).toBe(true);
+      // Distinguishable from the case above, which is the whole point: one asks
+      // for a field, the other must not offer one.
+      expect(body.mfaRequired).toBeUndefined();
+    });
+
+    it('says nothing about a factor when the password was simply wrong', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolled());
+
+      const body = await wireBody({ email: 'root@zoikomeds.test', password: 'wrong-password' });
+
+      expect(body.mfaRequired).toBeUndefined();
+      expect(body.message).toBe('Invalid email or password');
+    });
+
+    it('carries no session, and never the secret', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolled());
+
+      const body = await wireBody({ email: 'root@zoikomeds.test', password: PASSWORD });
+
+      expect(body.accessToken).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain(SECRET);
     });
   });
 });

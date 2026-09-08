@@ -1,4 +1,5 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { PHARMACY_OPERATOR_ROLES } from '../availability/availability.visibility';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
@@ -36,10 +37,15 @@ const BASE = {
   logoUpdatedAt: null,
 };
 
-function buildService(pharmacy: Record<string, unknown>) {
+function buildService(pharmacy: Record<string, unknown>, activeManagers = 1) {
   const prisma: any = {
     pharmacy: { findUnique: jest.fn().mockResolvedValue(pharmacy) },
     verificationRequest: { findFirst: jest.fn().mockResolvedValue(null) },
+    // How many active operator accounts are linked to this pharmacy. The
+    // profile has to ask, because the patient queries ask: a pharmacy nobody
+    // is running is returned by none of them, and the banner is read off this
+    // answer rather than off the verification badge.
+    user: { count: jest.fn().mockResolvedValue(activeManagers) },
   };
   return new PharmacyService(
     prisma as unknown as PrismaService,
@@ -51,8 +57,8 @@ function buildService(pharmacy: Record<string, unknown>) {
   );
 }
 
-const profileFor = (over: Record<string, unknown> = {}) =>
-  buildService({ ...BASE, ...over }).getProfile('ph_1');
+const profileFor = (over: Record<string, unknown> = {}, activeManagers = 1) =>
+  buildService({ ...BASE, ...over }, activeManagers).getProfile('ph_1');
 
 describe('verified and findable', () => {
   it('reports patientVisible', async () => {
@@ -119,5 +125,66 @@ describe('after a Super Admin approval', () => {
 
     expect(before.patientVisible).toBe(false);
     expect(after.patientVisible).toBe(true);
+  });
+});
+
+describe('F. nobody is running the pharmacy any more', () => {
+  // The delinking case, from the portal's side. The record is untouched —
+  // verified, participating, in the network, inventory intact — and no patient
+  // search returns it, because no account is linked. The screen that must not
+  // say "you're all set" is this one.
+  it('does not tell the operator patients can see them', async () => {
+    const profile = await profileFor({}, 0);
+
+    expect(profile.patientVisible).toBe(false);
+  });
+
+  it('reports the verified-but-not-visible banner, not the success one', async () => {
+    expect((await profileFor({}, 0)).visibilityState).toBe('VERIFIED_NOT_VISIBLE');
+  });
+
+  it('says what is missing and who fixes it', async () => {
+    const profile = await profileFor({}, 0);
+
+    expect(profile.listingBlockedReason).toMatch(/no active pharmacy account is linked/i);
+    expect(profile.listingBlockedReason).toMatch(/link a pharmacy manager account/i);
+  });
+
+  it('promises the inventory is still there', async () => {
+    // It is: nothing about delinking deletes a signal. Saying so is the
+    // difference between a fixable notice and a frightening one.
+    expect((await profileFor({}, 0)).listingBlockedReason).toMatch(/inventory are safe/i);
+  });
+
+  it('keeps the licence approved — losing an account is not a rejection', async () => {
+    const profile = await profileFor({}, 0);
+
+    expect(profile.verificationStatus).toBe('VERIFIED');
+  });
+
+  it('G. flips back to visible when an account is relinked', async () => {
+    // Same pharmacy row, same inventory, one account linked again.
+    const delinked = await profileFor({}, 0);
+    const relinked = await profileFor({}, 1);
+
+    expect(delinked.patientVisible).toBe(false);
+    expect(relinked.patientVisible).toBe(true);
+    expect(relinked.visibilityState).toBe('VERIFIED_VISIBLE');
+    expect(relinked.listingBlockedReason).toBeNull();
+  });
+
+  it('asks for active operator accounts, not for any linked row', async () => {
+    const service = buildService({ ...BASE });
+    const prisma: any = (service as any).prisma;
+
+    await service.getProfile('ph_1');
+
+    expect(prisma.user.count).toHaveBeenCalledWith({
+      where: {
+        pharmacyId: 'ph_1',
+        isActive: true,
+        role: { in: PHARMACY_OPERATOR_ROLES },
+      },
+    });
   });
 });

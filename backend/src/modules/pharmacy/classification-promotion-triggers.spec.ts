@@ -118,6 +118,10 @@ describe('a pharmacy adding its address and map location', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({ pharmacyId: PHARMACY }),
         update: jest.fn(),
+      // How many active operator accounts are linked, which the patient
+      // visibility rule now reads (ACTIVE_PHARMACY_MANAGER_WHERE). These
+      // fixtures are pharmacies an operator is signed in to, so: one.
+        count: jest.fn().mockResolvedValue(1),
       },
       verificationRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -342,6 +346,7 @@ describe('a reviewer approving a located, reporting pharmacy', () => {
         findUnique: jest.fn().mockResolvedValue({ id: 'admin_1', fullName: 'Super Admin' }),
         findFirst: jest.fn().mockResolvedValue({ id: 'user_1', pharmacyId: PHARMACY }),
         update: jest.fn(),
+        count: jest.fn().mockResolvedValue(1),
       },
       pharmacy: {
         update: jest.fn(),

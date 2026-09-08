@@ -96,6 +96,9 @@ function buildService({
     user: {
       findUnique: jest.fn().mockResolvedValue({ pharmacyId: pharmacy.id }),
       update: jest.fn(),
+      // The linked-operator count the visibility rule reads
+      // (ACTIVE_PHARMACY_MANAGER_WHERE): this pharmacy has one signed in.
+      count: jest.fn().mockResolvedValue(1),
     },
     verificationRequest: {
       findFirst: jest.fn(async ({ where, orderBy, include }: any = {}) => {

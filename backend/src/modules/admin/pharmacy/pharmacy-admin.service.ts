@@ -4,7 +4,11 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { assertLocationIsFree } from '../../pharmacy/location-identity';
-import { canParticipate, participationBlockedReason } from '../../pharmacy/participation';
+import { canParticipate, reviewerListingBlockedReason } from '../../pharmacy/participation';
+import {
+  PHARMACY_OPERATOR_ROLES,
+  isPatientVisible,
+} from '../../availability/availability.visibility';
 import {
   PROMOTION_REASONS,
   promoteClaimedByReporting,
@@ -18,8 +22,24 @@ import { ListPharmaciesQuery } from './dto/list-pharmacies.query';
 
 const DEFAULT_PAGE_SIZE = 50;
 
-/** The canonical location every pharmacy DTO carries alongside its raw `country` text. */
-const JURISDICTION_INCLUDE = { jurisdiction: { select: { code: true, name: true } } } as const;
+/**
+ * What every pharmacy DTO carries beyond the row's own columns.
+ *
+ * The jurisdiction is the canonical location (MSA-32). The accounts are there
+ * for one boolean: patient visibility requires an active operator, and that is
+ * a relation rather than a column, so the console cannot answer "can patients
+ * find this?" without it. `take: 1` because the count is not the question —
+ * only whether there is anybody at all — and no field of the account is
+ * selected beyond its id.
+ */
+const JURISDICTION_INCLUDE = {
+  jurisdiction: { select: { code: true, name: true } },
+  users: {
+    where: { isActive: true, role: { in: PHARMACY_OPERATOR_ROLES } },
+    select: { id: true },
+    take: 1,
+  },
+} as const;
 
 @Injectable()
 export class PharmacyAdminService {
@@ -443,7 +463,18 @@ export class PharmacyAdminService {
     return pharmacy;
   }
 
-  private toDto(p: Pharmacy & { jurisdiction?: { code: string; name: string } | null }) {
+  private toDto(
+    p: Pharmacy & {
+      jurisdiction?: { code: string; name: string } | null;
+      users?: Array<{ id: string }>;
+    },
+  ) {
+    // Whether anybody is running this branch. Absent on a row fetched without
+    // the include, and absent is not the same as none — so it is read as
+    // "unknown, do not claim visibility", which errs towards telling the
+    // reviewer to look rather than towards a false "listed".
+    const hasActiveManager = (p.users?.length ?? 0) > 0;
+    const visibility = { ...p, hasActiveManager };
     return {
       id: p.id,
       name: p.name,
@@ -475,11 +506,20 @@ export class PharmacyAdminService {
       locationPrecision: p.locationPrecision,
       located: p.latitude != null && p.longitude != null,
       status: p.verificationStatus,
+      // Whether patients can actually find this pharmacy, answered by the same
+      // rule their queries run rather than by `isParticipating` alone. The
+      // console showed a record as listed while every patient search dropped
+      // it, which is the contradiction this reports away.
+      patientVisible: isPatientVisible(visibility),
+      // Is an active pharmacy account linked? Reported as its own fact because
+      // it is the one gate a reviewer cannot infer from anything else on the
+      // record — the row looks identical either way.
+      hasActiveManager,
       // Verified and listed are separate answers, so the console shows both.
       // `listingBlockedReason` is null unless something is holding an approved
       // pharmacy back — a reviewer looking at a verified record that patients
       // cannot see needs to be told what would release it.
-      listingBlockedReason: participationBlockedReason(p),
+      listingBlockedReason: reviewerListingBlockedReason(visibility),
       // Commercial standing is a separate axis from verification: a pharmacy can
       // be verified and still non-billable (ZM-COM-BILL-001 S-B1).
       commercialClassification: p.commercialClassification,

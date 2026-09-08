@@ -100,7 +100,14 @@ describe('PharmacyService self-service profile onboarding', () => {
         // conditional, so it no-ops for a pharmacy that is already claimed.
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
-      user: { findUnique: jest.fn(), update: jest.fn() },
+      user: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      // How many active operator accounts are linked, which the patient
+      // visibility rule now reads (ACTIVE_PHARMACY_MANAGER_WHERE). These
+      // fixtures are pharmacies an operator is signed in to, so: one.
+        count: jest.fn().mockResolvedValue(1),
+      },
       signalNotification: { findMany: jest.fn().mockResolvedValue([]) },
       // The bell reads two sources: this account's own rows, and the
       // administrator broadcasts. These tests are about categorising the former,

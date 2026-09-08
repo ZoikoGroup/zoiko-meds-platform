@@ -506,9 +506,12 @@ export class MeService {
     const forMedicine = Array.isArray(medicineIds) && medicineIds.length > 0;
     const rows = await this.prisma.pharmacy.findMany({
       where: {
-        // Governed visibility, shared with /availability: VERIFIED and still
-        // participating. A pending, rejected or withdrawn pharmacy is not part
-        // of the verified network and must never appear as one.
+        // Governed visibility, shared with /availability and every other
+        // patient surface. A pending, rejected or withdrawn pharmacy is not
+        // part of the verified network and must never appear as one — and
+        // neither is one nobody has claimed, or one no pharmacy account is
+        // linked to any more. The clauses live in the shared object rather
+        // than being listed here, so this query cannot fall behind them.
         ...PUBLIC_PHARMACY_WHERE,
         ...(forMedicine
           ? {

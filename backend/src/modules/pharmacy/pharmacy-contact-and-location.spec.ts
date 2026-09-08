@@ -88,7 +88,12 @@ function buildService(
     pharmacy: { create: jest.fn(async ({ data }: any) => ({ id: 'ph_new', ...data })) },
     // Registering with a country resolves it to a Jurisdiction row.
     jurisdiction: { upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN' }) },
-    user: { update: jest.fn() },
+    user: {
+      update: jest.fn(),
+      // The linked-operator count the visibility rule reads
+      // (ACTIVE_PHARMACY_MANAGER_WHERE): this pharmacy has one signed in.
+      count: jest.fn().mockResolvedValue(1),
+    },
     verificationRequest: {
       // The request's recorded submission facts, read before this save appends
       // to them so an earlier save's record is not lost.
@@ -106,7 +111,11 @@ function buildService(
       // is the ordinary case.
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: null }), update: jest.fn() },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ pharmacyId: null }),
+      update: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
+    },
     verificationRequest: {
       findFirst: jest.fn().mockResolvedValue(null),
       // Prisma's create returns the row it created; the submission reads the

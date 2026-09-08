@@ -667,10 +667,19 @@ export default function PharmacyManagement() {
                 <span className="text-right max-w-[240px] font-medium">{[selectedPharmacy.addressLine1, selectedPharmacy.city, selectedPharmacy.region, selectedPharmacy.postalCode, selectedPharmacy.country].filter(Boolean).join(', ') || '—'}</span>
               </div>
               {/* Whether patients can actually be shown this pharmacy, which is
-                  no longer the same question as whether it is verified. */}
+                  no longer the same question as whether it is verified.
+
+                  Read from the server's `patientVisible`, which is the same
+                  rule the patient queries run. It used to be read from
+                  `isParticipating`, one of the four gates — so a pharmacy that
+                  was participating but unclaimed, or participating with no
+                  pharmacy account linked to it any more, was shown here as
+                  Listed while every patient search dropped it. Falls back to
+                  the old field only for an API build that predates
+                  `patientVisible`. */}
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Listed to patients</span>
-                {selectedPharmacy.isParticipating ? (
+                {(selectedPharmacy.patientVisible ?? selectedPharmacy.isParticipating) ? (
                   <Badge variant="success" className="gap-1">
                     <Eye className="size-3" />
                     Listed
