@@ -84,11 +84,25 @@ export default function Login() {
 
   // Editing the address or the password starts a different sign-in, so the code
   // collected for the last one must not be carried into it.
+  //
+  // The message goes with the field. Both notices this can dismiss are about a
+  // second factor — "enter the code from your authenticator app", or that the
+  // workspace requires one this account has not set up — and each is answered
+  // by something this function has just taken off the screen. Leaving the
+  // sentence behind put the form back in the state that started all of this: a
+  // demand for a code above nowhere to type one, reached this time by a
+  // keystroke rather than by a dropped flag. A password manager refilling a
+  // field is enough to trigger it, so it is not a rare way to arrive.
+  //
+  // Only within this guard. A wrong-password notice must survive the retyping
+  // that answers it, which is why the early return stays and the error is not
+  // cleared on every edit.
   const restartSignIn = () => {
     if (!mfaStage && !enrolmentRequired) return
     setMfaStage(false)
     setMfaCode('')
     setEnrolmentRequired(false)
+    setError('')
   }
 
   // Back to the form, to try a different account or send a fresh link. The old

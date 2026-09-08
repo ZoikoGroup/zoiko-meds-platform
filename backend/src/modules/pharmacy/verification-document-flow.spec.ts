@@ -59,7 +59,13 @@ function buildService({ requestId = 'req_1' }: { requestId?: string | null } = {
       // is the ordinary case.
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: 'ph_1' }), update: jest.fn() },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ pharmacyId: 'ph_1' }),
+      update: jest.fn(),
+      // The linked-operator count the visibility rule reads
+      // (ACTIVE_PHARMACY_MANAGER_WHERE): this pharmacy has one signed in.
+      count: jest.fn().mockResolvedValue(1),
+    },
     verificationRequest: {
       findFirst: jest.fn().mockResolvedValue(requestId ? { id: requestId } : null),
       // The request's recorded submission facts, read before they are appended

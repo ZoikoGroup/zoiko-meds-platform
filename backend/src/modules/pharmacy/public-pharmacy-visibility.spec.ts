@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { CommercialClassification, VerificationStatus } from '@prisma/client';
+import { CommercialClassification, UserRole, VerificationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { AuditWriter } from '../admin/audit.writer';
@@ -39,6 +39,10 @@ const VISIBLE = {
   verificationStatus: VerificationStatus.VERIFIED,
   isParticipating: true,
   commercialClassification: CommercialClassification.VERIFIED_NETWORK_CORE,
+  // Its linked accounts. Never selected by either route — a patient is not
+  // shown who runs a pharmacy — but the rule filters on them, so the fixture
+  // has to carry them.
+  users: [{ isActive: true, role: UserRole.PHARMACY_ADMIN }],
 };
 
 /** Every way a pharmacy can fail the rule, as a patient query would see it. */
@@ -61,6 +65,18 @@ const HIDDEN_CASES: Array<[string, Record<string, unknown>]> = [
     'D. verified but a sandbox record',
     { commercialClassification: CommercialClassification.PARTNER_SANDBOX },
   ],
+  // The delinking cases. Everything stored on the record still says "in the
+  // network" — approved, participating, VERIFIED_NETWORK_CORE — and nobody can
+  // sign in to answer for any of it.
+  ['F. verified but no account is linked to it', { users: [] }],
+  [
+    'F. verified but its only account is deactivated',
+    { users: [{ isActive: false, role: UserRole.PHARMACY_ADMIN }] },
+  ],
+  [
+    'F. verified but its only linked account is not an operator',
+    { users: [{ isActive: true, role: UserRole.PUBLIC }] },
+  ],
 ];
 
 /**
@@ -79,6 +95,18 @@ function buildService(rows: Array<Record<string, any>>) {
     const classification = where.commercialClassification;
     if (classification?.in && !classification.in.includes(row.commercialClassification)) {
       return false;
+    }
+    // The relation filter: at least one active account in an operator role.
+    // Ignoring it would have this stub list a pharmacy the real query hides.
+    if (where.users?.some) {
+      const some = where.users.some;
+      const linked: any[] = row.users ?? [];
+      const ok = linked.some(
+        (account) =>
+          (some.isActive === undefined || account.isActive === some.isActive) &&
+          (some.role?.in === undefined || some.role.in.includes(account.role)),
+      );
+      if (!ok) return false;
     }
     return true;
   };

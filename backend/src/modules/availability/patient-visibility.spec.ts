@@ -1,6 +1,7 @@
 import {
   CommercialClassification,
   Prisma,
+  UserRole,
   VerificationStatus,
 } from '@prisma/client';
 import {
@@ -30,6 +31,9 @@ const pharmacy = (over: Partial<Record<string, unknown>> = {}) => ({
   verificationStatus: VerificationStatus.VERIFIED,
   isParticipating: true,
   commercialClassification: CommercialClassification.VERIFIED_NETWORK_CORE,
+  // Its linked accounts. The rule asks whether an active operator is among
+  // them, so the row has to carry them rather than a precomputed answer.
+  users: [{ isActive: true, role: UserRole.PHARMACY_ADMIN }],
   ...over,
 });
 
@@ -46,6 +50,12 @@ function wouldBeVisible(row: Record<string, unknown>): boolean {
     ([field, clause]) => {
       const actual = row[field];
       if (clause !== null && typeof clause === 'object') {
+        // `{ some }` — a relation filter. Prisma reads it as "at least one
+        // related row matches", and the linked accounts are the only relation
+        // this rule asks about.
+        const { some } = clause as { some?: Record<string, unknown> };
+        if (some) return relationSatisfied(field, some, actual);
+
         const { in: allowed } = clause as { in?: unknown[] };
         if (!Array.isArray(allowed)) {
           throw new Error(`Unsupported clause on ${field}: ${JSON.stringify(clause)}`);
@@ -57,11 +67,46 @@ function wouldBeVisible(row: Record<string, unknown>): boolean {
   );
 }
 
+/**
+ * Does at least one related row match?
+ *
+ * Kept as narrow as the clause it stands in for: equality and `{ in }` on each
+ * field of the inner filter, and a throw on anything else — the same guard the
+ * outer walk has, for the same reason. A relation clause silently treated as
+ * satisfied would publish a pharmacy nobody runs and this spec would applaud.
+ */
+function relationSatisfied(
+  field: string,
+  some: Record<string, unknown>,
+  related: unknown,
+): boolean {
+  if (!Array.isArray(related)) {
+    throw new Error(`Row carries no ${field} relation to test { some } against`);
+  }
+  return related.some((linked: Record<string, unknown>) =>
+    Object.entries(some).every(([innerField, innerClause]) => {
+      const actual = linked[innerField];
+      if (innerClause !== null && typeof innerClause === 'object') {
+        const { in: allowed } = innerClause as { in?: unknown[] };
+        if (!Array.isArray(allowed)) {
+          throw new Error(
+            `Unsupported clause on ${field}.some.${innerField}: ${JSON.stringify(innerClause)}`,
+          );
+        }
+        return allowed.includes(actual);
+      }
+      return actual === innerClause;
+    }),
+  );
+}
+
 describe('the clauses the rule is made of', () => {
-  it('requires verification, participation and a claimed classification', () => {
+  it('requires verification, participation, a claimed classification and an operator', () => {
     expect(Object.keys(PUBLIC_PHARMACY_WHERE).sort()).toEqual([
       'commercialClassification',
       'isParticipating',
+      // The linked-account relation: somebody is running the pharmacy now.
+      'users',
       'verificationStatus',
     ]);
   });
@@ -90,6 +135,7 @@ describe('an unclaimed directory record', () => {
         verificationStatus: VerificationStatus.VERIFIED,
         isParticipating: true,
         commercialClassification: CommercialClassification.DIRECTORY_UNCLAIMED,
+        users: [{ isActive: true, role: UserRole.PHARMACY_ADMIN }],
       }),
     ).toBe(false);
   });
@@ -121,7 +167,7 @@ describe('a claimed pharmacy in the network', () => {
     expect(wouldBeVisible(pharmacy({ isParticipating: false }))).toBe(false);
   });
 
-  it('needs all three: any one of them missing hides it', () => {
+  it('needs all of them: any one missing hides it', () => {
     expect(
       wouldBeVisible(
         pharmacy({
@@ -191,6 +237,67 @@ describe('every patient surface uses this one rule', () => {
 
     expect(nested.commercialClassification).toEqual({
       in: PATIENT_VISIBLE_CLASSIFICATIONS,
+    });
+  });
+});
+
+describe('F. a pharmacy no account is linked to', () => {
+  // The delink case. A pharmacy promoted into the network keeps its
+  // classification forever — that field records a claim that was made once and
+  // cannot express the operator going away — so this is the clause that has to
+  // notice. Its rows are all kept: unlinking an account is not a deletion.
+  it('is hidden once its last account is unlinked', () => {
+    expect(wouldBeVisible(pharmacy({ users: [] }))).toBe(false);
+  });
+
+  it('is hidden when its only account has been deactivated', () => {
+    expect(
+      wouldBeVisible(pharmacy({ users: [{ isActive: false, role: UserRole.PHARMACY_ADMIN }] })),
+    ).toBe(false);
+  });
+
+  it('is hidden when the only linked account is not an operator', () => {
+    // A public account linked to a pharmacy row is not somebody running it.
+    expect(
+      wouldBeVisible(pharmacy({ users: [{ isActive: true, role: UserRole.PUBLIC }] })),
+    ).toBe(false);
+  });
+
+  it('G. is visible again the moment an account is relinked', () => {
+    // Nothing else has to happen — no re-upload, no re-approval, no
+    // reclassification. The rule is derived, so the relink is the whole fix.
+    expect(
+      wouldBeVisible(pharmacy({ users: [{ isActive: true, role: UserRole.PHARMACY_ADMIN }] })),
+    ).toBe(true);
+  });
+
+  it.each([UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF])(
+    'counts an active %s as somebody running it',
+    (role) => {
+      expect(wouldBeVisible(pharmacy({ users: [{ isActive: true, role }] }))).toBe(true);
+    },
+  );
+
+  it('needs only one of several accounts to remain', () => {
+    // Delinking one of two managers changes nothing: the branch is still run.
+    expect(
+      wouldBeVisible(
+        pharmacy({
+          users: [
+            { isActive: false, role: UserRole.PHARMACY_ADMIN },
+            { isActive: true, role: UserRole.PHARMACY_STAFF },
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('is a relation filter, so no stored flag can go stale', () => {
+    // Why this is asked of the relation rather than kept as a column: a flag
+    // recomputed on delink is a flag that is wrong the moment somebody relinks
+    // through a path that forgot to recompute it.
+    expect(PUBLIC_PHARMACY_WHERE.users).toEqual({
+      some: { isActive: true, role: { in: [UserRole.PHARMACY_ADMIN, UserRole.PHARMACY_STAFF] } },
     });
   });
 });

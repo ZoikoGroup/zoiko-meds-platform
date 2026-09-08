@@ -96,7 +96,13 @@ function buildService({
       // is the ordinary case.
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    user: { findUnique: jest.fn().mockResolvedValue({ pharmacyId: 'ph_1' }), update: jest.fn() },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ pharmacyId: 'ph_1' }),
+      update: jest.fn(),
+      // The linked-operator count the visibility rule reads
+      // (ACTIVE_PHARMACY_MANAGER_WHERE): this pharmacy has one signed in.
+      count: jest.fn().mockResolvedValue(1),
+    },
     verificationRequest: {
       findUnique: jest.fn().mockResolvedValue({ changeKinds: [] }),
       // submitForReview asks for the open request first; currentRequestId then

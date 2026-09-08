@@ -34,11 +34,32 @@ vi.mock('react-router-dom', async () => {
 
 const { default: Login } = await import('../Login')
 
-/** A refusal that carries the reason, as apiFetch builds it. */
-function refusal(message, body) {
+/**
+ * A refusal exactly as the API delivers one.
+ *
+ * The whole envelope AllExceptionsFilter serializes, not just the flag this
+ * file reads. It used to be `{ message, ...body }` — a fixture asserting a
+ * shape rather than reproducing one, and it was wrong: the filter was
+ * discarding every field of the exception payload except `message` and
+ * `error`, so `mfaRequired` never left the server. These tests passed against
+ * a body production never sent, while an enrolled administrator was shown
+ * "Enter the code from your authenticator app" with no field to answer it.
+ *
+ * So the fixture is the real thing now, standard fields and all. A fixture
+ * that is not the real shape can only prove that the test agrees with itself.
+ */
+function refusal(message, extras) {
   const err = new Error(message)
   err.status = 401
-  err.body = { message, ...body }
+  err.body = {
+    ...extras,
+    statusCode: 401,
+    error: 'Unauthorized',
+    message,
+    path: '/api/auth/login',
+    requestId: 'req_1',
+    timestamp: '2026-09-08T00:00:00.000Z',
+  }
   return err
 }
 
@@ -147,9 +168,48 @@ describe('an account that has enrolled', () => {
     await user.click(screen.getByRole('button', { name: /verify code/i }))
 
     expect(await screen.findByText(/not right/i)).toBeDefined()
+    // Still there to type into. A rejected code that took the field away would
+    // leave the message standing over nothing to answer it — the shape of the
+    // reported failure, arrived at a different way.
+    expect(screen.getByLabelText(/authentication code/i)).toBeDefined()
+    expect(screen.getByRole('button', { name: /verify code/i })).toBeDefined()
     // Cleared, because the next attempt needs a different code — the previous
     // one is wrong and, thirty seconds on, may also be stale.
     await waitFor(() => expect(screen.getByLabelText(/authentication code/i).value).toBe(''))
+  })
+
+  it('accepts the second code and signs in', async () => {
+    // The end of the flow: a wrong code, then the right one, then a session.
+    // Asserted here because "the field appears" and "the code works" were never
+    // the same test, and only the pair proves an administrator can get in.
+    loginMock
+      .mockRejectedValueOnce(
+        refusal('Enter the code from your authenticator app.', { mfaRequired: true }),
+      )
+      .mockRejectedValueOnce(
+        refusal('That code is not right. Try the current one.', { mfaRequired: true }),
+      )
+      .mockResolvedValueOnce({ role: 'SUPER_ADMIN' })
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    await user.type(await screen.findByLabelText(/authentication code/i), '000000')
+    await user.click(screen.getByRole('button', { name: /verify code/i }))
+    await waitFor(() => expect(screen.getByLabelText(/authentication code/i).value).toBe(''))
+
+    await user.type(screen.getByLabelText(/authentication code/i), '654321')
+    await user.click(screen.getByRole('button', { name: /verify code/i }))
+
+    await waitFor(() =>
+      expect(loginMock).toHaveBeenLastCalledWith(
+        'root@zoikomeds.test',
+        'correct-horse',
+        '654321',
+      ),
+    )
+    // Only now. Nothing navigated on either refusal.
+    expect(navigateMock).toHaveBeenCalledTimes(1)
   })
 
   it('does not carry a code into a sign-in for somebody else', async () => {
@@ -175,6 +235,137 @@ describe('an account that has enrolled', () => {
         undefined,
       ),
     )
+  })
+})
+
+/**
+ * The notice leaves with the field it was asking about.
+ *
+ * The demand for a code and the box to type it in are one thing on the screen,
+ * and they were two things in the component: editing an address or a password
+ * reset the stage and cleared the field, and left the sentence standing over
+ * the space where it had been. That is the same screen the dropped
+ * `mfaRequired` flag produced — a demand for a code with nowhere to answer it —
+ * reached by a keystroke instead. A password manager refilling a field is
+ * enough to arrive there, so it was not a rare route.
+ */
+describe('the code notice does not outlive the code field', () => {
+  const codeDemanded = () =>
+    loginMock.mockRejectedValueOnce(
+      refusal('Enter the code from your authenticator app.', { mfaRequired: true }),
+    )
+
+  it('clears the message when the address is edited', async () => {
+    codeDemanded()
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    // The state being left: both halves present.
+    expect(await screen.findByLabelText(/authentication code/i)).toBeDefined()
+    expect(screen.getByText(/enter the code from your authenticator app/i)).toBeDefined()
+
+    await user.type(screen.getByLabelText(/email address/i), '.uk')
+
+    expect(screen.queryByLabelText(/authentication code/i)).toBeNull()
+    expect(screen.queryByText(/enter the code from your authenticator app/i)).toBeNull()
+  })
+
+  it('clears the message when the password is edited', async () => {
+    // The one a password manager triggers, and the one the report described.
+    codeDemanded()
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    await screen.findByLabelText(/authentication code/i)
+
+    await user.type(screen.getByLabelText(/^password/i), '!')
+
+    expect(screen.queryByLabelText(/authentication code/i)).toBeNull()
+    expect(screen.queryByText(/enter the code from your authenticator app/i)).toBeNull()
+  })
+
+  it('leaves a plain password sign-in submittable afterwards', async () => {
+    // Back to step one, with nothing of the last attempt attached: no code, and
+    // no notice about one.
+    codeDemanded()
+    loginMock.mockResolvedValueOnce({ role: 'SUPER_ADMIN' })
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    await screen.findByLabelText(/authentication code/i)
+    await user.type(screen.getByLabelText(/email address/i), '.uk')
+    await user.click(screen.getByRole('button', { name: /continue securely/i }))
+
+    await waitFor(() =>
+      expect(loginMock).toHaveBeenLastCalledWith(
+        'root@zoikomeds.test.uk',
+        'correct-horse',
+        undefined,
+      ),
+    )
+    expect(navigateMock).toHaveBeenCalled()
+  })
+
+  it('asks again on the next refusal, message and field together', async () => {
+    // Clearing the notice must not be a way to lose the step. The second
+    // account is enrolled too, and the form has to come back to it.
+    codeDemanded()
+    loginMock.mockRejectedValueOnce(
+      refusal('Enter the code from your authenticator app.', { mfaRequired: true }),
+    )
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    await screen.findByLabelText(/authentication code/i)
+    await user.type(screen.getByLabelText(/email address/i), '.uk')
+    await user.click(screen.getByRole('button', { name: /continue securely/i }))
+
+    expect(await screen.findByLabelText(/authentication code/i)).toBeDefined()
+    expect(screen.getByText(/enter the code from your authenticator app/i)).toBeDefined()
+  })
+
+  it('clears the enrolment notice, and the banner above it', async () => {
+    // The other state this reset can strand. There are two things on screen
+    // here: the amber panel, which the reset already took down, and the error
+    // banner carrying the server's sentence, which it did not — so a different
+    // account's attempt began under a refusal addressed to the last one.
+    loginMock.mockRejectedValueOnce(
+      refusal(
+        'This workspace requires two-factor authentication. Ask an administrator to help you set it up.',
+        { mfaEnrolmentRequired: true },
+      ),
+    )
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    expect(await screen.findByText(/has not set it up yet/i)).toBeDefined()
+    expect(screen.getByText(/ask an administrator to help you set it up/i)).toBeDefined()
+
+    await user.type(screen.getByLabelText(/email address/i), '.uk')
+
+    expect(screen.queryByText(/has not set it up yet/i)).toBeNull()
+    expect(screen.queryByText(/ask an administrator to help you set it up/i)).toBeNull()
+  })
+
+  it('keeps a wrong-password notice through the retyping that answers it', async () => {
+    // The limit of the change, and the reason the guard on it stays. This
+    // message is about the password, so it has to survive the password being
+    // corrected — clearing on every edit would blank the reason mid-fix.
+    loginMock.mockRejectedValueOnce(refusal('Invalid email or password'))
+    const user = userEvent.setup()
+    renderLogin()
+
+    await signIn(user)
+    expect(await screen.findByText(/invalid email or password/i)).toBeDefined()
+
+    await user.type(screen.getByLabelText(/^password/i), '-again')
+
+    expect(screen.getByText(/invalid email or password/i)).toBeDefined()
   })
 })
 

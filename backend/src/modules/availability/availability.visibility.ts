@@ -2,6 +2,7 @@ import {
   AvailabilityConfidence,
   CommercialClassification,
   Prisma,
+  UserRole,
   VerificationStatus,
 } from '@prisma/client';
 
@@ -44,6 +45,43 @@ export const PATIENT_VISIBLE_CLASSIFICATIONS: CommercialClassification[] = [
   CommercialClassification.PILOT_NON_BILLABLE,
 ];
 
+/**
+ * The roles that operate a pharmacy on ZoikoMeds.
+ *
+ * Staff as well as admins: a branch run day to day by a staff account is still
+ * being run by somebody, and hiding it because the admin seat is empty would
+ * take a working pharmacy off patient search.
+ */
+export const PHARMACY_OPERATOR_ROLES: UserRole[] = [
+  UserRole.PHARMACY_ADMIN,
+  UserRole.PHARMACY_STAFF,
+];
+
+/**
+ * Somebody is actually running this pharmacy.
+ *
+ * The classification allowlist above already says patients are only shown
+ * pharmacies somebody runs — that is what excludes DIRECTORY_UNCLAIMED, and it
+ * is the whole point of MSA-54: approving a licence says the pharmacy is real,
+ * not that anyone stands behind the stock levels it reports.
+ *
+ * But a classification only records that somebody claimed the pharmacy once. It
+ * cannot express the operator going away. Once promoted to VERIFIED_NETWORK_CORE
+ * a record kept that standing forever, so delinking the last manager account
+ * left the pharmacy — and every medicine it had reported — in patient search
+ * with nobody answering for any of it. Being claimed is a fact about the past;
+ * being managed is a fact about now, and patients are shown the second one.
+ *
+ * Derived rather than stored, deliberately. A flag recomputed on delink is a
+ * flag that goes stale the moment somebody relinks through a path that forgot
+ * to recompute it — the exact failure the classification promotion was written
+ * to end. Asking the relation means a relink restores visibility immediately
+ * and needs no inventory re-upload, and there is no third copy of the truth.
+ */
+export const ACTIVE_PHARMACY_MANAGER_WHERE: Prisma.PharmacyWhereInput = {
+  users: { some: { isActive: true, role: { in: PHARMACY_OPERATOR_ROLES } } },
+};
+
 /** A pharmacy whose signals may be shown publicly. */
 export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
   // Not yet verified, rejected or suspended: not part of the verified network,
@@ -60,6 +98,10 @@ export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
   // at all (MSA-54). Approval deliberately does not promote the classification,
   // so the claim has to happen on its own.
   commercialClassification: { in: PATIENT_VISIBLE_CLASSIFICATIONS },
+  // And somebody has to still be running it. See ACTIVE_PHARMACY_MANAGER_WHERE:
+  // the classification records a claim that was made, this records an operator
+  // who is there now, and a delinked pharmacy has the first without the second.
+  ...ACTIVE_PHARMACY_MANAGER_WHERE,
 };
 
 /**
@@ -79,11 +121,21 @@ export function isPatientVisible(pharmacy: {
   verificationStatus: VerificationStatus;
   isParticipating: boolean;
   commercialClassification: CommercialClassification;
+  /**
+   * Whether an active PHARMACY_ADMIN or PHARMACY_STAFF account is linked.
+   *
+   * Required rather than optional, and required for a reason: the caller that
+   * forgets it is the caller that tells an operator "patients can see you"
+   * about a pharmacy no patient query returns. A default would make that
+   * mistake silent, so the type asks the question out loud.
+   */
+  hasActiveManager: boolean;
 }): boolean {
   return (
     pharmacy.verificationStatus === VerificationStatus.VERIFIED &&
     pharmacy.isParticipating === true &&
-    PATIENT_VISIBLE_CLASSIFICATIONS.includes(pharmacy.commercialClassification)
+    PATIENT_VISIBLE_CLASSIFICATIONS.includes(pharmacy.commercialClassification) &&
+    pharmacy.hasActiveManager === true
   );
 }
 

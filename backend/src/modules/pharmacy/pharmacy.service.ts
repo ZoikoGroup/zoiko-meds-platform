@@ -38,7 +38,10 @@ import {
   patientListingBlockedReason,
   pharmacyVisibilityState,
 } from './participation';
-import { isPatientVisible } from '../availability/availability.visibility';
+import {
+  PHARMACY_OPERATOR_ROLES,
+  isPatientVisible,
+} from '../availability/availability.visibility';
 import {
   NotificationCategory,
   NotificationPreferencesService,
@@ -336,6 +339,20 @@ export class PharmacyService {
     });
     if (!pharmacy) throw new NotFoundException('Pharmacy profile not found');
 
+    // Is anybody still running this branch? Patients are only shown pharmacies
+    // with an active operator answering for the stock they report, so the
+    // banner has to ask the same question the patient queries ask — otherwise
+    // the portal says "visible to users" about a pharmacy whose last manager
+    // account was unlinked, and no search returns it.
+    const activeManagers = await this.prisma.user.count({
+      where: {
+        pharmacyId,
+        isActive: true,
+        role: { in: PHARMACY_OPERATOR_ROLES },
+      },
+    });
+    const visibility = { ...pharmacy, hasActiveManager: activeManagers > 0 };
+
     const latestReq = await this.prisma.verificationRequest.findFirst({
       where: { pharmacyId },
       orderBy: { createdAt: 'desc' },
@@ -364,14 +381,14 @@ export class PharmacyService {
       // from this and from nothing else: deciding it there from
       // verificationStatus alone would congratulate an operator whose pharmacy
       // no search returns, which is the one thing this screen must not do.
-      patientVisible: isPatientVisible(pharmacy),
+      patientVisible: isPatientVisible(visibility),
       // The same answer as one value, so the portal picks a banner instead of
       // re-deriving the rule. See pharmacyVisibilityState.
-      visibilityState: pharmacyVisibilityState(pharmacy),
+      visibilityState: pharmacyVisibilityState(visibility),
       // Null unless something is holding an approved pharmacy back. Verified
       // and listed are separate answers now, and an operator who has been
       // approved but cannot be found needs to be told which one is missing.
-      listingBlockedReason: patientListingBlockedReason(pharmacy),
+      listingBlockedReason: patientListingBlockedReason(visibility),
       phone: pharmacy.phone || '',
       email: user?.email || '',
       addressLine1: pharmacy.addressLine1 || '',
