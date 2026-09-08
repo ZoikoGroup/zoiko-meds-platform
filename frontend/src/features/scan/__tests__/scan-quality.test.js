@@ -27,7 +27,12 @@ const recognizeMock = vi.fn()
 const createWorkerMock = vi.fn()
 const terminateMock = vi.fn(async () => {})
 
-vi.mock('tesseract.js', () => ({ createWorker: (...args) => createWorkerMock(...args) }))
+// PSM is read by ocr-worker to set the page segmentation mode; the values
+// mirror the real enum for the modes this codebase selects.
+vi.mock('tesseract.js', () => ({
+  createWorker: (...args) => createWorkerMock(...args),
+  PSM: { AUTO: '3', SINGLE_BLOCK: '6', SPARSE_TEXT: '11' },
+}))
 
 const getDocumentMock = vi.fn()
 vi.mock('pdfjs-dist', () => ({
@@ -78,6 +83,7 @@ beforeEach(() => {
   createWorkerMock.mockImplementation(async () => ({
     recognize: recognizeMock,
     terminate: terminateMock,
+    setParameters: async () => {},
   }))
   mockOcrText('')
 })
@@ -236,12 +242,28 @@ describe('assessScanQuality', () => {
     expect(result.reasons).toContain('ROWS_LOST')
   })
 
-  it('does not flag a one-row shortfall', () => {
+  it('flags a one-row shortfall', () => {
+    // This used to be tolerated: two numbered rows yielding one medicine was
+    // reported as a good scan, so a patient saw one card with nothing to
+    // suggest a second had been missed. A missing medicine is the most
+    // consequential thing this feature can get wrong.
     const result = assessScanQuality({
       rawText: ['1. Tab. Amoxicillin 500mg', '2. Cap. Omeprazole 20mg'].join('\n'),
       ocrConfidence: 0.9,
       candidateCount: 1,
       medicines: [medicine()],
+    })
+
+    expect(result.reasons).toContain('ROWS_LOST')
+    expect(result.quality).not.toBe('good')
+  })
+
+  it('does not flag a page whose numbered rows all came out', () => {
+    const result = assessScanQuality({
+      rawText: ['1. Tab. Amoxicillin 500mg', '2. Cap. Omeprazole 20mg'].join('\n'),
+      ocrConfidence: 0.9,
+      candidateCount: 2,
+      medicines: [medicine({ name: 'Amoxicillin' }), medicine({ name: 'Omeprazole' })],
     })
 
     expect(result.reasons).not.toContain('ROWS_LOST')

@@ -270,7 +270,7 @@ const CLOCK_RE = /\b\d{1,2}\s*[:.]\s*\d{2}\s*(?:am|pm|hrs)?\b/i
 
 /** Non-medicine clinical section headings. */
 const CLINICAL_SECTION_RE =
-  /^\s*(diagnosis|dx|complaints?|c\/o|chief\s+complaints?|symptoms?|hopi|history|h\/o|examination|o\/e|findings?|investigations?|labs?|lab\s+tests?|vitals?|allergies|impression|plan|follow[\s-]?up|review|remarks?|notes?|precautions?|side\s+effects?|(?:general\s+)?instructions?|(?:general\s+)?advice)\b\s*[:.\-–]?/i
+  /^\s*(diagnosis|dx|complaints?|c\/o|chief\s+complaints?|symptoms?|hopi|history|h\/o|examination|o\/e|findings?|investigations?|labs?|lab\s+tests?|vitals?|allergies|impression|plan|follow[\s-]?up|review|remarks?|notes?|precautions?|side\s+effects?|(?:general\s+)?instructions?|(?:general\s+)?advice|clinic|clinic\s+(?:timings?|hours?)|opd|opd\s+timings?|timings?|working\s+hours?|consultation\s+hours?)\b\s*[:.\-–]?/i
 
 // --- Prose that shares a prescription with the medicines --------------------
 
@@ -302,6 +302,34 @@ const SCHEDULE_WORDS = [
 /** The name of an investigation, which is what these lines end with. */
 const INVESTIGATION_RE =
   /\b(?:function\s+tests?|tests?|profile|panel|scan|x-?ray|ultrasound|biopsy|culture|count|levels?|screening)\s*$/i
+
+/**
+ * Opening hours, written as words.
+ *
+ * A prescription is printed on a clinic's letterhead, so days, months and
+ * scheduling vocabulary sit on the same page as the medicines — and sometimes
+ * inside the Rx block, where position offers no protection. "CLOSED SUNDAY"
+ * and "Monday to Saturday" are name-shaped by every structural measure: two
+ * capitalised, pronounceable, comma-free tokens.
+ *
+ * A vocabulary rather than a list of phrases, so any arrangement of these words
+ * is caught — "Sunday Closed", "Closed on Monday", "OPD Timings" — instead of
+ * only the spellings someone thought of.
+ */
+const SCHEDULE_VOCABULARY_RE =
+  /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|january|february|march|april|june|july|august|september|october|november|december|closed|holiday|holidays|timing|timings|opd|appointment|appointments|reception|emergency|helpline|weekday|weekdays|weekend|weekends)\b/i
+
+/**
+ * Conditions a prescription names but does not prescribe.
+ *
+ * The diagnosis usually sits under its own heading, which closes the medicine
+ * section — but not always, and a bare condition inside the Rx block is
+ * otherwise indistinguishable from a brand name. Deliberately the common ones
+ * rather than a medical ontology: this is a guard against the frequent case,
+ * and it is documented as incomplete rather than presented as exhaustive.
+ */
+const CONDITION_VOCABULARY_RE =
+  /^\s*(?:malaria|dengue|typhoid|chikungunya|tuberculosis|tb|diabetes|diabetic|hypertension|anaemia|anemia|asthma|migraine|arthritis|gastritis|jaundice|pneumonia|bronchitis|sinusitis|tonsillitis|dermatitis|eczema|psoriasis|hypothyroidism|hyperthyroidism|obesity|covid(?:[\s-]?19)?|influenza|viral\s+fever|fungal\s+infection|urinary\s+tract\s+infection|uti)\s*$/i
 
 /** Complaint vocabulary — a symptom line, not a product. */
 const SYMPTOM_RE =
@@ -347,6 +375,12 @@ export function isNonMedicineProse(line) {
   // a product, and this guard is why the vocabulary below can afford to be
   // broad.
   if (STRENGTH_RE.test(text) || FORM_RE.test(text)) return false
+
+  // Opening hours and bare condition names. Both read as product names by
+  // every structural measure — capitalised, pronounceable, no punctuation —
+  // so vocabulary is the only thing that separates them from a brand.
+  if (SCHEDULE_VOCABULARY_RE.test(text)) return true
+  if (CONDITION_VOCABULARY_RE.test(text)) return true
 
   return INVESTIGATION_RE.test(text) || SYMPTOM_RE.test(text)
 }
@@ -433,7 +467,27 @@ export function scoreLine(line, { inMedicineSection = false } = {}) {
     evidence.bareDose = true
     score += 2
   }
-  if (inMedicineSection) score += 2
+  // Sitting in the Rx block is corroboration, never evidence on its own.
+  //
+  // This used to be an unconditional +2, which exactly equals ACCEPT_THRESHOLD:
+  // any capitalised phrase that happened to fall inside the medicine section was
+  // accepted on that alone. "CLOSED SUNDAY" reached the patient as a medicine
+  // card that way — no form, no strength, no frequency, no list marker, nothing
+  // about it medicinal except where it sat on the page.
+  //
+  // Now the bonus needs something of its own to amplify. A line that already
+  // carries one real medicine signal is made more confident by its position; a
+  // line carrying none is not rescued by it.
+  const hasOwnEvidence =
+    evidence.formPrefix ||
+    evidence.form ||
+    evidence.strength ||
+    evidence.frequency ||
+    evidence.duration ||
+    evidence.route ||
+    evidence.listItem ||
+    evidence.bareDose
+  if (inMedicineSection && hasOwnEvidence) score += 2
 
   // Negative structure. A field label or a credential outweighs a stray
   // strength-looking number (e.g. "Weight: 62 kg", "BP: 120/80").

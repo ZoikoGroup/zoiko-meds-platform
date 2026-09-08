@@ -20,7 +20,8 @@ const recognizeMock = vi.fn()
 const createWorkerMock = vi.fn()
 const terminateMock = vi.fn(async () => {})
 
-vi.mock('tesseract.js', () => ({ createWorker: (...a) => createWorkerMock(...a) }))
+vi.mock('tesseract.js', () => ({ PSM: { AUTO: '3', SINGLE_BLOCK: '6', SPARSE_TEXT: '11' },
+  createWorker: (...a) => createWorkerMock(...a) }))
 
 const getDocumentMock = vi.fn()
 vi.mock('pdfjs-dist', () => ({
@@ -138,6 +139,7 @@ beforeEach(() => {
   createWorkerMock.mockImplementation(async () => ({
     recognize: recognizeMock,
     terminate: terminateMock,
+    setParameters: async () => {},
   }))
   pdfWithLayer(TWO_COLUMN_PAGE)
 })

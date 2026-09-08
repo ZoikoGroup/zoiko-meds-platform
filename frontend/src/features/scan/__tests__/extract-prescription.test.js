@@ -8,6 +8,7 @@ const createWorkerMock = vi.fn()
 const terminateMock = vi.fn(async () => {})
 
 vi.mock('tesseract.js', () => ({
+  PSM: { AUTO: '3', SINGLE_BLOCK: '6', SPARSE_TEXT: '11' },
   createWorker: (...args) => createWorkerMock(...args),
 }))
 
@@ -72,6 +73,7 @@ beforeEach(() => {
   createWorkerMock.mockImplementation(async () => ({
     recognize: recognizeMock,
     terminate: terminateMock,
+    setParameters: async () => {},
   }))
   mockOcrText('')
 })
