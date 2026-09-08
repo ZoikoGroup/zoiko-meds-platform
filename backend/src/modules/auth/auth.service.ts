@@ -161,7 +161,49 @@ export class AuthService {
     }
 
     // The password was right. Everything below decides whether that is enough.
-    const factor = this.mfa.verify(user, dto.mfaCode);
+    //
+    // One question, asked once: does this account owe a second factor, and if
+    // so which kind of answer would settle it. The authenticator is asked for
+    // when the workspace requires it — not whenever an account happens to hold
+    // one. Enrolment used to be the entire test, which made the workspace
+    // switch govern nothing for the accounts it names: an administrator who had
+    // set an authenticator up was stopped at a code prompt for ever after, with
+    // the policy off and the prompt supposedly lifted. Enrolment is a
+    // capability; the policy is what turns it into a requirement (MSA-42).
+    //
+    // Asked after the password so that neither the policy nor an account's
+    // enrolment can be used to discover which addresses have accounts.
+    const requirement = await this.mfa.loginRequirement(user);
+
+    // Required of this account, and nothing enrolled that could satisfy it. The
+    // remedy is enrolment rather than another attempt, so this says so instead
+    // of asking for a code that cannot exist.
+    if (requirement === 'enrolment') {
+      await this.auditWriter.write(
+        user.id,
+        'auth.login_failed',
+        'User',
+        user.id,
+        {
+          module: 'Authentication',
+          action: 'Failed Login',
+          status: 'Failed',
+          userEmail: user.email,
+          userRole: user.role,
+          reason: 'Workspace requires two-factor authentication; account not enrolled',
+          userAgent,
+        },
+        ipAddress,
+      );
+      throw new UnauthorizedException({
+        message:
+          'This workspace requires administrators to use an authenticator app. Set one up from the settings page of an account that still has access.',
+        mfaEnrolmentRequired: true,
+      });
+    }
+
+    const factor =
+      requirement === 'code' ? this.mfa.verify(user, dto.mfaCode) : { ok: true as const };
     if (!factor.ok) {
       await this.auditWriter.write(
         user.id,
@@ -194,46 +236,6 @@ export class AuthService {
             ? 'Enter the code from your authenticator app.'
             : 'That code is not right. Try the current one.',
         mfaRequired: true,
-      });
-    }
-
-    // Workspace policy, checked after the password so it cannot be used to
-    // discover which addresses have accounts. Refused rather than waved
-    // through: letting an administrator in on the password alone is the exact
-    // thing the policy exists to stop, and a switch that does that is the bug
-    // (MSA-42).
-    //
-    // Administrators only. The policy used to reach every account, which meant
-    // one switch on the settings page could refuse every patient and every
-    // pharmacy their sign-in — none of whom have anywhere to enrol an
-    // authenticator, or any way to get a session in which to try. Everybody
-    // else turns on the emailed link below if they want a second factor, and
-    // nothing turns it on for them.
-    if (
-      user.role === UserRole.SUPER_ADMIN &&
-      !user.mfaEnabledAt &&
-      (await this.mfa.isRequiredByPolicy())
-    ) {
-      await this.auditWriter.write(
-        user.id,
-        'auth.login_failed',
-        'User',
-        user.id,
-        {
-          module: 'Authentication',
-          action: 'Failed Login',
-          status: 'Failed',
-          userEmail: user.email,
-          userRole: user.role,
-          reason: 'Workspace requires two-factor authentication; account not enrolled',
-          userAgent,
-        },
-        ipAddress,
-      );
-      throw new UnauthorizedException({
-        message:
-          'This workspace requires administrators to use an authenticator app. Set one up from the settings page of an account that still has access.',
-        mfaEnrolmentRequired: true,
       });
     }
 

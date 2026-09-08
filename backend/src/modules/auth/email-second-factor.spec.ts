@@ -47,23 +47,30 @@ function buildService(overrides: { user?: Record<string, unknown> } = {}) {
       findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
+    // The workspace policy, off as it is in the schema. The tests at the foot
+    // of this file turn it on.
+    organization: { findUnique: jest.fn().mockResolvedValue({ requireMfa: false }) },
   };
   const mail = {
     sendLoginVerification: jest.fn().mockResolvedValue(undefined),
   };
   const audit = { write: jest.fn() };
   const jwt = { signAsync: jest.fn().mockResolvedValue('signed.jwt.token') };
-  const mfa = {
-    verify: jest.fn().mockReturnValue({ ok: true }),
-    isRequiredByPolicy: jest.fn().mockResolvedValue(false),
-  };
+  // The real service, not a stand-in. The last group here asserts which
+  // accounts the workspace policy reaches, and a stub of that decision would
+  // only prove this file agrees with itself — which is exactly how the
+  // policy-versus-enrolment defect survived a green suite.
+  const mfa = new MfaService(
+    prisma as unknown as PrismaService,
+    audit as unknown as AuditWriter,
+  );
 
   const service = new AuthService(
     prisma as unknown as PrismaService,
     jwt as never,
     mail as unknown as MailService,
     audit as unknown as AuditWriter,
-    mfa as unknown as MfaService,
+    mfa,
   );
 
   return { service, prisma, mail, audit, jwt, mfa, user };
@@ -341,12 +348,16 @@ describe('choosing to use it', () => {
 });
 
 describe('the workspace policy after this change', () => {
+  /** Turn the workspace switch on for this service's own database. */
+  const requirePolicy = (prisma: { organization: { findUnique: jest.Mock } }) =>
+    prisma.organization.findUnique.mockResolvedValue({ requireMfa: true });
+
   it('no longer refuses a patient who has not enrolled an authenticator', async () => {
     // The bug in its worst form: one switch on the admin settings page turned
     // every patient and every pharmacy out of the platform, with nowhere to
     // enrol and no session in which to try.
-    const { service, mfa, jwt } = buildService({ user: { role: UserRole.PUBLIC } });
-    mfa.isRequiredByPolicy.mockResolvedValue(true);
+    const { service, prisma, jwt } = buildService({ user: { role: UserRole.PUBLIC } });
+    requirePolicy(prisma);
 
     const result = await login(service);
 
@@ -355,25 +366,43 @@ describe('the workspace policy after this change', () => {
   });
 
   it('no longer refuses a pharmacy either', async () => {
-    const { service, mfa } = buildService({ user: { role: UserRole.PHARMACY_ADMIN } });
-    mfa.isRequiredByPolicy.mockResolvedValue(true);
+    const { service, prisma } = buildService({ user: { role: UserRole.PHARMACY_ADMIN } });
+    requirePolicy(prisma);
 
     await expect(login(service)).resolves.toHaveProperty('accessToken');
   });
 
   it('still refuses an unenrolled administrator, which is what it is for', async () => {
-    const { service, mfa } = buildService({ user: { role: UserRole.SUPER_ADMIN } });
-    mfa.isRequiredByPolicy.mockResolvedValue(true);
+    const { service, prisma } = buildService({ user: { role: UserRole.SUPER_ADMIN } });
+    requirePolicy(prisma);
 
     await expect(login(service)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it('lets an enrolled administrator through', async () => {
-    const { service, mfa } = buildService({
+  it('asks an enrolled administrator for the code, rather than the enrolment', async () => {
+    // Both administrators are refused with the policy on, and the two refusals
+    // are not interchangeable: one has an authenticator to answer with and the
+    // other has nothing, so the remedies differ and the flags have to as well.
+    const { service, prisma } = buildService({
       user: { role: UserRole.SUPER_ADMIN, mfaEnabledAt: new Date() },
     });
-    mfa.isRequiredByPolicy.mockResolvedValue(true);
+    requirePolicy(prisma);
+
+    await expect(login(service)).rejects.toMatchObject({
+      response: { mfaRequired: true },
+    });
+  });
+
+  it('signs an enrolled administrator in on the password when the switch is off', async () => {
+    // The policy is the switch, so an enrolment it is not asking for changes
+    // nothing about this sign-in — and is still on the account afterwards.
+    const { service, prisma } = buildService({
+      user: { role: UserRole.SUPER_ADMIN, mfaEnabledAt: new Date() },
+    });
 
     await expect(login(service)).resolves.toHaveProperty('accessToken');
+    for (const [args] of prisma.user.update.mock.calls) {
+      expect(args?.data ?? {}).not.toHaveProperty('mfaEnabledAt');
+    }
   });
 });

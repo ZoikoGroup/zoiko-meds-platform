@@ -13,8 +13,16 @@ import { generateCode, generateSecret } from './mfa/totp';
 /**
  * MSA-42 — the settings page's "Enforce multi-factor authentication" switch was
  * bound to component state and read by nothing. These hold the enforcement it
- * claimed: a code demanded where one is enrolled, and a session refused where
- * the workspace requires a factor the account does not have.
+ * claimed.
+ *
+ * The switch decides. That is the correction these were rewritten for: the code
+ * used to be demanded of anyone holding an enrolment, whatever the policy said,
+ * which made the switch govern nothing for the accounts it names and enrolment
+ * a one-way door — an administrator who set an authenticator up was stopped at
+ * a code prompt for ever after, with the workspace policy off and the prompt
+ * supposedly lifted. Enrolment is a capability; the policy turns it into a
+ * requirement, and turning the policy off leaves the capability sitting there
+ * untouched.
  */
 describe('login · second factor', () => {
   const SECRET = generateSecret();
@@ -44,6 +52,12 @@ describe('login · second factor', () => {
       .filter((call) => call[1] === 'auth.login_failed')
       .map((call) => call[4]?.reason);
 
+  /** Turn the workspace policy on. Off is the default, as it is in the schema. */
+  const requirePolicy = () =>
+    prisma.organization.findUnique.mockResolvedValue({ requireMfa: true });
+
+  const enrolledAccount = () => account({ mfaSecret: SECRET, mfaEnabledAt: new Date() });
+
   beforeEach(() => {
     prisma = {
       user: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
@@ -71,64 +85,99 @@ describe('login · second factor', () => {
     ).resolves.toBeDefined();
   });
 
-  it('demands a code when one is enrolled', async () => {
-    prisma.user.findUnique.mockResolvedValue(
-      account({ mfaSecret: SECRET, mfaEnabledAt: new Date() }),
-    );
-
-    await expect(
-      auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
-    expect(failureReasons()).toContain('Second factor not supplied');
-  });
-
-  it('tells the client to ask for one, which it cannot know to do otherwise', async () => {
-    prisma.user.findUnique.mockResolvedValue(
-      account({ mfaSecret: SECRET, mfaEnabledAt: new Date() }),
-    );
-
-    await expect(
-      auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
-    ).rejects.toMatchObject({ response: { mfaRequired: true } });
-  });
-
-  it('refuses a wrong code', async () => {
-    prisma.user.findUnique.mockResolvedValue(
-      account({ mfaSecret: SECRET, mfaEnabledAt: new Date() }),
-    );
-
-    await expect(
-      auth.login({ email: 'root@zoikomeds.test', password: PASSWORD, mfaCode: '000000' }),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
-    expect(failureReasons()).toContain('Invalid second factor');
-  });
-
-  it('signs in with the right code', async () => {
-    prisma.user.findUnique.mockResolvedValue(
-      account({ mfaSecret: SECRET, mfaEnabledAt: new Date() }),
-    );
-
-    await expect(
-      auth.login({
-        email: 'root@zoikomeds.test',
-        password: PASSWORD,
-        mfaCode: generateCode(SECRET),
-      }),
-    ).resolves.toBeDefined();
-  });
-
   // The password is still checked first, so the policy cannot be used to
   // discover which addresses have accounts.
   it('rejects a wrong password before ever mentioning the factor', async () => {
-    prisma.user.findUnique.mockResolvedValue(
-      account({ mfaSecret: SECRET, mfaEnabledAt: new Date() }),
-    );
+    requirePolicy();
+    prisma.user.findUnique.mockResolvedValue(enrolledAccount());
 
     await expect(
       auth.login({ email: 'root@zoikomeds.test', password: 'wrong-password' }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(failureReasons()).toContain('Invalid credentials');
     expect(failureReasons()).not.toContain('Second factor not supplied');
+  });
+
+  describe('when the workspace does not require it', () => {
+    // The reported defect. The switch is off, so an administrator signs in on
+    // the password — including one who has an authenticator set up, which is
+    // the case that used to be stopped at a code prompt nothing was asking for.
+
+    it('A. signs in an enrolled administrator on the password alone', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await expect(
+        auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
+      ).resolves.toHaveProperty('accessToken');
+    });
+
+    it('A. asks for no code, and reports no refusal', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await auth.login({ email: 'root@zoikomeds.test', password: PASSWORD });
+
+      expect(failureReasons()).toEqual([]);
+    });
+
+    it('B. signs in an administrator who never enrolled', async () => {
+      prisma.user.findUnique.mockResolvedValue(account());
+
+      await expect(
+        auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
+      ).resolves.toHaveProperty('accessToken');
+    });
+
+    it('leaves the enrolment on the account, dormant rather than spent', async () => {
+      // Nothing about a sign-in under the policy-off path may clear the secret
+      // or the enrolment date: turning the policy back on has to work off the
+      // enrolment that is already there.
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await auth.login({ email: 'root@zoikomeds.test', password: PASSWORD });
+
+      const wrote = prisma.user.update.mock.calls.map((call) => call[0]?.data ?? {});
+      for (const data of wrote) {
+        expect(data).not.toHaveProperty('mfaSecret');
+        expect(data).not.toHaveProperty('mfaEnabledAt');
+      }
+    });
+
+    it('accepts a code it did not ask for, rather than failing on it', async () => {
+      // A client that still has one in hand — a resubmitted form, a password
+      // manager — must not be turned away for offering it.
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await expect(
+        auth.login({
+          email: 'root@zoikomeds.test',
+          password: PASSWORD,
+          mfaCode: generateCode(SECRET),
+        }),
+      ).resolves.toHaveProperty('accessToken');
+    });
+
+    it('G. requires the code again the moment the policy comes back on', async () => {
+      // On, off, on — with the same account and no re-enrolment in between.
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+      const attempt = () => auth.login({ email: 'root@zoikomeds.test', password: PASSWORD });
+
+      requirePolicy();
+      await expect(attempt()).rejects.toMatchObject({ response: { mfaRequired: true } });
+
+      prisma.organization.findUnique.mockResolvedValue({ requireMfa: false });
+      await expect(attempt()).resolves.toHaveProperty('accessToken');
+
+      requirePolicy();
+      await expect(attempt()).rejects.toMatchObject({ response: { mfaRequired: true } });
+      // And the code that was enrolled all along still works.
+      await expect(
+        auth.login({
+          email: 'root@zoikomeds.test',
+          password: PASSWORD,
+          mfaCode: generateCode(SECRET),
+        }),
+      ).resolves.toHaveProperty('accessToken');
+    });
   });
 
   describe('when the workspace requires it', () => {
@@ -171,6 +220,43 @@ describe('login · second factor', () => {
       await expect(
         auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
       ).rejects.toMatchObject({ response: { mfaEnrolmentRequired: true } });
+    });
+
+    it('C. demands a code from an enrolled account', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await expect(
+        auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(failureReasons()).toContain('Second factor not supplied');
+    });
+
+    it('C. tells the client to ask for one, which it cannot know to do otherwise', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await expect(
+        auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
+      ).rejects.toMatchObject({ response: { mfaRequired: true } });
+    });
+
+    it('D. refuses a wrong code, and still asks for one', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolledAccount());
+
+      await expect(
+        auth.login({ email: 'root@zoikomeds.test', password: PASSWORD, mfaCode: '000000' }),
+      ).rejects.toMatchObject({ response: { mfaRequired: true } });
+      expect(failureReasons()).toContain('Invalid second factor');
+    });
+
+    it('is the policy that decides, not the role of the account alone', async () => {
+      // A pharmacy account is not what the switch governs, so the same policy
+      // that stops an administrator does not stop them — the whole reason the
+      // enforcement is asked of one role rather than of everyone.
+      prisma.user.findUnique.mockResolvedValue(account({ role: 'PHARMACY_ADMIN' }));
+
+      await expect(
+        auth.login({ email: 'root@zoikomeds.test', password: PASSWORD }),
+      ).resolves.toHaveProperty('accessToken');
     });
   });
 
@@ -216,6 +302,7 @@ describe('login · second factor', () => {
     const enrolled = () => account({ mfaSecret: SECRET, mfaEnabledAt: new Date() });
 
     it('tells the form to ask for a code', async () => {
+      requirePolicy();
       prisma.user.findUnique.mockResolvedValue(enrolled());
 
       const body = await wireBody({ email: 'root@zoikomeds.test', password: PASSWORD });
@@ -226,6 +313,7 @@ describe('login · second factor', () => {
     });
 
     it('still tells it so when the code was wrong, so the field stays up', async () => {
+      requirePolicy();
       prisma.user.findUnique.mockResolvedValue(enrolled());
 
       const body = await wireBody({
@@ -251,6 +339,7 @@ describe('login · second factor', () => {
     });
 
     it('says nothing about a factor when the password was simply wrong', async () => {
+      requirePolicy();
       prisma.user.findUnique.mockResolvedValue(enrolled());
 
       const body = await wireBody({ email: 'root@zoikomeds.test', password: 'wrong-password' });
@@ -260,6 +349,7 @@ describe('login · second factor', () => {
     });
 
     it('carries no session, and never the secret', async () => {
+      requirePolicy();
       prisma.user.findUnique.mockResolvedValue(enrolled());
 
       const body = await wireBody({ email: 'root@zoikomeds.test', password: PASSWORD });

@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../../admin/audit.writer';
 import { generateSecret, otpauthUri, verifyCode } from './totp';
@@ -37,13 +38,68 @@ export class MfaService {
     private readonly audit: AuditWriter,
   ) {}
 
-  /** Whether this workspace requires a second factor of everyone. */
+  /** Whether this workspace requires an authenticator of its administrators. */
   async isRequiredByPolicy(): Promise<boolean> {
     const org = await this.prisma.organization.findUnique({
       where: { id: 'singleton' },
       select: { requireMfa: true },
     });
     return org?.requireMfa ?? false;
+  }
+
+  /**
+   * Whether the workspace switch governs this account's authenticator.
+   *
+   * The setting reads "Require two-factor authentication for administrators",
+   * and SUPER_ADMIN is the role it was written for — the console's own
+   * enrolment panel is on the admin settings page and nowhere else. Left as one
+   * role rather than widened to ADMIN: turning the switch on refuses every
+   * governed account that has not enrolled, and `assertActorHasSecondFactor`
+   * only proves the enrolment of the admin doing the switching, so adding a
+   * role here would lock out accounts nobody checked.
+   */
+  isGovernedByPolicy(role: UserRole): boolean {
+    return role === UserRole.SUPER_ADMIN;
+  }
+
+  /**
+   * What this account still owes at sign-in, once its password is accepted.
+   *
+   * `none` — the password is the whole of it.
+   * `code`  — an enrolled authenticator has to be presented.
+   * `enrolment` — one is required of this account and it has not got one, so
+   *               the remedy is setting it up rather than trying again.
+   *
+   * The login used to answer the first two with `mfaEnabledAt` alone, which
+   * made enrolment a one-way door: an administrator who had set an
+   * authenticator up was asked for a code for ever after, whatever the
+   * workspace policy said, so turning the switch off changed nothing for the
+   * very accounts it governs. The switch decides now, and an enrolment the
+   * policy is not asking for simply sits there — nothing here erases a secret
+   * or an enrolment date, and turning the policy back on requires the code
+   * again immediately, off the enrolment that was already there.
+   *
+   * For an account the policy does not govern, an authenticator can only have
+   * got there by that person's own choice, and a per-account opt-in is not
+   * something a workspace switch should silently cancel — the same reasoning
+   * that keeps `mfaEmailEnabled` outside the policy. Nothing in the product
+   * offers them the enrolment today, so this holds a door rather than
+   * describing anyone's state.
+   *
+   * One policy read, and only for the roles it can apply to, so an ordinary
+   * sign-in still touches nothing but the account.
+   */
+  async loginRequirement(user: {
+    role: UserRole;
+    mfaEnabledAt: Date | null;
+  }): Promise<'none' | 'code' | 'enrolment'> {
+    const governed = this.isGovernedByPolicy(user.role);
+    const requiredByPolicy = governed ? await this.isRequiredByPolicy() : false;
+
+    // Governed, and not being asked for: the enrolment is dormant, not spent.
+    if (governed && !requiredByPolicy) return 'none';
+    if (!user.mfaEnabledAt) return governed ? 'enrolment' : 'none';
+    return 'code';
   }
 
   async status(userId: string): Promise<MfaStatus> {

@@ -174,4 +174,94 @@ describe('MfaService', () => {
       });
     });
   });
+
+  /**
+   * What a sign-in still owes, as a table.
+   *
+   * `verify` above answers "is this code right". This answers the question
+   * asked before it — whether a code is owed at all — and getting it from
+   * `mfaEnabledAt` alone was the defect: enrolment made a code compulsory for
+   * ever, so the workspace switch governed nothing for the administrators it
+   * names and an enrolled admin was stopped at a prompt with the policy off.
+   *
+   * Written as every combination rather than as the cases that broke, because
+   * the interesting property is the whole grid: which of role, policy and
+   * enrolment moves the answer, and which does not.
+   */
+  describe('what a sign-in still owes', () => {
+    const policy = (requireMfa: boolean) =>
+      prisma.organization.findUnique.mockResolvedValue({ requireMfa });
+
+    const ENROLLED = new Date();
+
+    it.each([
+      // role,             policy, enrolled,  owes
+      ['SUPER_ADMIN',      false,  true,      'none'],
+      ['SUPER_ADMIN',      false,  false,     'none'],
+      ['SUPER_ADMIN',      true,   true,      'code'],
+      ['SUPER_ADMIN',      true,   false,     'enrolment'],
+      // Not governed by the switch: their own enrolment is their own choice,
+      // and no workspace setting turns it on or off for them.
+      ['PHARMACY_ADMIN',   true,   true,      'code'],
+      ['PHARMACY_ADMIN',   true,   false,     'none'],
+      ['PHARMACY_ADMIN',   false,  true,      'code'],
+      ['PUBLIC',           true,   false,     'none'],
+      ['ADMIN',            true,   false,     'none'],
+    ] as const)(
+      '%s with policy=%s and enrolled=%s owes %s',
+      async (role, requireMfa, enrolled, expected) => {
+        policy(requireMfa);
+
+        await expect(
+          service.loginRequirement({
+            role: role as never,
+            mfaEnabledAt: enrolled ? ENROLLED : null,
+          }),
+        ).resolves.toBe(expected);
+      },
+    );
+
+    it('reads the policy for the roles it governs, and not otherwise', async () => {
+      // An ordinary sign-in should not be paying for a settings lookup it can
+      // never be affected by.
+      policy(true);
+
+      await service.loginRequirement({ role: 'PUBLIC' as never, mfaEnabledAt: null });
+      expect(prisma.organization.findUnique).not.toHaveBeenCalled();
+
+      await service.loginRequirement({ role: 'SUPER_ADMIN' as never, mfaEnabledAt: null });
+      expect(prisma.organization.findUnique).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a missing organization row as the policy being off', async () => {
+      prisma.organization.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.loginRequirement({ role: 'SUPER_ADMIN' as never, mfaEnabledAt: null }),
+      ).resolves.toBe('none');
+    });
+
+    it('names the roles the switch governs in one place', () => {
+      expect(service.isGovernedByPolicy('SUPER_ADMIN' as never)).toBe(true);
+      expect(service.isGovernedByPolicy('ADMIN' as never)).toBe(false);
+      expect(service.isGovernedByPolicy('PHARMACY_ADMIN' as never)).toBe(false);
+      expect(service.isGovernedByPolicy('PUBLIC' as never)).toBe(false);
+    });
+
+    it('asks for nothing new when the policy is switched off and on again', async () => {
+      // The enrolment is untouched by any of this: the answer changes with the
+      // switch and comes straight back, off the same stored factor.
+      const enrolledAdmin = { role: 'SUPER_ADMIN' as never, mfaEnabledAt: ENROLLED };
+
+      policy(true);
+      await expect(service.loginRequirement(enrolledAdmin)).resolves.toBe('code');
+      policy(false);
+      await expect(service.loginRequirement(enrolledAdmin)).resolves.toBe('none');
+      policy(true);
+      await expect(service.loginRequirement(enrolledAdmin)).resolves.toBe('code');
+
+      // And nothing here writes to the account at all.
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
 });
