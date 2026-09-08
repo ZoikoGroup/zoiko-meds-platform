@@ -32,8 +32,16 @@ export const SUBSTANTIAL_LINES = 6
 export const MANY_CANDIDATES = 3
 /** Discarding this share of considered lines suggests the lines were malformed. */
 export const HIGH_REJECTION_RATE = 0.75
-/** Fewer extracted medicines than numbered rows by this much means rows were lost. */
-export const ROW_SHORTFALL = 2
+/**
+ * How many numbered rows may go unaccounted for before the scan is doubted.
+ *
+ * One. This was two, which meant a four-medicine prescription that produced
+ * three medicines was reported as a good scan with no warning at all — the
+ * patient saw three cards and nothing to suggest a fourth had been missed. A
+ * missing medicine is the most consequential thing this feature can get wrong,
+ * so a single one is worth saying out loud.
+ */
+export const ROW_SHORTFALL = 1
 /** Mean extraction confidence below this is not worth presenting unaided. */
 export const WEAK_EXTRACTION_CONFIDENCE = 0.5
 
@@ -110,6 +118,12 @@ const mean = (values) =>
  * @param {number|null} input.ocrConfidence     Mean Tesseract confidence; null for a PDF text layer.
  * @param {number}      input.candidateCount    Lines that survived candidate extraction.
  * @param {Array}       input.medicines         Resolved medicines, after matching.
+ * @param {number}     [input.primaryCount]     How many of those came from a primary
+ *                                              prescription row. Defaults to the whole
+ *                                              list for callers with no structural pass.
+ * @param {number}     [input.declaredRows]     How many primary rows the page was found
+ *                                              to have, from the structural reader.
+ *                                              Falls back to counting list markers.
  * @param {boolean}    [input.catalogReachable] False when MediBase could not be consulted.
  */
 export function assessScanQuality({
@@ -117,12 +131,31 @@ export function assessScanQuality({
   ocrConfidence = null,
   candidateCount = 0,
   medicines = [],
+  primaryCount = null,
+  declaredRows = null,
   catalogReachable = true,
 } = {}) {
   const reasons = []
   const lines = meaningfulLines(rawText)
   const matched = medicines.filter((medicine) => CATALOG_SOURCES.has(medicine.source))
   const numberedRows = countNumberedRows(rawText)
+
+  // How many medicines the page is believed to prescribe.
+  //
+  // The structural reader's count when it has one, because it recognises more
+  // than a list marker: "TAB. ABCIXIMAB" opens a prescription row whether or
+  // not anybody numbered it. Counting markers alone made those rows invisible,
+  // so a page of four TAB./CAP. rows that yielded three medicines had an
+  // expected count of zero and was reported as a good scan.
+  //
+  // The same hole opened whenever OCR damaged the numbering — a measured
+  // confusion on this engine reads "2)" as "7)", and a mangled marker is a
+  // marker that no longer counts.
+  //
+  // Marker counting remains the fallback: it still answers for pages the
+  // structural reader found nothing in, and it is the only evidence there.
+  const structuralRows = typeof declaredRows === 'number' ? declaredRows : 0
+  const expectedRows = structuralRows > 0 ? structuralRows : numberedRows
   const extractionConfidence = mean(medicines.map((medicine) => medicine.confidence ?? 0))
 
   // A. Nothing to work with.
@@ -136,6 +169,8 @@ export function assessScanQuality({
         candidateCount: 0,
         matched: 0,
         numberedRows: 0,
+        expectedRows: 0,
+        declaredRows: null,
         corrupted: 0,
         ocrConfidence,
         extractionConfidence: null,
@@ -176,8 +211,19 @@ export function assessScanQuality({
     if (rejected / candidateCount >= HIGH_REJECTION_RATE) reasons.push('HIGH_REJECTION_RATE')
   }
 
-  // F. The page numbered more rows than came out of it.
-  if (numberedRows > 0 && numberedRows - medicines.length >= ROW_SHORTFALL) {
+  // F. The page had more prescription rows than came out of it.
+  //
+  // Counted against PRIMARY medicines, not the whole list. A composition line
+  // promoted to its own card, or a stray candidate the line scorer picked up,
+  // both inflate `medicines.length` — and a four-row prescription that lost two
+  // medicines but gained three ingredient names came out at five and read as a
+  // good scan. Padding is not recovery, and it must not be able to hide a loss.
+  //
+  // `primaryCount` falls back to the full list for callers that have no
+  // structural pass to distinguish them, which is the honest answer there: with
+  // nothing marked primary, every medicine is one.
+  const primaries = primaryCount === null ? medicines.length : primaryCount
+  if (expectedRows > 0 && expectedRows - primaries >= ROW_SHORTFALL) {
     reasons.push('ROWS_LOST')
   }
 
@@ -217,6 +263,10 @@ export function assessScanQuality({
       candidateCount,
       matched: matched.length,
       numberedRows,
+      // What the comparison actually used, and where it came from.
+      expectedRows,
+      declaredRows: structuralRows || null,
+      primaryCount: primaries,
       corrupted,
       ocrConfidence,
       extractionConfidence,

@@ -30,7 +30,12 @@ const recognizeMock = vi.fn()
 const createWorkerMock = vi.fn()
 const terminateMock = vi.fn(async () => {})
 
-vi.mock('tesseract.js', () => ({ createWorker: (...args) => createWorkerMock(...args) }))
+// PSM is read by ocr-worker to set the page segmentation mode; the values
+// mirror the real enum for the modes this codebase selects.
+vi.mock('tesseract.js', () => ({
+  createWorker: (...args) => createWorkerMock(...args),
+  PSM: { AUTO: '3', SINGLE_BLOCK: '6', SPARSE_TEXT: '11' },
+}))
 vi.mock('pdfjs-dist', () => ({ GlobalWorkerOptions: { workerSrc: '' }, getDocument: vi.fn() }))
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.js' }))
 
@@ -75,6 +80,7 @@ beforeEach(() => {
   createWorkerMock.mockImplementation(async () => ({
     recognize: recognizeMock,
     terminate: terminateMock,
+    setParameters: async () => {},
   }))
   mockOcrText('')
 })

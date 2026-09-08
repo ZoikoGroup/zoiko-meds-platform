@@ -106,6 +106,25 @@ export function textFromContent(textContent) {
   const items = []
   for (const item of textContent?.items ?? []) {
     if (!item || item.str === undefined) continue
+
+    // Whitespace-only items are dropped, and this is not tidying.
+    //
+    // Real pdfjs emits a synthetic spacer between columns — `str: " "` with
+    // `height: 0` and a width that spans the whole gutter. Kept, it becomes the
+    // previous item for the next real one, and because its width reaches
+    // exactly to where the next column starts, the measured gap is zero and the
+    // two columns merge back into one line. That is the very defect the X/Y
+    // reconstruction exists to prevent, and no mocked fixture contained a
+    // spacer, so every test passed while real PDFs flattened.
+    //
+    // Dropping them measures each gap between the two pieces of real text on
+    // either side, which is what the column and word-space thresholds are
+    // expressed in. An explicit end-of-line still counts, even on a blank.
+    if (item.str.trim() === '') {
+      if (item.hasEOL && items.length) items[items.length - 1].hasEOL = true
+      continue
+    }
+
     items.push(positioned(item))
   }
   if (items.length === 0) return ''
@@ -304,13 +323,21 @@ export async function extractPdf(file, { onProgress } = {}) {
     .filter(Boolean)
     .join('\n')
 
+  const measured = ocrConfidences.filter((value) => typeof value === 'number')
+
   return {
     text,
     pages,
     warnings,
     pageImages,
-    ocrConfidence: ocrConfidences.length
-      ? ocrConfidences.reduce((sum, value) => sum + value, 0) / ocrConfidences.length
+    // Averaged over the pages that actually reported a confidence. A page can
+    // now report null — Tesseract gave no usable number — and summing that
+    // would add a zero, dragging the mean down until a perfectly good scan
+    // tripped the low-confidence checks. Unknown is left out of the average
+    // rather than counted as nil confidence; if no page reported one, the
+    // answer is null, which every reader already treats as "not measured".
+    ocrConfidence: measured.length
+      ? measured.reduce((sum, value) => sum + value, 0) / measured.length
       : null,
   }
 }

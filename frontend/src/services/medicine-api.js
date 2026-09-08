@@ -43,11 +43,28 @@ export function toMedicineIdentity(m) {
   }
 }
 
+/**
+ * How long a single catalog lookup may take before it is abandoned.
+ *
+ * A prescription scan makes one of these per candidate. Without a deadline a
+ * stalled connection held the whole scan open with nothing to cancel it, and
+ * the caller already treats a failed lookup as "not in the catalog" — which
+ * routes the medicine to confirmation rather than losing it. Waiting longer
+ * than this buys nothing a patient can use.
+ */
+const MATCH_TIMEOUT_MS = 10_000
+
 /** Autocomplete / typeahead — governed medicine identity candidates. */
 export async function matchMedicines(q, limit = 8) {
   if (!q || !q.trim()) return []
   const params = new URLSearchParams({ q: q.trim(), limit: String(limit) })
-  const rows = await apiFetch(`/medibase/match?${params.toString()}`, { auth: false })
+  // The deadline is supplied per call rather than built into apiFetch: most of
+  // the app's requests are user-initiated and should wait as long as the user
+  // is willing to. This one is made in bulk by a background scan.
+  const rows = await apiFetch(`/medibase/match?${params.toString()}`, {
+    auth: false,
+    signal: AbortSignal.timeout?.(MATCH_TIMEOUT_MS),
+  })
   return (rows ?? []).map(toMedicineIdentity)
 }
 

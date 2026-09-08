@@ -5,7 +5,11 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default [
-  { ignores: ['dist'] },
+  // 'public/tesseract' holds Tesseract's minified worker and WASM cores, copied
+  // out of node_modules by scripts/fetch-ocr-assets.mjs so OCR runs from our own
+  // origin. Vendored build artefacts, not source — linting them reports on
+  // somebody else's minifier.
+  { ignores: ['dist', 'public/tesseract'] },
   js.configs.recommended,
   {
     files: ['**/*.{js,jsx}'],
