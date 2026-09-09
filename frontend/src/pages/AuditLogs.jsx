@@ -296,13 +296,12 @@ export default function AuditLogs() {
         </Badge>
       ),
     },
-    {
-      key: 'ip',
-      header: 'IP Address',
-      cell: (row) => (
-        <code className="text-xs text-muted-foreground bg-muted px-1 rounded">{row.ip}</code>
-      ),
-    },
+    // The originating IP is deliberately not a column. It is still recorded on
+    // every audit row and still comes back on this payload — security work
+    // needs it — but a console table is read over shoulders and exported into
+    // tickets, and an address printed against a named person on every screen
+    // is more exposure than the reading of the log requires. It stays available
+    // to an investigation through the API and the database.
     {
       key: 'details',
       header: 'Log Summary Details',

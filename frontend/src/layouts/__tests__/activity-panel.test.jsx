@@ -91,6 +91,17 @@ const renderPanel = () =>
 const sectionFor = (heading) => screen.getByRole('heading', { name: heading }).parentElement
 
 beforeEach(() => {
+  // A desktop viewport. The panel has two forms now — docked from xl, a sheet
+  // over the page below it — and these tests are about the docked one, which
+  // is where the fabricated console lived. jsdom implements no matchMedia at
+  // all, so without this the layout reads as narrow and the panel waits to be
+  // opened before it fetches anything.
+  vi.stubGlobal('matchMedia', (query) => ({
+    matches: query.includes('80rem'),
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
   localStorage.setItem('zoiko-right-sidebar-open', '1')
   telemetry.mockResolvedValue(HEALTH)
   verifications.mockResolvedValue(QUEUE)
@@ -101,6 +112,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.unstubAllGlobals()
   localStorage.clear()
 })
 

@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PatientSignalService } from './patient-signal.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { NotificationsQueryDto } from './dto/notifications-query.dto';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
 import { SetPriorityDto } from './dto/set-priority.dto';
 import { SavedQueryDto } from '../dto/saved-query.dto';
@@ -49,9 +50,16 @@ export class PatientSignalController {
   }
 
   @Get('notifications')
-  @ApiOperation({ summary: 'Active (non-archived) notifications' })
-  notifications(@CurrentUser('id') userId: string) {
-    return this.signal.listNotifications(userId);
+  @ApiOperation({
+    summary: 'Active (non-archived) notifications',
+    description:
+      'With no query, the whole list as an array — the shape the nav badge and the patient notifications page read. With page, pageSize or filter, one page as an object carrying items, page, pageCount, total and the per-chip counts, which describe the whole set rather than the rows returned.',
+  })
+  notifications(
+    @CurrentUser('id') userId: string,
+    @Query() query: NotificationsQueryDto,
+  ) {
+    return this.signal.listNotifications(userId, query);
   }
 
   @Get('alerts')

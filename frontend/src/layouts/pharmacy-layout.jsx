@@ -99,8 +99,29 @@ export function PharmacyLayout() {
         </Link>
       </div>
 
-      {/* Scrollable middle navigation */}
-      <nav className="my-6 flex-1 overflow-y-auto pr-1 shrink-0 lg:shrink" aria-label="Pharmacy portal">
+      {/*
+        The scrolling middle. Two things make it scroll, and it had neither on
+        a phone.
+
+        `shrink-0` was the reported bug: a column flex child that cannot shrink
+        is laid out at its full content height whatever the container's, so
+        thirteen links and four headings made this taller than the drawer, the
+        `mt-auto` block below was pushed past the bottom edge, and
+        `overflow-y-auto` never engaged because the box was never smaller than
+        what was in it. Partner Support and Sign Out were off-screen with no way
+        to scroll to them. `lg:shrink` restored shrinking at 1024px and up,
+        which is exactly why the desktop sidebar was fine and the drawer was
+        not.
+
+        `min-h-0` is the other half, and it is why removing `shrink-0` alone
+        would not be enough: a flex item's `min-height` defaults to `auto`,
+        which in a column container resolves to the content height and clamps
+        the item at it even when its shrink factor allows less.
+      */}
+      <nav
+        className="my-6 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
+        aria-label="Pharmacy portal"
+      >
         <div className="flex flex-col gap-5">
           {NAV_SECTIONS.map((section) => (
             <div key={section.heading ?? 'primary'} className="flex flex-col gap-1">
@@ -134,8 +155,21 @@ export function PharmacyLayout() {
         </div>
       </nav>
 
-      {/* Pinned bottom section */}
-      <div className="mt-auto flex shrink-0 flex-col gap-1 border-t border-border pt-4">
+      {/*
+        Pinned bottom section.
+
+        The safe-area padding is deliberate but not what fixes the reported
+        problem, and it is worth being exact about which is which. `100dvh` on
+        the drawer is what brings Sign Out back into view, because the viewport
+        it measures already excludes the browser chrome and the system gesture
+        bar. This padding covers the case that unit does not: a document opted
+        into the display cutout with `viewport-fit=cover`, where the inset is
+        inside the viewport and a row can sit under the home indicator. That
+        meta is not set here, so today `env(safe-area-inset-bottom)` resolves to
+        0px and this adds nothing — it is here so the drawer is already right if
+        that changes, rather than as a fix for anything now.
+      */}
+      <div className="mt-auto flex shrink-0 flex-col gap-1 border-t border-border pt-4 pb-[env(safe-area-inset-bottom)]">
         <a
           href="mailto:partners@zoikomeds.com"
           className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -155,7 +189,7 @@ export function PharmacyLayout() {
   )
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 lg:block">
         {sidebarContent}
       </aside>
@@ -167,7 +201,7 @@ export function PharmacyLayout() {
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-h-screen flex-col lg:pl-64">
+      <div className="flex min-h-dvh flex-col lg:pl-64">
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b border-border px-4 glass lg:px-6">
           <div className="flex items-center gap-3">
             <Button

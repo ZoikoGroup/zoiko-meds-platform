@@ -6,6 +6,7 @@ import { Sidebar } from '@/layouts/sidebar'
 import { Topbar } from '@/layouts/topbar'
 import { CommandPalette } from '@/layouts/command-palette'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useTheme } from '@/providers/theme-provider'
 import { cn } from '@/lib/utils'
 import { getZoikoAvailTelemetry, listAuditLogs, listVerifications } from '@/services/admin-api'
@@ -99,9 +100,26 @@ export function AppLayout() {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(COLLAPSE_KEY) === '1'
   )
+  /**
+   * Where the activity panel goes, and whether it is showing.
+   *
+   * From xl up it is docked: a column beside the content that the layout makes
+   * room for, remembered across visits. Below xl there is no room to dock
+   * anything 20rem wide, so it opens over the page as a sheet instead — which
+   * is the difference between the trigger working and the trigger doing
+   * nothing, because the docked panel is `hidden xl:flex` and a tap on a phone
+   * used to toggle a boolean that changed nothing anybody could see.
+   *
+   * Two states rather than one, because they want different defaults. Docked
+   * remembers being open; an overlay must not greet somebody on a phone by
+   * covering the dashboard they just loaded, so it always starts closed and is
+   * not persisted.
+   */
+  const panelIsDocked = useMediaQuery('(min-width: 80rem)')
   const [rightOpen, setRightOpen] = useState(
     () => localStorage.getItem(RIGHT_OPEN_KEY) !== '0'
   )
+  const [panelSheetOpen, setPanelSheetOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
 
@@ -111,8 +129,10 @@ export function AppLayout() {
   // and re-fetched on navigation, which is how it stays current without a
   // poll. allSettled, because one feed failing must not blank the other two:
   // each falls back to its own empty state, and none of them invents a value.
+  const panelVisible = panelIsDocked ? rightOpen : panelSheetOpen
+
   useEffect(() => {
-    if (!rightOpen) return undefined
+    if (!panelVisible) return undefined
 
     let alive = true
     setPanel((prev) => ({ ...prev, loading: true }))
@@ -140,18 +160,23 @@ export function AppLayout() {
     return () => {
       alive = false
     }
-  }, [rightOpen, location.pathname])
+  }, [panelVisible, location.pathname])
   const toggleCollapse = () =>
     setCollapsed((c) => {
       localStorage.setItem(COLLAPSE_KEY, c ? '0' : '1')
       return !c
     })
 
-  const toggleRight = () =>
+  const toggleRight = () => {
+    if (!panelIsDocked) {
+      setPanelSheetOpen((open) => !open)
+      return
+    }
     setRightOpen((ro) => {
       localStorage.setItem(RIGHT_OPEN_KEY, ro ? '0' : '1')
       return !ro
     })
+  }
 
   // Global keyboard shortcuts: ⌘K command palette, ⌘⇧L theme.
   useEffect(() => {
@@ -174,8 +199,14 @@ export function AppLayout() {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [location.pathname])
 
+  // Built once and rendered in both the docked aside and the mobile sheet, so
+  // the two cannot drift into showing different things.
+  const activityPanel = <ActivityPanelBody panel={panel} />
+
   return (
-    <div className="min-h-screen bg-background">
+    // dvh, not vh: a mobile browser's vh assumes the URL bar is hidden, so the
+    // shell measured taller than the screen it was on.
+    <div className="min-h-dvh bg-background">
       {/* Desktop rail */}
       <aside
         className={cn(
@@ -203,7 +234,7 @@ export function AppLayout() {
       {/* Main column */}
       <div
         className={cn(
-          'flex min-h-screen flex-col transition-[padding] duration-300 ease-in-out',
+          'flex min-h-dvh flex-col transition-[padding] duration-300 ease-in-out',
           collapsed ? 'lg:pl-[4.5rem]' : 'lg:pl-[17rem]',
           rightOpen ? 'xl:pr-[20rem]' : 'xl:pr-0'
         )}
@@ -212,7 +243,7 @@ export function AppLayout() {
           onOpenCommand={() => setCommandOpen(true)}
           onOpenMobileNav={() => setMobileOpen(true)}
           onToggleRightSidebar={toggleRight}
-          rightSidebarOpen={rightOpen}
+          rightSidebarOpen={panelVisible}
         />
         <main className="flex-1">
           <AnimatePresence mode="wait">
@@ -232,14 +263,41 @@ export function AppLayout() {
         </main>
       </div>
 
-      {/* Right Sidebar Activity Panel */}
+      {/* Right Sidebar Activity Panel — docked from xl, a sheet below it. */}
       <aside
         className={cn(
           'fixed inset-y-0 right-0 z-20 border-l border-border bg-card transition-all duration-300 ease-in-out hidden xl:flex flex-col w-[20rem] pt-16',
           rightOpen ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
         )}
       >
-        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-6">
+        {activityPanel}
+      </aside>
+
+      {/*
+        The same panel, over the page, for every width that cannot spare a
+        column for it. Mounted only below xl so its overlay can never appear on
+        a desktop, and `max-w-sm` on top of the sheet's own `w-3/4` keeps it
+        inside the narrowest phone. Radix supplies the close button and the
+        Escape/outside-click handling; the body scrolls on its own.
+      */}
+      {!panelIsDocked && (
+        <Sheet open={panelSheetOpen} onOpenChange={setPanelSheetOpen}>
+          <SheetContent side="right" className="flex w-[85vw] max-w-sm flex-col p-0 pt-14">
+            <SheetTitle className="sr-only">Activity panel</SheetTitle>
+            {activityPanel}
+          </SheetContent>
+        </Sheet>
+      )}
+
+      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
+    </div>
+  )
+}
+
+/** Everything the activity panel shows, independent of where it is shown. */
+function ActivityPanelBody({ panel }) {
+  return (
+        <div className="flex-1 overflow-y-auto overscroll-contain p-5 flex flex-col gap-6">
           {/* Section: Live Telemetry — governed API health, from GatewayRequestLog */}
           <div className="flex flex-col gap-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Live Telemetry</h3>
@@ -363,9 +421,5 @@ export function AppLayout() {
             )}
           </div>
         </div>
-      </aside>
-
-      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
-    </div>
   )
 }
