@@ -16,7 +16,39 @@ import {
 } from '../../availability/availability.visibility';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
 import { SavedQueryDto } from '../dto/saved-query.dto';
+import {
+  NotificationFilter,
+  NotificationsQueryDto,
+} from './dto/notifications-query.dto';
 import { UpdateSignalSettingsDto } from './dto/update-signal-settings.dto';
+
+/**
+ * Which rows each filter chip stands for.
+ *
+ * The page's chips are UI type strings; these are the database predicates
+ * behind them. Kept as one map so the count on a chip and the rows that chip
+ * shows are derived from the same clause — the two used to be one array filter
+ * in React, and splitting them across a wire is exactly how a chip starts
+ * disagreeing with its own list.
+ *
+ * `limited` and `nearby-restock` have no chip of their own. They are still
+ * notifications and still appear under All and Unread; nothing hides them.
+ */
+const NOTIFICATION_FILTER_WHERE: Record<
+  NotificationFilter,
+  Prisma.SignalNotificationWhereInput
+> = {
+  all: {},
+  unread: { read: false },
+  'running-low': { type: SignalNotificationType.RUNNING_LOW },
+  'back-in-stock': { type: SignalNotificationType.BACK_IN_STOCK },
+  safety: {
+    type: { in: [SignalNotificationType.RECALL, SignalNotificationType.SAFETY] },
+  },
+};
+
+/** The page size used when a caller asks for a page without naming one. */
+const NOTIFICATIONS_PAGE_SIZE = 10;
 
 /** Default search radius in km, matching the patient search radius selector. */
 const DEFAULT_RADIUS_KM = 15;
@@ -131,13 +163,110 @@ export class PatientSignalService {
     return saved.map((s) => this.toSavedStatusDto(s, genericIndex, origin, maxDistance));
   }
 
-  async listNotifications(userId: string) {
+  /**
+   * The patient's active notifications.
+   *
+   * Two shapes, chosen by the caller. With no query this returns the whole list
+   * as a bare array, which is what the nav badge and the patient notifications
+   * page read. Ask for a page — `page`, `pageSize` or `filter` — and it returns
+   * one instead, with the totals attached.
+   *
+   * The counts travel with the page for a reason. The ZoikoSignal chips read
+   * "All 113 · Unread 47 · Safety Alerts 107", and those numbers describe the
+   * whole set, not the ten rows on screen; a client that counted what it had
+   * been sent would label every chip 10 or less. They are queried here, over
+   * the same clauses that select the rows, so a chip and its list cannot
+   * disagree.
+   */
+  async listNotifications(userId: string, query: NotificationsQueryDto = {}) {
     await this.regenerate(userId);
+
+    const where: Prisma.SignalNotificationWhereInput = {
+      userId,
+      dismissed: false,
+      archived: false,
+    };
+
+    // `id` breaks ties on `occurredAt`, and the ties are the common case rather
+    // than the rare one: a regeneration pass stamps a batch of notifications
+    // within the same instant, and the page is full of rows reading "just now".
+    // Without a tiebreaker the database is free to order those differently
+    // between two queries, which on a paginated read means a row appearing on
+    // both pages while another appears on neither.
+    const orderBy: Prisma.SignalNotificationOrderByWithRelationInput[] = [
+      { occurredAt: 'desc' },
+      { id: 'desc' },
+    ];
+
+    const wantsPage =
+      query.page !== undefined || query.pageSize !== undefined || query.filter !== undefined;
+
+    if (!wantsPage) {
+      const rows = await this.prisma.signalNotification.findMany({ where, orderBy });
+      return rows.map((n) => this.toNotificationDto(n));
+    }
+
+    const filter: NotificationFilter = query.filter ?? 'all';
+    const pageSize = query.pageSize ?? NOTIFICATIONS_PAGE_SIZE;
+    const requestedPage = query.page ?? 1;
+
+    const [byType, unread] = await Promise.all([
+      this.prisma.signalNotification.groupBy({
+        by: ['type'],
+        where,
+        _count: { _all: true },
+      }),
+      this.prisma.signalNotification.count({ where: { ...where, read: false } }),
+    ]);
+    const counts = this.notificationCounts(byType, unread);
+
+    const total = counts[filter];
+    const pageCount = Math.max(1, Math.ceil(total / pageSize));
+    // A page past the end is answered with the last one rather than with
+    // nothing: deleting the only row on the final page would otherwise leave
+    // the client on an empty page it had no way to know it was on.
+    const page = Math.min(Math.max(1, requestedPage), pageCount);
+
     const rows = await this.prisma.signalNotification.findMany({
-      where: { userId, dismissed: false, archived: false },
-      orderBy: { occurredAt: 'desc' },
+      where: { ...where, ...NOTIFICATION_FILTER_WHERE[filter] },
+      orderBy,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     });
-    return rows.map((n) => this.toNotificationDto(n));
+
+    return {
+      items: rows.map((n) => this.toNotificationDto(n)),
+      filter,
+      page,
+      pageSize,
+      pageCount,
+      total,
+      counts,
+    };
+  }
+
+  /**
+   * One count per chip, from a single grouped read.
+   *
+   * Derived from the same map the row query uses, so a chip added there is
+   * counted here without a second edit. `unread` is the one that cannot come
+   * from a group by type, so it arrives separately.
+   */
+  private notificationCounts(
+    byType: Array<{ type: SignalNotificationType; _count: { _all: number } }>,
+    unread: number,
+  ): Record<NotificationFilter, number> {
+    const perType = new Map(byType.map((row) => [row.type, row._count._all]));
+    const sumOf = (types: SignalNotificationType[]) =>
+      types.reduce((total, type) => total + (perType.get(type) ?? 0), 0);
+
+    return {
+      all: sumOf(Object.values(SignalNotificationType)),
+      unread,
+      'running-low': sumOf([SignalNotificationType.RUNNING_LOW]),
+      'back-in-stock': sumOf([SignalNotificationType.BACK_IN_STOCK]),
+      safety: sumOf([SignalNotificationType.RECALL, SignalNotificationType.SAFETY]),
+    };
   }
 
   async listActiveAlerts(userId: string) {

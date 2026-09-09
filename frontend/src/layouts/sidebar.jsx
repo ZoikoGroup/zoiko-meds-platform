@@ -232,7 +232,18 @@ export function Sidebar({ collapsed = false, onNavigate, onToggleCollapse, showC
         {showCollapseButton && (<CollapseToggle collapsed={collapsed} onToggle={onToggleCollapse}/>)}
       </div>
 
-      <ScrollArea className="flex-1" viewportClassName="px-3 py-4">
+      {/*
+        `min-h-0` alongside `flex-1`. The ScrollArea root sets
+        `overflow: hidden`, which already waives a flex item's automatic
+        minimum size, so this is belt to that brace rather than a fix on its
+        own — but it is the property the layout actually depends on, and
+        stating it means a later change to how ScrollArea handles overflow
+        cannot quietly push the footer below the fold.
+
+        `overscroll-contain` so reaching the end of the menu does not start
+        scrolling the page behind the drawer.
+      */}
+      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-3 py-4 overscroll-contain">
         <nav className="flex flex-col gap-6">
           {navSections.map((section, i) => (<div key={section.heading ?? i} className="flex flex-col gap-1">
               {section.heading && !collapsed && (<p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
@@ -244,7 +255,14 @@ export function Sidebar({ collapsed = false, onNavigate, onToggleCollapse, showC
         </nav>
       </ScrollArea>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-sidebar-border p-3">
+      {/*
+        Always reachable: `shrink-0` keeps it out of the scroll, and the
+        safe-area padding keeps Help Center clear of a system gesture bar on a
+        document that has opted into the display cutout. What actually brings
+        it back into view on a phone is the drawer being sized in dvh — see
+        sheet.jsx.
+      */}
+      <div className="flex shrink-0 flex-col gap-2 border-t border-sidebar-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <HelpCenter collapsed={collapsed}/>
         {!collapsed && (<div className="flex items-center gap-2.5 rounded-xl border border-sidebar-border bg-card/50 px-3 py-2.5">
             <span className="relative flex size-2">

@@ -11,8 +11,17 @@ const sheetVariants = cva('fixed z-50 flex flex-col gap-4 bg-card shadow-elevate
         side: {
             top: 'inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
             bottom: 'inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
-            left: 'inset-y-0 left-0 h-full w-3/4 max-w-sm border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
-            right: 'inset-y-0 right-0 h-full w-3/4 max-w-sm border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right',
+            // `h-[100dvh]`, not `h-full`. A fixed element's `height: 100%`
+            // resolves against the initial containing block, which on a mobile
+            // browser is the *large* viewport — the one that assumes the URL
+            // bar is hidden. So a drawer taller than the visible area put its
+            // last rows behind the browser chrome, unreachable, which is how
+            // the pharmacy portal's Sign Out disappeared. dvh tracks what is
+            // actually on screen and equals vh on a desktop, so nothing above
+            // mobile changes. `inset-y-0` stays for the top edge: a fixed box
+            // with top, bottom and a set height ignores bottom.
+            left: 'inset-y-0 left-0 h-[100dvh] w-3/4 max-w-sm border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
+            right: 'inset-y-0 right-0 h-[100dvh] w-3/4 max-w-sm border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right',
         },
     },
     defaultVariants: { side: 'right' },

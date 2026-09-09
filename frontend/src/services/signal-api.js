@@ -35,8 +35,31 @@ function locationQuery() {
   return params ? `?${params}` : ''
 }
 
-export function listNotifications() {
-  return apiFetch('/me/signal/notifications')
+/** How many notification cards one page of ZoikoSignal shows. */
+export const NOTIFICATIONS_PAGE_SIZE = 10
+
+/**
+ * The patient's active notifications.
+ *
+ * Called with no arguments it answers with the whole list, as an array — the
+ * shape the nav badge and the patient notifications page read, and the shape
+ * this has always had. Called with a page it answers with one:
+ *
+ *   { items, filter, page, pageSize, pageCount, total, counts }
+ *
+ * `counts` describes the whole set rather than the page, which is what the
+ * filter chips above the list need: they read "All 113 · Unread 47", and a
+ * client counting the ten rows it was sent could only ever say ten.
+ */
+export function listNotifications(page) {
+  if (!page) return apiFetch('/me/signal/notifications')
+
+  const params = new URLSearchParams({
+    page: String(page.page ?? 1),
+    pageSize: String(page.pageSize ?? NOTIFICATIONS_PAGE_SIZE),
+    filter: page.filter ?? 'all',
+  })
+  return apiFetch(`/me/signal/notifications?${params.toString()}`)
 }
 
 // Prominent, actionable alerts shown as cards at the top of the page.

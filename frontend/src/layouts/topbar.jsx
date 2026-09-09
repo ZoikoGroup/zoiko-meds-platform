@@ -15,11 +15,25 @@ import { listAdminInbox, listNotifications } from '@/services/admin-api';
 import { routeMeta } from '@/routes/navigation';
 import { cn } from '@/lib/utils';
 /* ------------------------------- search --------------------------------- */
+/**
+ * The command palette's trigger.
+ *
+ * A 15rem box down to the narrowest phone was the header's whole problem. At
+ * 360px the row had 288px to work with and this claimed 240 of them, so the
+ * theme toggle, the notification bell, the avatar and the activity button were
+ * pushed past the right edge — the account menu was not missing, it was off
+ * screen, which is why zooming out appeared to "restore" it.
+ *
+ * Below md it is the icon alone: same button, same palette, same keyboard
+ * shortcut, about 200px back. The labelled box returns from md up, where there
+ * is room for it. Nothing is hidden — an icon-only control with an accessible
+ * name is still the control.
+ */
 function SearchTrigger({ onClick }) {
-    return (<button type="button" onClick={onClick} className="group flex h-9 w-60 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground">
-      <Search className="size-4"/>
-      <span className="flex-1 text-left">Search…</span>
-      <kbd className="hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline-flex">
+    return (<button type="button" onClick={onClick} aria-label="Search" className="group flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-input bg-card text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground md:w-60 md:justify-start md:px-3">
+      <Search className="size-4 shrink-0"/>
+      <span className="hidden flex-1 text-left md:block">Search…</span>
+      <kbd className="hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground md:inline-flex">
         ⌘K
       </kbd>
     </button>);

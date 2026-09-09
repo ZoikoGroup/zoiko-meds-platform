@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, Bell, TrendingDown, PackageCheck, Radar, Search, CheckCheck, Inbox,
-  AlertCircle,
+  AlertCircle, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
@@ -23,16 +23,73 @@ import { useLanguage } from '@/providers/language-provider'
 import {
   listSavedStatus, listActiveAlerts, listNotifications, getNotificationSettings,
   updateNotificationSettings, markRead, markAllRead, dismissNotification,
-  archiveNotification, setMedicinePriority, SAFETY_TYPES,
+  archiveNotification, setMedicinePriority, NOTIFICATIONS_PAGE_SIZE,
 } from '@/services/signal-api'
 
 const PRIORITY_ORDER = ['high', 'medium', 'low']
 
-function matchesFilter(n, key) {
-  if (key === 'all') return true
-  if (key === 'unread') return !n.read
-  if (key === 'safety') return SAFETY_TYPES.includes(n.type)
-  return n.type === key
+/**
+ * An empty page, and what the chips say about a set that has nothing in it.
+ *
+ * The counts still come from the server here, so a failed or not-yet-finished
+ * load reads as zeros rather than as stale numbers from the last filter.
+ */
+const EMPTY_PAGE = {
+  items: [],
+  page: 1,
+  pageCount: 1,
+  total: 0,
+  counts: { all: 0, unread: 0, 'running-low': 0, 'back-in-stock': 0, safety: 0 },
+}
+
+/**
+ * Read a response as a page.
+ *
+ * An API build that predates pagination answers with a bare array. Spreading
+ * that into the page object would produce an empty list and a silent, blank
+ * section, so it is read as the single page it is — which is what it means, and
+ * what keeps a rolling deploy from showing nobody their notifications.
+ */
+function asPage(res) {
+  if (Array.isArray(res)) {
+    return {
+      ...EMPTY_PAGE,
+      items: res,
+      total: res.length,
+      counts: {
+        all: res.length,
+        unread: res.filter((n) => !n.read).length,
+        'running-low': res.filter((n) => n.type === 'running-low').length,
+        'back-in-stock': res.filter((n) => n.type === 'back-in-stock').length,
+        safety: res.filter((n) => ['recall', 'safety'].includes(n.type)).length,
+      },
+    }
+  }
+  return { ...EMPTY_PAGE, ...res }
+}
+
+/**
+ * What an empty list means, per chip.
+ *
+ * "No notifications match this filter" was the same sentence under every chip,
+ * which reads as a search that failed rather than as the good news it usually
+ * is — nothing has been recalled, nothing has run low. Each chip says its own
+ * thing instead.
+ */
+const EMPTY_BY_FILTER = {
+  all: ['noNotificationsYet', 'No notifications yet', 'noNotificationsYetDesc',
+    'When a saved medicine changes availability, it shows up here.'],
+  // Its own key and its own words: the active-alerts section above already
+  // says "You're all caught up" under `allCaughtUp`, and two identical panels
+  // on one screen read as a rendering fault rather than as good news.
+  unread: ['noUnreadNotifications', 'No unread notifications', 'noUnreadNotificationsDesc',
+    'Everything here has been read.'],
+  'running-low': ['noRunningLowYet', 'No running-low notifications yet', 'noRunningLowYetDesc',
+    'Nothing you follow is running low across the verified network.'],
+  'back-in-stock': ['noBackInStockYet', 'No back-in-stock notifications yet', 'noBackInStockYetDesc',
+    'When something you follow is stocked again, it shows up here.'],
+  safety: ['noSafetyAlertsYet', 'No safety alerts yet', 'noSafetyAlertsYetDesc',
+    'No recalls or safety advisories affect the medicines you follow.'],
 }
 
 export default function UserSignal() {
@@ -42,13 +99,61 @@ export default function UserSignal() {
 
   const [saved, setSaved] = useState([])
   const [alerts, setAlerts] = useState([])
-  const [notifications, setNotifications] = useState([])
   const [settings, setSettings] = useState({})
-  const [loadFailures, setLoadFailures] = useState([])
+  const [sectionFailures, setSectionFailures] = useState([])
   const [settingsUnavailable, setSettingsUnavailable] = useState(false)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [savedQuery, setSavedQuery] = useState('')
+
+  /**
+   * One page of notifications, from the server.
+   *
+   * This section used to hold every notification the account had and slice it
+   * in React: a hundred-odd cards rendered in one column, and reaching an older
+   * one meant scrolling past every newer one. The server pages it now, and
+   * `counts` comes back with the page because the chips above the list describe
+   * the whole set — counting what arrived would put 10 on every chip.
+   */
+  const [notifPage, setNotifPage] = useState(EMPTY_PAGE)
+  const [page, setPage] = useState(1)
+  const [notifLoading, setNotifLoading] = useState(true)
+  const [notifFailed, setNotifFailed] = useState(false)
+  // Bumped by an action, to pull the page again: archiving the fourth of ten
+  // cards should leave ten on screen, not nine.
+  const [reloadToken, setReloadToken] = useState(0)
+  const refreshNotifications = () => setReloadToken((n) => n + 1)
+
+  /**
+   * The top of the notifications section, and whether to scroll back to it.
+   *
+   * Turning a page kept the window where it was, so page 2 opened part-way
+   * down its own list: the reader had clicked Next at the bottom of ten cards
+   * and arrived at the bottom of ten different ones, with the first few above
+   * the fold and no indication they were there.
+   *
+   * A request rather than a dependency. Deriving "should I scroll" from the
+   * page number changing would also fire on the reload an archive triggers,
+   * and on the server correcting a page past the end — neither of which the
+   * reader asked for, and both of which would yank the list out from under a
+   * click. So the two controls that mean "take me to another page" say so, and
+   * the fetch that answers them consumes it.
+   */
+  const notificationsTopRef = useRef(null)
+  const scrollUpNext = useRef(false)
+
+  /** Go to a page, and take the reader with you. */
+  const goToPage = (next) => {
+    scrollUpNext.current = true
+    setPage(next)
+  }
+
+  /** Choose a chip: back to the first page, and back to the top of the list. */
+  const selectFilter = (key) => {
+    scrollUpNext.current = true
+    setFilter(key)
+    setPage(1)
+  }
 
   const { data: liveSavedStatus } = useSignalSavedStatus()
 
@@ -63,24 +168,22 @@ export default function UserSignal() {
 
     // Settled, not all: with Promise.all a single failing endpoint discarded the
     // results of the two that worked, so one broken call emptied the whole page
-    // and every section on it looked equally dead (MN-26).
-    Promise.allSettled([listSavedStatus(), listActiveAlerts(), listNotifications()])
-      .then(([savedResult, alertsResult, notificationsResult]) => {
+    // and every section on it looked equally dead (MN-26). Notifications have
+    // their own effect below, because they reload on a filter, a page and an
+    // action rather than only on mount.
+    Promise.allSettled([listSavedStatus(), listActiveAlerts()])
+      .then(([savedResult, alertsResult]) => {
         if (!alive) return
         if (savedResult.status === 'fulfilled') setSaved(savedResult.value ?? [])
         if (alertsResult.status === 'fulfilled') setAlerts(alertsResult.value ?? [])
-        if (notificationsResult.status === 'fulfilled') {
-          setNotifications(notificationsResult.value ?? [])
-        }
 
         // Named rather than counted: "your saved medicines could not be loaded"
         // is actionable, and an empty page with no explanation is not.
         const broken = [
           savedResult.status === 'rejected' && 'saved medicines',
           alertsResult.status === 'rejected' && 'active alerts',
-          notificationsResult.status === 'rejected' && 'notifications',
         ].filter(Boolean)
-        setLoadFailures(broken)
+        setSectionFailures(broken)
         if (broken.length > 0) {
           flash(`Could not load your ${broken.join(', ')}. Your settings below still work.`)
         }
@@ -98,20 +201,64 @@ export default function UserSignal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // One page at a time, re-read whenever the chip, the page or an action
+  // changes what should be on screen.
+  useEffect(() => {
+    let alive = true
+    setNotifLoading(true)
+
+    listNotifications({ page, pageSize: NOTIFICATIONS_PAGE_SIZE, filter })
+      .then((res) => {
+        if (!alive) return
+        setNotifPage(asPage(res))
+        setNotifFailed(false)
+        // The server clamps a page past the end to the last one — deleting the
+        // only card on the final page lands here — so follow it rather than
+        // holding a number that no longer exists. Guarded, so this settles.
+        if (res?.page && res.page !== page) setPage(res.page)
+
+        // After the page is in state, not before: the reader should land on the
+        // list they asked for rather than on the one being replaced.
+        if (scrollUpNext.current) {
+          scrollUpNext.current = false
+          notificationsTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      })
+      .catch(() => {
+        if (!alive) return
+        setNotifFailed(true)
+        // Flashed only when there is nothing on screen to fall back on. A
+        // failed refetch behind a list that is still readable does not need to
+        // interrupt anybody; the notice below the page names it either way.
+        if (notifPage.items.length === 0) {
+          flash(t('signalNotificationsFailed', 'Could not load your notifications'))
+        }
+      })
+      .finally(() => alive && setNotifLoading(false))
+
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, page, reloadToken])
+
+  /** Which sections could not be loaded, for the notice at the foot of the page. */
+  const loadFailures = useMemo(
+    () => [...sectionFailures, ...(notifFailed ? ['notifications'] : [])],
+    [sectionFailures, notifFailed],
+  )
+
+  // Global, from the server: these describe every notification the account has,
+  // not the ten on this page.
+  const counts = notifPage.counts
+
   // Live-computed stats stay in sync as items are dismissed / archived.
   const stats = useMemo(() => ({
     savedMedicines: saved.length,
     activeAlerts: alerts.length,
     runningLow: saved.filter((m) => ['running-low', 'out-of-stock'].includes(m.status)).length,
-    backInStockToday: notifications.filter((n) => n.type === 'back-in-stock').length,
-  }), [saved, alerts, notifications])
+    backInStockToday: counts['back-in-stock'],
+  }), [saved, alerts, counts])
 
-  const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications])
-
-  const filteredNotifications = useMemo(
-    () => notifications.filter((n) => matchesFilter(n, filter)),
-    [notifications, filter],
-  )
+  const unreadCount = counts.unread
 
   const savedFiltered = useMemo(() => {
     const q = savedQuery.trim().toLowerCase()
@@ -134,39 +281,45 @@ export default function UserSignal() {
     goSearch(item.medicineName || '')
   }
 
+  // Each action shows its effect on the card immediately and then pulls the
+  // page again. Both halves are needed now that the list is a slice: the
+  // optimistic edit keeps the click feeling instant, and the reload is what
+  // replaces a removed card with the next one and corrects the chip counts,
+  // neither of which the client can work out on its own any more.
+  const patchVisible = (fn) => setNotifPage((p) => ({ ...p, items: fn(p.items) }))
+
   const handleMarkAll = async () => {
-    setNotifications((n) => n.map((x) => ({ ...x, read: true })))
+    patchVisible((items) => items.map((x) => ({ ...x, read: true })))
     setAlerts([])
     try { await markAllRead() } catch { /* optimistic */ }
+    refreshNotifications()
     flash(t('allMarkedRead', 'All notifications marked as read'))
   }
 
   const handleRead = async (id) => {
-    setNotifications((n) => n.map((x) => (x.id === id ? { ...x, read: !x.read } : x)))
+    patchVisible((items) => items.map((x) => (x.id === id ? { ...x, read: !x.read } : x)))
     try { await markRead(id) } catch { /* optimistic */ }
+    refreshNotifications()
   }
 
   const handleToggleRead = handleRead
 
   const handleArchive = async (id) => {
-    setNotifications((n) => n.filter((x) => x.id !== id))
+    patchVisible((items) => items.filter((x) => x.id !== id))
     try { await archiveNotification(id) } catch { /* optimistic */ }
+    refreshNotifications()
     flash(t('notificationArchived', 'Notification archived'))
   }
 
   const handleDismiss = async (id) => {
-    setNotifications((n) => n.filter((x) => x.id !== id))
+    patchVisible((items) => items.filter((x) => x.id !== id))
     setAlerts((a) => a.filter((x) => x.id !== id))
     try { await dismissNotification(id) } catch { /* optimistic */ }
+    refreshNotifications()
     flash(t('notificationDeleted', 'Notification deleted'))
   }
 
-  const handleDelete = async (id) => {
-    setNotifications((n) => n.filter((x) => x.id !== id))
-    setAlerts((a) => a.filter((x) => x.id !== id))
-    try { await dismissNotification(id) } catch { /* optimistic */ }
-    flash(t('notificationDeleted', 'Notification deleted'))
-  }
+  const handleDelete = handleDismiss
 
   const handleCyclePriority = async (med) => {
     const next = PRIORITY_ORDER[(PRIORITY_ORDER.indexOf(med.priority) + 1) % PRIORITY_ORDER.length]
@@ -194,6 +347,8 @@ export default function UserSignal() {
     { label: t('runningLow', 'Medicines Running Low'), value: stats.runningLow, icon: TrendingDown, severity: 'critical' },
     { label: t('backInStockToday', 'Back in Stock Today'), value: stats.backInStockToday, icon: PackageCheck, severity: 'good' },
   ]
+
+  const emptyCopy = EMPTY_BY_FILTER[filter] ?? EMPTY_BY_FILTER.all
 
   const translatedFilters = [
     { key: 'all', label: t('all', 'All') },
@@ -327,7 +482,10 @@ export default function UserSignal() {
           </section>
 
           {/* Smart notifications */}
-          <section className="flex flex-col gap-4">
+          {/* `scroll-mt-20` because the top bar is sticky and 4rem tall: without
+              it, scrolling this section to the top of the viewport parks its
+              heading underneath the bar. */}
+          <section ref={notificationsTopRef} className="flex scroll-mt-20 flex-col gap-4">
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
               <Bell className="size-4 text-primary" />
               {t('smartNotifications', 'SMART NOTIFICATIONS')}
@@ -336,12 +494,15 @@ export default function UserSignal() {
             {/* filter tabs */}
             <div className="flex flex-wrap gap-1.5">
               {translatedFilters.map((f) => {
-                const count = notifications.filter((n) => matchesFilter(n, f.key)).length
+                const count = counts[f.key] ?? 0
                 const active = filter === f.key
                 return (
                   <button
                     key={f.key}
-                    onClick={() => setFilter(f.key)}
+                    // Back to the first page: page 4 of Safety Alerts is not a
+                    // position in Back in Stock, and landing there shows an
+                    // empty list for a chip whose own count says otherwise.
+                    onClick={() => selectFilter(f.key)}
                     className={cn(
                       'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
                       active
@@ -358,30 +519,73 @@ export default function UserSignal() {
               })}
             </div>
 
-            {loading ? (
+            {notifLoading && notifPage.items.length === 0 ? (
               <div className="flex flex-col gap-2.5">
                 {Array.from({ length: 3 }).map((_, i) => (
                   <div key={i} className="h-20 animate-pulse rounded-xl bg-muted/60" />
                 ))}
               </div>
-            ) : filteredNotifications.length === 0 ? (
-              <EmptyState icon={Inbox} title={t('nothingHere', 'Nothing here')} description={t('noNotificationsMatchFilter', 'No notifications match this filter.')} className="py-10" />
+            ) : notifPage.items.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title={t(emptyCopy[0], emptyCopy[1])}
+                description={t(emptyCopy[2], emptyCopy[3])}
+                className="py-10"
+              />
             ) : (
-              <motion.div layout className="flex flex-col gap-2.5">
-                <AnimatePresence mode="popLayout">
-                  {filteredNotifications.map((n, i) => (
-                    <NotificationItem
-                      key={n.id}
-                      notification={n}
-                      index={i}
-                      onAction={handleAction}
-                      onRead={handleRead}
-                      onArchive={handleArchive}
-                      onDelete={handleDelete}
-                    />
-                  ))}
-                </AnimatePresence>
-              </motion.div>
+              <>
+                <motion.div layout className="flex flex-col gap-2.5">
+                  <AnimatePresence mode="popLayout">
+                    {notifPage.items.map((n, i) => (
+                      <NotificationItem
+                        key={n.id}
+                        notification={n}
+                        index={i}
+                        onAction={handleAction}
+                        onRead={handleRead}
+                        onArchive={handleArchive}
+                        onDelete={handleDelete}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </motion.div>
+
+                {/* Only when there is somewhere to go. One page of results has
+                    no use for a pager, and hiding it says so. */}
+                {notifPage.pageCount > 1 && (
+                  <nav
+                    aria-label={t('notificationPages', 'Notification pages')}
+                    className="flex items-center justify-between gap-4 pt-1"
+                  >
+                    <span className="tabular text-xs text-muted-foreground">
+                      {t('pageXofY', 'Page {page} of {pages}', {
+                        page: notifPage.page,
+                        pages: notifPage.pageCount,
+                      })}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={notifPage.page <= 1 || notifLoading}
+                        onClick={() => goToPage(Math.max(1, notifPage.page - 1))}
+                      >
+                        <ChevronLeft className="size-4" />
+                        {t('previous', 'Previous')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={notifPage.page >= notifPage.pageCount || notifLoading}
+                        onClick={() => goToPage(notifPage.page + 1)}
+                      >
+                        {t('next', 'Next')}
+                        <ChevronRight className="size-4" />
+                      </Button>
+                    </div>
+                  </nav>
+                )}
+              </>
             )}
           </section>
         </>
