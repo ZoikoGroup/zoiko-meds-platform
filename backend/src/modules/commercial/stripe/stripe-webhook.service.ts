@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   BillingChannel,
   CommercialClassification,
@@ -11,10 +12,13 @@ import {
   SubscriptionState,
 } from '@prisma/client';
 import type Stripe from 'stripe';
+import { appUrl } from '../../../config/app-urls';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../../admin/audit.writer';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { SubscriptionService } from '../subscription.service';
 import { StripeConfig } from './stripe.config';
+import { offerProductName } from './stripe.service';
 
 /** Event types acted on. Anything else is recorded and ignored, not guessed at. */
 const HANDLED = new Set([
@@ -105,6 +109,31 @@ function atSeconds(seconds: number | null | undefined): Date | null {
 }
 
 /**
+ * Human money string from a minor-unit amount, e.g. 4900/"USD" -> "$49.00".
+ * Asks Intl for the currency's own decimal places rather than assuming two,
+ * the same zero-decimal-currency hazard the invoice amounts already guard
+ * against (ZERO_DECIMAL_CURRENCIES in stripe.service.ts).
+ */
+function formatMoneyMinor(amountMinor: number, currency: string): string {
+  const formatter = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+  });
+  const digits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+  return formatter.format(amountMinor / 10 ** digits);
+}
+
+/** Human date for notification copy, e.g. "September 11, 2026". */
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+/** BillingInterval enum to the word customer-facing copy actually uses. */
+function intervalWord(interval: string): string {
+  return interval === 'YEAR' ? 'year' : 'month';
+}
+
+/**
  * Webhook processing (ZM-COM-BILL-001 S-1, S-K2, S-N5).
  *
  * The executive doctrine states that nobody may be charged because of a duplicate
@@ -126,7 +155,59 @@ export class StripeWebhookService {
     private readonly audit: AuditWriter,
     private readonly subscriptions: SubscriptionService,
     private readonly config: StripeConfig,
+    private readonly notifications: NotificationsService,
+    private readonly appConfig: ConfigService,
   ) {}
+
+  /**
+   * Runs a commercial confirmation email attempt — the billing profile/price
+   * lookups, payload construction, and the emit() call together — inside one
+   * guard, so nothing anywhere in that path can affect the financial
+   * reconciliation it runs after.
+   *
+   * COM-001/003/004 are drafted (catalog/commercial.draft.ts) but neither
+   * authored into AUTHORED_TEMPLATES nor released via
+   * NOTIFICATION_RELEASED_GATES — both deliberate, pending commercial, tax,
+   * payment, refund and regulatory sign-off. So today `run` always throws
+   * inside NotificationsService.emit() and is swallowed right here. But the
+   * guard is deliberately wider than just that call: the financial state this
+   * runs after (invoice recorded, subscription active) has already been
+   * committed by the time `run` executes, and a lookup failure, a missing
+   * billing profile, or a live mail outage must never re-litigate that by
+   * failing the webhook — draft template today, or a genuine send once
+   * accepted, the failure mode must stay the same. The moment the template is
+   * authored and the gate released, this starts sending with no further
+   * change to this file.
+   */
+  private async tryNotifyCommercial(templateId: string, run: () => Promise<void>): Promise<void> {
+    try {
+      await run();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.debug(`${templateId} confirmation email not sent: ${detail}`);
+    }
+  }
+
+  /** Emits one commercial confirmation email. Call only from within tryNotifyCommercial. */
+  private async notifyCommercial(
+    templateId: string,
+    payload: Record<string, unknown>,
+    recipientEmail: string,
+    workflowRef: string,
+  ): Promise<void> {
+    await this.notifications.emit({
+      templateId,
+      payload,
+      recipients: [{ email: recipientEmail }],
+      workflowType: 'commercial',
+      workflowRef,
+    });
+  }
+
+  /** Where the confirmation email's CTA sends the recipient. */
+  private billingPortalLink(): string {
+    return appUrl(this.appConfig, '/pharmacy/billing');
+  }
 
   /**
    * Record then process. Returns what happened so the controller can answer 200
@@ -315,7 +396,57 @@ export class StripeWebhookService {
       source,
     });
 
+    await this.notifySubscriptionStarted(billingProfileId, priceCatalogEntryId, created.id, now);
+
     return { reconciled: true };
+  }
+
+  /** COM-001 — "Trial or paid subscription started" (currently draft; see tryNotifyCommercial). */
+  private async notifySubscriptionStarted(
+    billingProfileId: string,
+    priceCatalogEntryId: string | null,
+    subscriptionId: string,
+    startedAt: Date,
+  ): Promise<void> {
+    await this.tryNotifyCommercial('COM-001', async () => {
+      const [profile, price] = await Promise.all([
+        this.prisma.billingProfile.findUnique({
+          where: { id: billingProfileId },
+          select: { legalName: true, billingEmail: true },
+        }),
+        priceCatalogEntryId
+          ? this.prisma.priceCatalogEntry.findUnique({
+              where: { id: priceCatalogEntryId },
+              select: { amountMinor: true, currency: true, interval: true },
+            })
+          : Promise.resolve(null),
+      ]);
+
+      // Both are expected to exist for a self-serve checkout that just created
+      // a subscription; if either is missing there is nothing honest to put in
+      // a confirmation email, so skip rather than send one with blanks.
+      if (!profile || !price) {
+        this.logger.debug(
+          `Skipping COM-001 for subscription ${subscriptionId}: billing profile or price ` +
+            'catalog entry unavailable.',
+        );
+        return;
+      }
+
+      await this.notifyCommercial(
+        'COM-001',
+        {
+          'Organization Name': profile.legalName,
+          'Plan Name': offerProductName(CommercialOffer.PHARMACY_INTELLIGENCE_PRO),
+          'Billing Amount': formatMoneyMinor(price.amountMinor, price.currency),
+          'Billing Interval': intervalWord(price.interval),
+          'Subscription Start Date': formatDate(startedAt),
+          'Billing Portal Link': this.billingPortalLink(),
+        },
+        profile.billingEmail,
+        subscriptionId,
+      );
+    });
   }
 
   private async onInvoicePaid(event: Stripe.Event): Promise<void> {
@@ -325,17 +456,39 @@ export class StripeWebhookService {
     const local = await this.ensureLocalInvoice(inv);
 
     if (local) {
+      const paidAt = atSeconds(inv.status_transitions?.paid_at) ?? new Date();
+      const amountPaidMinor = inv.amount_paid ?? local.totalMinor;
+
       await this.prisma.invoice.update({
         where: { id: local.id },
         data: {
           status: InvoiceStatus.PAID,
-          amountPaidMinor: inv.amount_paid ?? local.totalMinor,
-          paidAt: atSeconds(inv.status_transitions?.paid_at) ?? new Date(),
+          amountPaidMinor,
+          paidAt,
           hostedInvoiceUrl: inv.hosted_invoice_url ?? undefined,
           // Only ever set, never cleared: `payments` is expandable, so a payload
           // that omits it must not wipe a value an earlier delivery supplied.
           providerPaymentIntentId: paymentIntentIdOf(inv) ?? undefined,
         },
+      });
+
+      // COM-004 — "Payment received" (currently draft; see tryNotifyCommercial).
+      await this.tryNotifyCommercial('COM-004', async () => {
+        const profile = await this.billingContactFor(local.billingProfileId);
+        if (!profile) return;
+        await this.notifyCommercial(
+          'COM-004',
+          {
+            'Organization Name': profile.legalName,
+            'Plan Name': offerProductName(CommercialOffer.PHARMACY_INTELLIGENCE_PRO),
+            'Invoice Number': local.invoiceNumber,
+            'Amount Paid': formatMoneyMinor(amountPaidMinor, local.currency),
+            'Payment Date': formatDate(paidAt),
+            'Billing Portal Link': this.billingPortalLink(),
+          },
+          profile.billingEmail,
+          inv.id,
+        );
       });
     }
 
@@ -390,6 +543,35 @@ export class StripeWebhookService {
         // of a dead end. Stripe hosts the page; no card data reaches this app.
         hostedInvoiceUrl: inv.hosted_invoice_url ?? undefined,
       },
+    });
+
+    // COM-003 — "Invoice issued" (currently draft; see tryNotifyCommercial).
+    await this.tryNotifyCommercial('COM-003', async () => {
+      const profile = await this.billingContactFor(local.billingProfileId);
+      if (!profile) return;
+      await this.notifyCommercial(
+        'COM-003',
+        {
+          'Organization Name': profile.legalName,
+          'Invoice Number': local.invoiceNumber,
+          'Invoice Total': formatMoneyMinor(local.totalMinor, local.currency),
+          'Period Start Date': formatDate(local.periodStart),
+          'Period End Date': formatDate(local.periodEnd),
+          'Billing Portal Link': this.billingPortalLink(),
+        },
+        profile.billingEmail,
+        inv.id,
+      );
+    });
+  }
+
+  /** Billing contact for an already-known billing profile id. */
+  private async billingContactFor(
+    billingProfileId: string,
+  ): Promise<{ legalName: string; billingEmail: string } | null> {
+    return this.prisma.billingProfile.findUnique({
+      where: { id: billingProfileId },
+      select: { legalName: true, billingEmail: true },
     });
   }
 

@@ -49,8 +49,13 @@ function defaultProductId(offer: CommercialOffer): string {
   return `zoikomeds_${offer.toLowerCase()}`;
 }
 
-/** Dashboard-legible product name, derived so it cannot drift from the enum. */
-function offerProductName(offer: CommercialOffer): string {
+/**
+ * Dashboard-legible product name, derived so it cannot drift from the enum.
+ * Exported for reuse wherever an offer needs a human-facing name outside this
+ * file too (e.g. commercial confirmation email payloads) rather than a second
+ * copy of the same word-splitting logic drifting from this one.
+ */
+export function offerProductName(offer: CommercialOffer): string {
   const words = offer
     .toLowerCase()
     .split('_')

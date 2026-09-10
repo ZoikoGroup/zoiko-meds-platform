@@ -15,10 +15,17 @@ import { StripeWebhookService } from './stripe/stripe-webhook.service';
 import { TaxService } from './tax.service';
 import { InvoiceService } from './invoice.service';
 import { SubscriptionService } from './subscription.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const audit = () => ({ write: jest.fn() }) as unknown as AuditWriter;
 const cfg = (values: Record<string, string | undefined>) =>
   ({ get: (k: string) => values[k] }) as unknown as ConfigService;
+// COM-001/003/004 are drafted but not authored (see catalog/commercial.draft.ts),
+// so a real NotificationsService.emit() call throws for them today by design.
+// A plain resolving mock is enough here: these tests exercise webhook/checkout
+// behavior, not the commercial-email attempt, which is independently guarded
+// by tryNotifyCommercial so it can never affect what these tests assert on.
+const notifications = () => ({ emit: jest.fn().mockResolvedValue({}) }) as unknown as NotificationsService;
 
 const uniqueViolation = () => {
   const e = Object.assign(new Error('unique'), { code: 'P2002' });
@@ -146,6 +153,8 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
       audit(),
       subs as unknown as SubscriptionService,
       new StripeConfig(cfg({ STRIPE_SECRET_KEY: 'sk_test_abc' })),
+      notifications(),
+      cfg({}),
     );
   });
 
@@ -339,6 +348,8 @@ describe('StripeWebhookService — recording a provider-originated invoice', () 
           ...(supplierLegalEntity ? { BILLING_SUPPLIER_LEGAL_ENTITY: supplierLegalEntity } : {}),
         }),
       ),
+      notifications(),
+      cfg({}),
     );
 
   beforeEach(() => {
@@ -532,6 +543,8 @@ describe('StripeWebhookService.reconcileCheckoutSession — the webhook is not t
       audit(),
       { recordPaymentFailure: jest.fn() } as unknown as SubscriptionService,
       new StripeConfig(cfg({ STRIPE_SECRET_KEY: 'sk_test_abc' })),
+      notifications(),
+      cfg({}),
     );
   });
 
@@ -594,6 +607,8 @@ describe('StripeWebhookService.reconcileCheckoutSession — the webhook is not t
       writer as unknown as AuditWriter,
       { recordPaymentFailure: jest.fn() } as unknown as SubscriptionService,
       new StripeConfig(cfg({ STRIPE_SECRET_KEY: 'sk_test_abc' })),
+      notifications(),
+      cfg({}),
     );
 
     await service.reconcileCheckoutSession(session(), 'return');
