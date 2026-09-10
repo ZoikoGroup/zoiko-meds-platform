@@ -245,7 +245,13 @@ export default function PharmacyInventory() {
         title="Inventory"
         subtitle="Manage the medicines your pharmacy stocks and keep availability current."
         actions={
-          <div className="flex items-center gap-2">
+          // `flex-wrap`, because these three do not fit on one line on a phone.
+          // Every Button is `whitespace-nowrap`, so this row's min-content width
+          // is the sum of all three plus its gaps — around 354px, against the
+          // 328 a 360px screen has after the page padding. PageHeader wraps its
+          // actions, but this div is one item to it, so the wrapping has to
+          // happen here or not at all.
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={exportCsv}>
               <Download className="size-4" />
               Export CSV
