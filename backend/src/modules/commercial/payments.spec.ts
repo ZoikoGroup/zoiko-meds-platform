@@ -152,6 +152,18 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
   const event = (type: string, object: any = {}, id = 'evt_1') =>
     ({ id, type, data: { object } }) as any;
 
+  /**
+   * An invoice payload naming the subscription that generated it, in the shape
+   * the pinned API version actually sends: `invoice.subscription` was removed
+   * from the object well before STRIPE_API_VERSION, so a fixture using it would
+   * pass against a payload Stripe no longer sends.
+   */
+  const invoiceOf = (subscriptionId: string, over: Record<string, unknown> = {}) => ({
+    id: 'in_1',
+    parent: { subscription_details: { subscription: subscriptionId, metadata: null } },
+    ...over,
+  });
+
   it('records an event before acting on it', async () => {
     await service.handle(event('invoice.paid', { id: 'in_1', amount_paid: 1000 }));
     expect(prisma.providerEvent.create).toHaveBeenCalledWith(
@@ -165,7 +177,7 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
     prisma.providerEvent.create.mockRejectedValue(uniqueViolation());
 
     const result = await service.handle(
-      event('invoice.payment_failed', { id: 'in_1', subscription: 'sub_x' }),
+      event('invoice.payment_failed', invoiceOf('sub_x')),
     );
 
     expect(result.status).toBe(ProviderEventStatus.DUPLICATE);
@@ -184,7 +196,7 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
   it('enters the delinquency timeline on payment failure', async () => {
     prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
     const result = await service.handle(
-      event('invoice.payment_failed', { id: 'in_1', subscription: 'sub_x' }),
+      event('invoice.payment_failed', invoiceOf('sub_x')),
     );
     expect(result.status).toBe(ProviderEventStatus.PROCESSED);
     expect(subs.recordPaymentFailure).toHaveBeenCalledWith(null, 'sub_local');
@@ -192,7 +204,7 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
 
   it('clears delinquency when a late payment succeeds', async () => {
     prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
-    await service.handle(event('invoice.paid', { id: 'in_1', subscription: 'sub_x', amount_paid: 500 }));
+    await service.handle(event('invoice.paid', invoiceOf('sub_x', { amount_paid: 500 })));
     expect(prisma.subscription.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ state: 'ACTIVE', paymentFailedAt: null }),
@@ -265,7 +277,7 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
   it('records a processing failure with its reason instead of dropping the event', async () => {
     prisma.subscription.findFirst.mockRejectedValue(new Error('db down'));
     const result = await service.handle(
-      event('invoice.payment_failed', { id: 'in_1', subscription: 'sub_x' }),
+      event('invoice.payment_failed', invoiceOf('sub_x')),
     );
     expect(result.status).toBe(ProviderEventStatus.FAILED);
     expect(prisma.providerEvent.update).toHaveBeenCalledWith(
@@ -273,6 +285,197 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
         data: expect.objectContaining({ status: ProviderEventStatus.FAILED, failureReason: 'db down' }),
       }),
     );
+  });
+});
+
+/**
+ * Recording the provider's own invoice (MP-52 follow-on).
+ *
+ * Every handler here used to be an update over a row some internal step was
+ * assumed to have drafted first. For self-serve Intelligence Pro nothing ever
+ * drafts one — Stripe originates the invoice — so the lookup always missed and
+ * `invoice.paid` / `invoice.finalized` / `invoice.voided` silently did nothing.
+ * A pharmacy that had genuinely paid saw an empty invoice list forever, with
+ * nothing recorded for an administrator to find either.
+ */
+describe('StripeWebhookService — recording a provider-originated invoice', () => {
+  let prisma: any;
+
+  const event = (type: string, object: any, id = 'evt_1') =>
+    ({ id, type, data: { object } }) as any;
+
+  /** A finalized Stripe invoice, in the shape the pinned API version sends. */
+  const providerInvoice = (over: Record<string, unknown> = {}) => ({
+    id: 'in_1',
+    number: 'ZM-INV-0001',
+    customer: 'cus_1',
+    currency: 'usd',
+    subtotal: 10000,
+    total: 11000,
+    amount_paid: 0,
+    total_taxes: [{ amount: 1000 }],
+    total_discount_amounts: [],
+    period_start: 1700000000,
+    period_end: 1702592000,
+    hosted_invoice_url: 'https://invoice.stripe.com/i/in_1',
+    status_transitions: { finalized_at: 1700000100 },
+    parent: {
+      subscription_details: {
+        subscription: 'sub_x',
+        metadata: { billingProfileId: 'bp_1' },
+      },
+    },
+    ...over,
+  });
+
+  const build = (supplierLegalEntity?: string) =>
+    new StripeWebhookService(
+      prisma as unknown as PrismaService,
+      audit(),
+      { recordPaymentFailure: jest.fn() } as unknown as SubscriptionService,
+      new StripeConfig(
+        cfg({
+          STRIPE_SECRET_KEY: 'sk_test_abc',
+          ...(supplierLegalEntity ? { BILLING_SUPPLIER_LEGAL_ENTITY: supplierLegalEntity } : {}),
+        }),
+      ),
+    );
+
+  beforeEach(() => {
+    prisma = {
+      providerEvent: {
+        create: jest.fn().mockResolvedValue({ id: 'pe_1' }),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      invoice: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'inv_local', status: 'OPEN', totalMinor: 11000 }),
+        // Reflects the row's id back so a handler chaining off ensureLocalInvoice's
+        // return value (the backfill path) has something real to key its own
+        // subsequent update on, the way Prisma's real update does.
+        update: jest.fn().mockResolvedValue({ id: 'inv_local', status: 'OPEN', totalMinor: 11000 }),
+      },
+      billingProfile: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'bp_1', legalName: 'Acme Pharmacy LLC' }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      subscription: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+    };
+  });
+
+  it('creates a local invoice from invoice.finalized when none exists yet', async () => {
+    const service = build('Zoiko Healthcare Inc.');
+
+    const result = await service.handle(event('invoice.finalized', providerInvoice()));
+
+    expect(result.status).toBe(ProviderEventStatus.PROCESSED);
+    expect(prisma.invoice.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          billingProfileId: 'bp_1',
+          providerInvoiceId: 'in_1',
+          invoiceNumber: 'ZM-INV-0001',
+          supplierLegalEntity: 'Zoiko Healthcare Inc.',
+          customerLegalName: 'Acme Pharmacy LLC',
+          currency: 'USD',
+          subtotalMinor: 10000,
+          taxMinor: 1000,
+          totalMinor: 11000,
+          hostedInvoiceUrl: 'https://invoice.stripe.com/i/in_1',
+          status: 'OPEN',
+        }),
+      }),
+    );
+  });
+
+  it('attributes the invoice by its customer id when subscription metadata has no billing profile', async () => {
+    prisma.billingProfile.findUnique.mockResolvedValue(null);
+    prisma.billingProfile.findFirst.mockResolvedValue({ id: 'bp_2', legalName: 'Fallback Pharmacy' });
+    const service = build('Zoiko Healthcare Inc.');
+
+    await service.handle(
+      event(
+        'invoice.finalized',
+        providerInvoice({ parent: { subscription_details: null }, customer: 'cus_2' }),
+      ),
+    );
+
+    expect(prisma.billingProfile.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { providerCustomerId: 'cus_2' } }),
+    );
+    expect(prisma.invoice.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ billingProfileId: 'bp_2' }) }),
+    );
+  });
+
+  it('does not record an invoice that cannot be attributed to any billing profile', async () => {
+    prisma.billingProfile.findUnique.mockResolvedValue(null);
+    prisma.billingProfile.findFirst.mockResolvedValue(null);
+    const service = build('Zoiko Healthcare Inc.');
+
+    const result = await service.handle(
+      event('invoice.finalized', providerInvoice({ customer: null, parent: null })),
+    );
+
+    expect(result.status).toBe(ProviderEventStatus.PROCESSED);
+    expect(prisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to record an invoice when no supplier legal entity is configured', async () => {
+    const service = build(); // BILLING_SUPPLIER_LEGAL_ENTITY left unset
+
+    await service.handle(event('invoice.finalized', providerInvoice()));
+
+    expect(prisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it('marks the invoice PAID and links it to the subscription on invoice.paid, with no prior draft', async () => {
+    const service = build('Zoiko Healthcare Inc.');
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
+
+    await service.handle(event('invoice.paid', providerInvoice({ amount_paid: 11000 })));
+
+    expect(prisma.invoice.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ subscriptionId: 'sub_local' }) }),
+    );
+    // The row created above is what the subsequent update in the same handler
+    // is applied to.
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'inv_local' },
+        data: expect.objectContaining({ status: 'PAID', amountPaidMinor: 11000 }),
+      }),
+    );
+  });
+
+  it('backfills the subscription link on an invoice an earlier event created without one', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({ id: 'inv_local', status: 'OPEN', subscriptionId: null });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
+    const service = build('Zoiko Healthcare Inc.');
+
+    await service.handle(event('invoice.paid', providerInvoice({ amount_paid: 11000 })));
+
+    expect(prisma.invoice.create).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'inv_local' },
+        data: { subscriptionId: 'sub_local' },
+      }),
+    );
+  });
+
+  it('does not reopen an invoice a later event already settled (out-of-order delivery)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({
+      id: 'inv_local',
+      status: 'PAID',
+      subscriptionId: 'sub_local',
+    });
+    const service = build('Zoiko Healthcare Inc.');
+
+    await service.handle(event('invoice.finalized', providerInvoice()));
+
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 });
 

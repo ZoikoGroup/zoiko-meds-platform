@@ -30,6 +30,19 @@ export class StripeConfig {
     return this.config.get<string>('STRIPE_WEBHOOK_SECRET') || null;
   }
 
+  /**
+   * Verified supplier entity that appears on an invoice (S-N2, S-P2).
+   *
+   * Needed to record an invoice the provider raised, because for self-serve Pro
+   * no internal step drafts one first and there is nowhere else to learn it from.
+   * There is no honest default: which entity contracts with the pharmacy is a
+   * property of the deployment, not of the payment. So an unset value stops the
+   * invoice being recorded rather than stamping a guess onto a finance document.
+   */
+  get supplierLegalEntity(): string | null {
+    return this.config.get<string>('BILLING_SUPPLIER_LEGAL_ENTITY')?.trim() || null;
+  }
+
   get isConfigured(): boolean {
     return !!this.secretKey;
   }
@@ -83,6 +96,13 @@ export class StripeConfig {
     if (this.isConfigured && !this.webhookSecret) {
       this.logger.warn(
         'STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not — webhooks will be rejected as unverified.',
+      );
+    }
+    if (this.isConfigured && !this.supplierLegalEntity) {
+      this.logger.warn(
+        'STRIPE_SECRET_KEY is set but BILLING_SUPPLIER_LEGAL_ENTITY is not — invoices raised by the ' +
+          'provider cannot be recorded, so a pharmacy that pays will see an empty invoice list. Set it ' +
+          'to the verified supplier entity that must appear on the document.',
       );
     }
   }

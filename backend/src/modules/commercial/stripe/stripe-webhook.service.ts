@@ -3,7 +3,9 @@ import {
   BillingChannel,
   CommercialClassification,
   CommercialOffer,
+  type Invoice,
   InvoiceStatus,
+  PaymentProvider,
   Prisma,
   ProviderEventStatus,
   SubscriptionState,
@@ -24,6 +26,83 @@ const HANDLED = new Set([
   'customer.subscription.deleted',
   'charge.refunded',
 ]);
+
+/**
+ * Statuses a late-arriving earlier event must not regress.
+ *
+ * Stripe does not guarantee delivery order, so `invoice.finalized` can land
+ * after `invoice.paid`. Marking a paid invoice open again would be a worse
+ * error than the missing row these handlers exist to create.
+ */
+const SETTLED_STATUSES = new Set<InvoiceStatus>([
+  InvoiceStatus.PAID,
+  InvoiceStatus.VOID,
+  InvoiceStatus.REFUNDED,
+  InvoiceStatus.PARTIALLY_REFUNDED,
+]);
+
+/**
+ * The subscription that generated an invoice.
+ *
+ * Read from `parent.subscription_details`, never `invoice.subscription`: that
+ * field was removed from the Invoice object in API version 2025-04-30 and this
+ * integration is pinned well past it (STRIPE_API_VERSION). It was still being
+ * read here through an `as unknown as` cast, which hid the removal from the
+ * compiler — so it resolved to undefined on every delivery and silently
+ * disabled both subscription-linked invoice handlers. Same class of fault as
+ * the `charge.invoice` removal already documented in onChargeRefunded, so it
+ * is typed against the SDK now rather than cast past it.
+ */
+function providerSubscriptionIdOf(inv: Stripe.Invoice): string | null {
+  const raw = inv.parent?.subscription_details?.subscription;
+  if (!raw) return null;
+  return typeof raw === 'string' ? raw : raw.id;
+}
+
+/**
+ * Subscription metadata as it stood when the invoice was finalized.
+ *
+ * Checkout stamps billingProfileId and pharmacyId onto the subscription, and
+ * Stripe snapshots that onto every invoice it generates — which is what lets an
+ * invoice be attributed without a round trip.
+ */
+function subscriptionMetadataOf(inv: Stripe.Invoice): Record<string, string> {
+  return (inv.parent?.subscription_details?.metadata ?? {}) as Record<string, string>;
+}
+
+/** Total tax on an invoice. `invoice.tax` was removed alongside `subscription`. */
+function taxMinorOf(inv: Stripe.Invoice): number {
+  return (inv.total_taxes ?? []).reduce((sum, tax) => sum + (tax.amount ?? 0), 0);
+}
+
+/** Total discount, in the same minor units as every other amount here. */
+function discountMinorOf(inv: Stripe.Invoice): number {
+  return (inv.total_discount_amounts ?? []).reduce(
+    (sum, discount) => sum + (discount.amount ?? 0),
+    0,
+  );
+}
+
+/**
+ * Payment intent behind an invoice, when the payload carries it.
+ *
+ * `invoice.payment_intent` was removed too; it now lives in the `payments`
+ * sublist, which is expandable and so is often absent from a webhook body.
+ * Best-effort on purpose: it feeds refund linkage only, and a missing value
+ * leaves that no worse off than it already was.
+ */
+function paymentIntentIdOf(inv: Stripe.Invoice): string | null {
+  for (const payment of inv.payments?.data ?? []) {
+    const raw = payment.payment?.payment_intent;
+    if (raw) return typeof raw === 'string' ? raw : raw.id;
+  }
+  return null;
+}
+
+/** Unix seconds to a Date, tolerating the nulls the provider uses for "not yet". */
+function atSeconds(seconds: number | null | undefined): Date | null {
+  return typeof seconds === 'number' ? new Date(seconds * 1000) : null;
+}
 
 /**
  * Webhook processing (ZM-COM-BILL-001 S-1, S-K2, S-N5).
@@ -241,7 +320,9 @@ export class StripeWebhookService {
 
   private async onInvoicePaid(event: Stripe.Event): Promise<void> {
     const inv = event.data.object as Stripe.Invoice;
-    const local = await this.findLocalInvoice(inv.id);
+    // Recorded here when it does not exist yet: for self-serve Pro this event,
+    // not any internal step, is the first the platform hears of the invoice.
+    const local = await this.ensureLocalInvoice(inv);
 
     if (local) {
       await this.prisma.invoice.update({
@@ -249,8 +330,11 @@ export class StripeWebhookService {
         data: {
           status: InvoiceStatus.PAID,
           amountPaidMinor: inv.amount_paid ?? local.totalMinor,
-          paidAt: new Date(),
+          paidAt: atSeconds(inv.status_transitions?.paid_at) ?? new Date(),
           hostedInvoiceUrl: inv.hosted_invoice_url ?? undefined,
+          // Only ever set, never cleared: `payments` is expandable, so a payload
+          // that omits it must not wipe a value an earlier delivery supplied.
+          providerPaymentIntentId: paymentIntentIdOf(inv) ?? undefined,
         },
       });
     }
@@ -291,14 +375,17 @@ export class StripeWebhookService {
 
   private async onInvoiceFinalized(event: Stripe.Event): Promise<void> {
     const inv = event.data.object as Stripe.Invoice;
-    const local = await this.findLocalInvoice(inv.id);
+    const local = await this.ensureLocalInvoice(inv);
     if (!local) return;
+
+    // Nothing to open once something later has already settled it.
+    if (SETTLED_STATUSES.has(local.status)) return;
 
     await this.prisma.invoice.update({
       where: { id: local.id },
       data: {
         status: InvoiceStatus.OPEN,
-        issuedAt: new Date(),
+        issuedAt: local.issuedAt ?? this.issuedAtOf(inv),
         // Captured here so an unpaid invoice is actionable in the portal instead
         // of a dead end. Stripe hosts the page; no card data reaches this app.
         hostedInvoiceUrl: inv.hosted_invoice_url ?? undefined,
@@ -308,12 +395,15 @@ export class StripeWebhookService {
 
   private async onInvoiceVoided(event: Stripe.Event): Promise<void> {
     const inv = event.data.object as Stripe.Invoice;
-    const local = await this.findLocalInvoice(inv.id);
+    const local = await this.ensureLocalInvoice(inv);
     if (!local) return;
 
     await this.prisma.invoice.update({
       where: { id: local.id },
-      data: { status: InvoiceStatus.VOID, voidedAt: new Date() },
+      data: {
+        status: InvoiceStatus.VOID,
+        voidedAt: atSeconds(inv.status_transitions?.voided_at) ?? new Date(),
+      },
     });
   }
 
@@ -391,10 +481,149 @@ export class StripeWebhookService {
     return this.prisma.invoice.findFirst({ where: { providerInvoiceId } });
   }
 
+  /**
+   * The local invoice for a provider invoice, created from the provider's own
+   * record when there is not one yet.
+   *
+   * Every handler above used to be an update over a row that some earlier
+   * internal step was assumed to have drafted. That holds for an administrator
+   * issuing an invoice through the commercial console, and does not hold at all
+   * for self-serve Intelligence Pro, where Stripe originates the invoice and
+   * nothing internal ever writes providerInvoiceId. So the lookup always missed,
+   * every handler returned early, and a pharmacy that had genuinely paid saw an
+   * empty invoice list for ever — with no row for an administrator to find
+   * either. Recording the provider's invoice is what closes that.
+   *
+   * Returns null when the invoice cannot be attributed to a billing profile, or
+   * when the supplier entity is unconfigured: both are columns an invoice may
+   * not be missing, and a row that fails either is worse than no row at all.
+   */
+  private async ensureLocalInvoice(inv: Stripe.Invoice): Promise<Invoice | null> {
+    const existing = await this.findLocalInvoice(inv.id);
+    const subscriptionId = await this.localSubscriptionId(inv);
+
+    if (existing) {
+      // Backfill the subscription link when an invoice event beat the checkout
+      // reconciliation that creates the subscription. Delivery order is not
+      // guaranteed, and an invoice orphaned from its subscription cannot be
+      // explained to the customer afterwards.
+      if (!existing.subscriptionId && subscriptionId) {
+        return this.prisma.invoice.update({
+          where: { id: existing.id },
+          data: { subscriptionId },
+        });
+      }
+      return existing;
+    }
+
+    const profile = await this.resolveBillingProfile(inv);
+    if (!profile) {
+      this.logger.warn(
+        `Provider invoice ${inv.id} cannot be attributed to a billing profile, so it was not ` +
+          'recorded. Neither its subscription metadata nor its customer id matched one.',
+      );
+      return null;
+    }
+
+    const supplierLegalEntity = this.config.supplierLegalEntity;
+    if (!supplierLegalEntity) {
+      this.logger.error(
+        `Provider invoice ${inv.id} cannot be recorded: BILLING_SUPPLIER_LEGAL_ENTITY is not set, ` +
+          'so the verified supplier entity that must appear on the document is unknown.',
+      );
+      return null;
+    }
+
+    const periodStart = atSeconds(inv.period_start) ?? new Date();
+
+    return this.prisma.invoice.create({
+      data: {
+        billingProfileId: profile.id,
+        subscriptionId,
+        // The provider's own number rather than one drawn from the internal ZM-
+        // sequence. Stripe has already numbered this document and shown that
+        // number to the pharmacy on its receipt; minting a second, different
+        // number for the same invoice would leave the two disagreeing. Falling
+        // back to the invoice id keeps the @unique column collision-free even if
+        // a payload somehow arrives unnumbered.
+        invoiceNumber: inv.number ?? inv.id,
+        status: InvoiceStatus.OPEN,
+        supplierLegalEntity,
+        customerLegalName: profile.legalName,
+        periodStart,
+        periodEnd: atSeconds(inv.period_end) ?? periodStart,
+        currency: (inv.currency ?? 'usd').toUpperCase(),
+        subtotalMinor: inv.subtotal ?? 0,
+        discountMinor: discountMinorOf(inv),
+        taxMinor: taxMinorOf(inv),
+        totalMinor: inv.total ?? 0,
+        amountPaidMinor: inv.amount_paid ?? 0,
+        provider: PaymentProvider.STRIPE,
+        mode: this.config.mode,
+        providerInvoiceId: inv.id,
+        providerPaymentIntentId: paymentIntentIdOf(inv),
+        hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
+        issuedAt: this.issuedAtOf(inv),
+        // No tax determination attached on purpose. These amounts are the
+        // provider's, computed by its tax engine, so pointing at an internally
+        // resolved rate would misrepresent where they came from. S-M3 forbids a
+        // hard-coded rate, not a provider-computed one, and the column is
+        // nullable for exactly this case.
+        taxDeterminationId: null,
+      },
+    });
+  }
+
+  /**
+   * Date of issue, taken from the provider so it matches the document the
+   * pharmacy actually receives. `effective_at` is what Stripe prints on the PDF
+   * when set; otherwise the moment it was finalized, and failing both, created.
+   */
+  private issuedAtOf(inv: Stripe.Invoice): Date {
+    return (
+      atSeconds(inv.effective_at) ??
+      atSeconds(inv.status_transitions?.finalized_at) ??
+      atSeconds(inv.created) ??
+      new Date()
+    );
+  }
+
+  /**
+   * The billing profile an invoice belongs to.
+   *
+   * Metadata first, because checkout stamps billingProfileId onto the
+   * subscription and Stripe snapshots it onto every invoice that subscription
+   * generates — the most direct answer available, and it needs no round trip.
+   * The customer id is the fallback for anything raised outside that flow, such
+   * as an invoice created by hand in the Stripe dashboard.
+   */
+  private async resolveBillingProfile(
+    inv: Stripe.Invoice,
+  ): Promise<{ id: string; legalName: string } | null> {
+    const select = { id: true, legalName: true };
+
+    const fromMetadata = subscriptionMetadataOf(inv).billingProfileId;
+    if (fromMetadata) {
+      const byId = await this.prisma.billingProfile.findUnique({
+        where: { id: fromMetadata },
+        select,
+      });
+      if (byId) return byId;
+    }
+
+    const rawCustomer = inv.customer;
+    const providerCustomerId = typeof rawCustomer === 'string' ? rawCustomer : rawCustomer?.id;
+    if (!providerCustomerId) return null;
+
+    return this.prisma.billingProfile.findFirst({
+      where: { providerCustomerId },
+      select,
+    });
+  }
+
   /** Resolve the internal subscription for a provider invoice. */
   private async localSubscriptionId(inv: Stripe.Invoice): Promise<string | null> {
-    const raw = (inv as unknown as { subscription?: string | { id: string } }).subscription;
-    const providerSubscriptionId = typeof raw === 'string' ? raw : raw?.id;
+    const providerSubscriptionId = providerSubscriptionIdOf(inv);
     if (!providerSubscriptionId) return null;
 
     const sub = await this.prisma.subscription.findFirst({
