@@ -420,29 +420,37 @@
  * Radix opens its menus, dialogs and sheets modally, which locks body scroll
  * through react-remove-scroll. That library hides the page's scrollbar and,
  * so the content does not jump sideways into the space the scrollbar leaves,
- * pushes it back with an inline rule on the document body:
+ * pushes it back with a rule it injects into the document at runtime:
  *
  *   body[data-scroll-locked] { margin-right: <gap>px !important }
  *
  * where gap = window.innerWidth - document.documentElement.clientWidth.
  *
- * On a desktop that difference is the scrollbar, and the compensation is
- * exactly right. On a mobile browser there is no scrollbar to remove — the
- * difference is between the VISUAL viewport and the LAYOUT viewport, which is
- * zero at 100% and grows the moment the page is pinch-zoomed out. So opening
- * the account menu on a phone put a margin of that size on the body: the whole
- * page narrowed and a blank strip appeared down the right-hand side, for a
- * scrollbar that was never there.
+ * On a desktop that difference IS the scrollbar and the compensation is exactly
+ * right. On a mobile browser there is no scrollbar to remove: the difference is
+ * the VISUAL viewport minus the LAYOUT viewport, which is zero at rest and
+ * grows the moment the page can be panned sideways — pinch-zoomed out, or
+ * simply overflowing. Measured on a 360px viewport with the page overflowing to
+ * 600: opening the account menu put `margin-right: 240px` on the body and took
+ * it from 360px wide to 120px. That is the reported shift and the blank strip.
  *
- * Scoped to touch-primary devices, where overlay scrollbars mean there is
- * never a gap worth compensating for. A desktop — including a laptop with a
- * touchscreen, whose primary pointer is still fine — keeps the behaviour
- * unchanged. Written here rather than as `modal={false}` on each menu because
- * this is a property of the environment, not of any one menu, and it leaves
- * every dismissal, focus-trap and outside-click behaviour exactly as it is.
+ * `html` is load-bearing, not decoration. This rule and the library's are both
+ * `!important` on `body[data-scroll-locked]` — equal specificity — and the
+ * library injects its <style> at runtime, after this stylesheet, so on source
+ * order alone it wins. An earlier version of this override was written without
+ * the `html` prefix and was measurably ignored for exactly that reason. The
+ * extra type selector raises specificity to (0,1,2) and settles it regardless
+ * of order.
+ *
+ * Scoped to touch-primary devices, where overlay scrollbars mean the gap is
+ * never a scrollbar and compensating for it is always wrong. A desktop —
+ * including a laptop with a touchscreen, whose primary pointer is still fine —
+ * keeps the behaviour it needs. Only `margin-right` is neutralised: the
+ * `overflow: hidden` and `position: relative` in the same rule are what
+ * actually lock the scroll, and were measured not to move anything.
  */
 @media (hover: none) and (pointer: coarse) {
-  body[data-scroll-locked] {
+  html body[data-scroll-locked] {
     margin-right: 0 !important;
   }
 }

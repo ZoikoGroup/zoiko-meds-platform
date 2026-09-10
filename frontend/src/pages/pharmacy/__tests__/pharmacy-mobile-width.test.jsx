@@ -29,6 +29,14 @@ import { MemoryRouter } from 'react-router-dom'
  * on each menu, because it is a fact about touch devices rather than about any
  * one menu — and it leaves dismissal, focus trapping and outside-click alone.
  *
+ * It has to out-specify the library, which is the part a first attempt got
+ * wrong. Both rules are `!important` on `body[data-scroll-locked]`, and
+ * react-remove-scroll injects its <style> at runtime — after this stylesheet —
+ * so on equal specificity it wins on source order. Measured in headless Chrome
+ * at a 360px viewport with the page overflowing to 600: the unprefixed override
+ * was ignored and the body went from 360px wide to 120px. With `html` in front,
+ * specificity is (0,1,2) against (0,1,1) and the body stays 360px.
+ *
  * THE INVENTORY HEADER
  *
  * Export CSV, Import CSV and Add medicine sat in a flex row that could not
@@ -82,6 +90,17 @@ describe('the account menu does not put a margin on the page', () => {
     expect(touchBlock).toMatch(/margin-right:\s*0\s*!important/)
   })
 
+  it('out-specifies the rule it is overriding', () => {
+    // The whole reason the first attempt did nothing. Equal specificity plus a
+    // runtime-injected <style> means the library wins on source order, so the
+    // override needs the extra type selector to settle it.
+    const rules = INDEX_CSS.replace(/\/\*[\s\S]*?\*\//g, '')
+
+    expect(rules).toMatch(/html\s+body\[data-scroll-locked\]/)
+    // Never the bare form, which loses.
+    expect(rules).not.toMatch(/(^|[^\w\s])\s*body\[data-scroll-locked\]/m)
+  })
+
   it('leaves the compensation alone on a desktop', () => {
     // Behind a touch-primary query, so a mouse still gets the scrollbar gap it
     // needs and content does not jump when a menu opens.
@@ -92,7 +111,7 @@ describe('the account menu does not put a margin on the page', () => {
     const rules = INDEX_CSS.replace(/\/\*[\s\S]*?\*\//g, '')
     expect(rules.match(/body\[data-scroll-locked\]/g) ?? []).toHaveLength(1)
     expect(INDEX_CSS).toMatch(
-      /@media \(hover: none\) and \(pointer: coarse\)\s*\{\s*body\[data-scroll-locked\]/,
+      /@media \(hover: none\) and \(pointer: coarse\)\s*\{\s*html body\[data-scroll-locked\]/,
     )
   })
 
