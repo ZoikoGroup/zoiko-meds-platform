@@ -5,6 +5,8 @@ services:
   api:
     ports: !override
       - "127.0.0.1:8000:8000"
+    environment:
+      CORS_ORIGIN: https://zoikomeds.com,https://www.zoikomeds.com,https://app.zoikomeds.com
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: zoikomeds-pgadmin
