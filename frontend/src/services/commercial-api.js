@@ -58,22 +58,6 @@ export const releaseSubscriptionLocation = (subscriptionId, pharmacyId) =>
 export const getUsageSummary = (billingProfileId, params) =>
   apiFetch(`/admin/commercial/usage/${billingProfileId}${qs(params)}`)
 
-// --- Capabilities (S-22) ---------------------------------------------------
-
-export const getMyCapabilities = () => apiFetch('/admin/commercial/capabilities/me')
-
-export const getUserCapabilities = (userId) =>
-  apiFetch(`/admin/commercial/capabilities/${userId}`)
-
-export const grantCapability = (body) =>
-  apiFetch('/admin/commercial/capabilities/grant', { method: 'POST', body })
-
-export const revokeCapability = (grantId, reason) =>
-  apiFetch(`/admin/commercial/capabilities/${grantId}/revoke`, {
-    method: 'POST',
-    body: { reason },
-  })
-
 // --- Payment provider ------------------------------------------------------
 
 export const getProviderStatus = () => apiFetch('/admin/commercial/provider')
