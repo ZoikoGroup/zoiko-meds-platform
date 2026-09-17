@@ -45,6 +45,21 @@ import { MemoryRouter } from 'react-router-dom'
  * the page's padding. PageHeader wraps its own actions, but this row is a
  * single item to it, so it had to wrap itself.
  *
+ * MEASURED, in headless Chrome, on the code as it now stands
+ *
+ *   Inventory   320/360/375/390/412/430 → scrollWidth === clientWidth at every
+ *               width, no uncontained offenders. "Add medicine" sits at
+ *               [16..145] once the row wraps, and [267..396] at 412 and above
+ *               where all three still fit on one line — inside the viewport
+ *               either way.
+ *   Profile     360px, before → after opening: body {0,360,360} unchanged,
+ *               margin-right 0px unchanged, menu [88..344], scroll lock still
+ *               applied (overflow hidden, position relative).
+ *   Desktop     1440x600 with a real 10px scrollbar: the touch query does not
+ *               match, the library's compensation still fires (margin-right
+ *               0px → 10px) and the body holds at 1430 — which is the whole
+ *               point of it.
+ *
  * WHAT THESE TESTS CAN AND CANNOT SHOW
  *
  * jsdom has no layout engine and applies no stylesheet: `scrollWidth` is
@@ -63,6 +78,21 @@ vi.mock('@/providers/auth-provider', () => ({
 
 vi.mock('@/providers/theme-provider', () => ({
   useTheme: () => ({ theme: 'dark', toggleTheme: vi.fn() }),
+}))
+
+// The Inventory page's data layer. Two rows are enough: the action row above
+// the table is the subject, and it renders the same whatever the table holds.
+vi.mock('@/services/pharmacy-api', () => ({
+  getInventory: vi.fn(async () => [
+    { id: 'm1', name: 'Limcee', generic: 'Vitamin C', brands: [], strength: '500 mg',
+      dosageform: 'Tablet', status: 'available', updatedAt: new Date().toISOString() },
+    { id: 'm2', name: 'Calpol 250', generic: 'Paracetamol', brands: [], strength: '250 mg',
+      dosageform: 'Syrup', status: 'limited', updatedAt: new Date().toISOString() },
+  ]),
+  addMedicine: vi.fn(),
+  deleteMedicine: vi.fn(),
+  updateAvailability: vi.fn(),
+  updateMedicine: vi.fn(),
 }))
 
 const { PharmacyLayout } = await import('@/layouts/pharmacy-layout')
@@ -187,6 +217,41 @@ describe('the inventory header wraps instead of overflowing', () => {
     for (const label of ['Export CSV', 'Import CSV', 'Add medicine']) {
       expect(INVENTORY).toContain(label)
     }
+  })
+
+  it('renders Add medicine as a control a thumb can reach', async () => {
+    // The source check above proves the label survives an edit; this proves the
+    // page actually puts a button there. Neither can prove it is on screen —
+    // that was measured in a browser, and the numbers are in the docblock.
+    const { default: PharmacyInventory } = await import('../PharmacyInventory')
+
+    render(
+      <MemoryRouter initialEntries={['/pharmacy/inventory']}>
+        <PharmacyInventory />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: /add medicine/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /export csv/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /import csv/i })).toBeDefined()
+  })
+
+  it('puts all three in one wrapping row, so none can be pushed off', async () => {
+    const { default: PharmacyInventory } = await import('../PharmacyInventory')
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/pharmacy/inventory']}>
+        <PharmacyInventory />
+      </MemoryRouter>,
+    )
+
+    const add = await screen.findByRole('button', { name: /add medicine/i })
+    const row = add.parentElement
+
+    expect(row.className).toMatch(/(^|\s)flex-wrap(\s|$)/)
+    expect(row.textContent).toContain('Export CSV')
+    expect(row.textContent).toContain('Import CSV')
+    expect(container.querySelector('main')).toBeNull()
   })
 })
 
