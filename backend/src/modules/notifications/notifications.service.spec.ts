@@ -115,8 +115,8 @@ function makeHarness(options?: {
         return options?.releasedGates ?? 'P0,P1,P2,INTERNAL,CONDITIONAL';
       }
       if (key === 'APP_BASE_URL') return 'https://app.zoikomeds.com';
-      if (key === 'SUPPORT_EMAIL') return 'support@zoikomeds.com';
-      if (key === 'SUPPORT_CENTER_LINK') return 'https://app.zoikomeds.com/support';
+      if (key === 'SUPPORT_EMAIL') return 'info@zoikomeds.com';
+      if (key === 'SUPPORT_CENTER_LINK') return 'https://zoikomeds.com/contact';
       return undefined;
     }),
   };

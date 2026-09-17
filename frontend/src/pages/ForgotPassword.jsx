@@ -103,7 +103,7 @@ export default function ForgotPassword() {
                 <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
                   <span>Need assistance?</span>
                   <a
-                    href="mailto:support@zoikomeds.com"
+                    href="mailto:info@zoikomeds.com"
                     className="font-semibold text-teal hover:underline"
                   >
                     Contact Support

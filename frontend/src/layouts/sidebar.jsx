@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { navSections } from '@/routes/navigation';
 import { cn } from '@/lib/utils';
 /** Used only when the server cannot be asked; matches the backend default. */
-const FALLBACK_SUPPORT_EMAIL = 'support@zoikomeds.com';
+const FALLBACK_SUPPORT_EMAIL = 'info@zoikomeds.com';
 function useActiveMatcher() {
     const { pathname, search } = useLocation();
     const tab = new URLSearchParams(search).get('tab');

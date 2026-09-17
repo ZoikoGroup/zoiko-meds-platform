@@ -179,7 +179,7 @@ export function UserLayout() {
           {t('support', 'Support')}
         </span>
         <a
-          href="mailto:support@zoikomeds.com"
+          href="mailto:info@zoikomeds.com"
           className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-muted-foreground cursor-pointer transition-all duration-200 ease-in-out hover:bg-muted/50 hover:text-foreground hover:translate-x-1"
         >
           <span className="flex w-5 justify-center shrink-0">
