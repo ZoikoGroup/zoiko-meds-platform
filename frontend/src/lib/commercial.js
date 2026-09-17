@@ -176,39 +176,6 @@ export const BILLING_RBAC_MATRIX = [
   },
 ]
 
-/**
- * Billing capabilities that can be granted, mirroring the backend enum.
- *
- * `financial` labels the row; `requiresSodAck` decides what the grant request
- * actually sends. The two are not the same set: the backend's
- * violatesSeparationOfDuties (commercial.doctrine.ts) flags only refunds and the
- * price catalog, so sending the acknowledgement for GRANT_CAPABILITIES would
- * stamp `separationOfDutiesOverridden` on an audit record for an override that
- * never happened — on the one surface whose purpose is making financial
- * authority traceable.
- */
-export const BILLING_CAPABILITIES = [
-  { code: 'VIEW_PLAN_AND_USAGE', label: 'View plan & usage' },
-  { code: 'VIEW_INVOICES', label: 'View invoices' },
-  { code: 'MANAGE_PAYMENT_METHODS', label: 'Manage payment methods' },
-  { code: 'CHANGE_PLAN', label: 'Change plan' },
-  { code: 'CANCEL_SUBSCRIPTION', label: 'Cancel subscription' },
-  { code: 'MANAGE_DISCOUNTS_AND_ADDONS', label: 'Manage discounts & add-ons' },
-  {
-    code: 'APPROVE_REFUND_OR_CREDIT',
-    label: 'Approve refund or credit',
-    financial: true,
-    requiresSodAck: true,
-  },
-  {
-    code: 'MANAGE_PRICE_CATALOG',
-    label: 'Manage price catalog',
-    financial: true,
-    requiresSodAck: true,
-  },
-  { code: 'GRANT_CAPABILITIES', label: 'Grant capabilities to others', financial: true },
-]
-
 /** S-L1 — self-serve Pro delinquency timeline. Enterprise follows its contract. */
 export const DELINQUENCY_TIMELINE = [
   { day: 'Day 0', action: 'Payment failure — recovery notices sent' },
