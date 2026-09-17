@@ -45,7 +45,7 @@ async function openHelp() {
 beforeEach(() => {
   vi.clearAllMocks()
   getHelpResourcesMock.mockResolvedValue({
-    supportEmail: 'support@zoikomeds.com',
+    supportEmail: 'info@zoikomeds.com',
     apiReferenceUrl: '/api/docs',
     documentationUrl: null,
   })
@@ -65,7 +65,7 @@ describe('MSA-43 · Help Center', () => {
 
   it('prefers a configured documentation site over the API reference', async () => {
     getHelpResourcesMock.mockResolvedValue({
-      supportEmail: 'support@zoikomeds.com',
+      supportEmail: 'info@zoikomeds.com',
       apiReferenceUrl: '/api/docs',
       documentationUrl: 'https://docs.example.test',
     })
@@ -79,7 +79,7 @@ describe('MSA-43 · Help Center', () => {
   // and a link would open a 404 — no better than the button that opened nothing.
   it('shows no Documentation tile when the deployment publishes neither', async () => {
     getHelpResourcesMock.mockResolvedValue({
-      supportEmail: 'support@zoikomeds.com',
+      supportEmail: 'info@zoikomeds.com',
       apiReferenceUrl: null,
       documentationUrl: null,
     })
@@ -130,7 +130,7 @@ describe('MSA-43 · Help Center', () => {
     await openHelp()
 
     const support = await screen.findByRole('link', { name: /contact support/i })
-    expect(support.getAttribute('href').startsWith('mailto:support@zoikomeds.com')).toBe(true)
+    expect(support.getAttribute('href').startsWith('mailto:info@zoikomeds.com')).toBe(true)
   })
 
   it('no longer promises a support SLA nothing backs', async () => {
