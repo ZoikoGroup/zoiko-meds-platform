@@ -91,16 +91,28 @@ function makeHarness(options?: {
   };
 
   const mail = {
-    sendRendered: jest.fn(async () => {
-      if (options?.failSend) throw new Error('smtp unavailable');
-      return { providerMessageId: 'msg_1' };
-    }),
+    // Typed against what the service actually passes, so a test can assert on
+    // the rendered subject rather than only on the call count.
+    sendRendered: jest.fn(
+      async (_params: {
+        to: string;
+        subject: string;
+        html: string;
+        text: string;
+        stream: string;
+      }) => {
+        if (options?.failSend) throw new Error('smtp unavailable');
+        return { providerMessageId: 'msg_1' };
+      },
+    ),
   };
 
   const config = {
     get: jest.fn((key: string) => {
       if (key === 'NOTIFICATION_RELEASED_GATES') {
-        return options?.releasedGates ?? 'P0,P1,P2,INTERNAL';
+        // Mirrors the service's own default, so "default gate set" here means
+        // what it means in a deployment that sets nothing.
+        return options?.releasedGates ?? 'P0,P1,P2,INTERNAL,CONDITIONAL';
       }
       if (key === 'APP_BASE_URL') return 'https://app.zoikomeds.com';
       if (key === 'SUPPORT_EMAIL') return 'support@zoikomeds.com';
@@ -313,11 +325,59 @@ describe('NotificationsService.emit', () => {
     ).rejects.toThrow(/Unknown or unauthored/);
   });
 
-  it('keeps commercial templates undeliverable under the default gate set', async () => {
-    // COM-* are CONDITIONAL and must stay disabled until commercial sign-off.
+  it('refuses a commercial template that is in the directory but unauthored', async () => {
+    // COM-005 is catalogued but has no copy — only 001/003/004 are authored.
     const h = makeHarness();
     await expect(
-      h.service.emit({ templateId: 'COM-003', payload: {}, recipients: [] }),
+      h.service.emit({ templateId: 'COM-005', payload: {}, recipients: [] }),
     ).rejects.toThrow(/Unknown or unauthored/);
+  });
+});
+
+describe('commercial confirmations (COM-*)', () => {
+  const COM_004 = {
+    templateId: 'COM-004',
+    payload: {
+      'Organization Name': 'Northside Pharmacy',
+      'Plan Name': 'ZoikoMeds Pharmacy Intelligence Pro',
+      'Invoice Number': 'ZM-INV-0001',
+      'Amount Paid': '$49.00',
+      'Payment Date': 'September 11, 2026',
+      'Billing Portal Link': 'https://app.zoikomeds.com/pharmacy/billing',
+    },
+    workflowType: 'commercial',
+    workflowRef: 'in_test_1',
+  };
+
+  it('dispatches under the default gate set — a paying pharmacy gets its receipt', async () => {
+    const h = makeHarness();
+    const result = await h.service.emit({ ...COM_004, recipients: [RECIPIENT] });
+
+    expect(result.delivered).toBe(2); // EMAIL + IN_APP
+    expect(result.suppressed).toBe(0);
+    expect(h.mail.sendRendered).toHaveBeenCalledTimes(1);
+    expect(h.mail.sendRendered.mock.calls[0][0].subject).toContain('ZM-INV-0001');
+  });
+
+  it('is suppressed, not sent, when CONDITIONAL is withheld', async () => {
+    // The documented lever for pausing commercial mail without a code change.
+    const h = makeHarness({ releasedGates: 'P0,P1,P2,INTERNAL' });
+    const result = await h.service.emit({ ...COM_004, recipients: [RECIPIENT] });
+
+    expect(result.delivered).toBe(0);
+    expect(h.mail.sendRendered).not.toHaveBeenCalled();
+    expect(h.deliveries[0].suppressionReason).toBe('GATE_NOT_RELEASED');
+  });
+
+  it('refuses to send a confirmation with a blank money or reference field', async () => {
+    // A receipt with an empty amount is worse than no receipt at all.
+    const h = makeHarness();
+    await expect(
+      h.service.emit({
+        ...COM_004,
+        payload: { ...COM_004.payload, 'Amount Paid': '' },
+        recipients: [RECIPIENT],
+      }),
+    ).rejects.toThrow(/missing required field/);
   });
 });

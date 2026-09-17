@@ -88,7 +88,7 @@ const HARD_SUPPRESSIONS: NotificationSuppressionReason[] = [
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  /** Gates cleared for dispatch. CONDITIONAL stays closed until commercial sign-off. */
+  /** Gates cleared for dispatch. Anything outside this set suppresses with GATE_NOT_RELEASED. */
   private readonly releasedGates: Set<NotificationGate>;
   private readonly allowedLinkHosts: string[];
   private readonly supportEmail: string;
@@ -100,7 +100,8 @@ export class NotificationsService {
     private readonly config: ConfigService,
   ) {
     const configured = (
-      this.config.get<string>('NOTIFICATION_RELEASED_GATES') ?? 'P0,P1,P2,INTERNAL'
+      this.config.get<string>('NOTIFICATION_RELEASED_GATES') ??
+      'P0,P1,P2,INTERNAL,CONDITIONAL'
     )
       .split(',')
       .map((gate) => gate.trim().toUpperCase())
@@ -124,9 +125,17 @@ export class NotificationsService {
     this.supportCenterLink =
       this.config.get<string>('SUPPORT_CENTER_LINK') || `${baseUrl}/support`;
 
+    // Stated at boot either way: whether a pharmacy gets a purchase confirmation
+    // is a question people ask of a running deployment, and the answer should be
+    // in its logs rather than inferred from an env var nobody set.
     if (this.releasedGates.has(NotificationGate.CONDITIONAL)) {
+      this.logger.log(
+        'CONDITIONAL gate is released — commercial confirmations (COM-001/003/004) will dispatch.',
+      );
+    } else {
       this.logger.warn(
-        'CONDITIONAL gate is released — commercial templates will dispatch. Confirm commercial, tax, payment, refund, and regulatory sign-off is in place.',
+        'CONDITIONAL gate is withheld — commercial confirmations will be suppressed with ' +
+          'GATE_NOT_RELEASED. Add CONDITIONAL to NOTIFICATION_RELEASED_GATES to send them.',
       );
     }
   }
