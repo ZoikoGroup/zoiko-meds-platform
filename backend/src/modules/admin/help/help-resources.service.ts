@@ -34,7 +34,7 @@ export class HelpResourcesService {
   get(): HelpResources {
     return {
       supportEmail:
-        this.config.get<string>('SUPPORT_EMAIL') || 'support@zoikomeds.com',
+        this.config.get<string>('SUPPORT_EMAIL') || 'info@zoikomeds.com',
       apiReferenceUrl: this.apiReferenceUrl(),
       documentationUrl: this.config.get<string>('DOCS_URL') || null,
     };

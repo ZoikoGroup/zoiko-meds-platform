@@ -281,7 +281,9 @@ describe('MSA-43 · help resources', () => {
     new HelpResourcesService(configFor(values)).get();
 
   it('always has an address for support', () => {
-    expect(get({}).supportEmail).toBe('support@zoikomeds.com');
+    // Same fallback the email footer uses, so the Help Center and the messages
+    // the platform sends cannot name two different support addresses.
+    expect(get({}).supportEmail).toBe('info@zoikomeds.com');
     expect(get({ SUPPORT_EMAIL: 'help@example.test' }).supportEmail).toBe(
       'help@example.test',
     );

@@ -147,7 +147,7 @@ export default function UsersRoles() {
     }
   }
 
-  const toggleCapability = async (capability, held, financial) => {
+  const toggleCapability = async (capability, held, requiresSodAck) => {
     if (!capUser) return
     setCapBusy(capability)
     setCapError('')
@@ -169,7 +169,9 @@ export default function UsersRoles() {
           capability,
           // Granting financial authority to an operational role is a
           // separation-of-duties trade-off the API refuses unless acknowledged.
-          acknowledgeSeparationOfDutiesConflict: !!financial,
+          // Sent only for the capabilities the backend actually flags, so the
+          // audit record never claims an override that did not happen.
+          acknowledgeSeparationOfDutiesConflict: !!requiresSodAck,
         })
       }
       await refreshCapabilities()
@@ -624,7 +626,7 @@ export default function UsersRoles() {
                       size="sm"
                       variant={held ? 'outline' : 'default'}
                       disabled={isSuper || capBusy === cap.code || (held && !fromGrant)}
-                      onClick={() => toggleCapability(cap.code, held, cap.financial)}
+                      onClick={() => toggleCapability(cap.code, held, cap.requiresSodAck)}
                     >
                       {capBusy === cap.code && <Loader2 className="size-3.5 animate-spin" />}
                       {held ? 'Revoke' : 'Grant'}

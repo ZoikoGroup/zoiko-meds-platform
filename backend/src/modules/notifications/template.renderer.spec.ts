@@ -8,8 +8,8 @@ import type { EmailTemplate } from './template.types';
 
 const BASE_CTX: Omit<RenderContext, 'payload'> = {
   allowedLinkHosts: ['zoikomeds.com'],
-  supportEmail: 'support@zoikomeds.com',
-  supportCenterLink: 'https://app.zoikomeds.com/support',
+  supportEmail: 'info@zoikomeds.com',
+  supportCenterLink: 'https://zoikomeds.com/contact',
 };
 
 function ctx(payload: Record<string, unknown>): RenderContext {
@@ -202,6 +202,18 @@ describe('renderTemplate', () => {
   it('labels the stream in the footer', () => {
     const out = renderTemplate(template('REG-004'), ctx(REG_004_PAYLOAD));
     expect(out.text).toContain('automated ZoikoMeds service communication');
+  });
+
+  it('points the footer at a support address and a page that exists', () => {
+    // The Support Center link is not host-checked the way a CTA is, so nothing
+    // else would catch it pointing back at an app route the SPA has no handler
+    // for — which is what the previous ${APP_BASE_URL}/support default did.
+    const out = renderTemplate(template('REG-004'), ctx(REG_004_PAYLOAD));
+
+    expect(out.text).toContain('info@zoikomeds.com');
+    expect(out.text).toContain('https://zoikomeds.com/contact');
+    expect(out.html).toContain('href="mailto:info@zoikomeds.com"');
+    expect(out.html).toContain('href="https://zoikomeds.com/contact"');
   });
 
   it('renders a hidden preheader that differs from the subject', () => {

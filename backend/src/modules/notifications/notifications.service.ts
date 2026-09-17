@@ -120,10 +120,17 @@ export class NotificationsService {
       .filter(Boolean)
       .concat(derivedHost ? [derivedHost] : []);
 
+    // Support identity carried in every footer. The link is the public contact
+    // page, not an app route: APP_BASE_URL serves the SPA, which has no
+    // /support route, so the previous default resolved to a 404 on every
+    // message the platform sent. Unlike a CTA destination this is not host-
+    // checked, so pointing it at the marketing domain needs no entry in
+    // NOTIFICATION_ALLOWED_LINK_HOSTS.
     this.supportEmail =
-      this.config.get<string>('SUPPORT_EMAIL') || 'support@zoikomeds.com';
+      this.config.get<string>('SUPPORT_EMAIL') || 'info@zoikomeds.com';
     this.supportCenterLink =
-      this.config.get<string>('SUPPORT_CENTER_LINK') || `${baseUrl}/support`;
+      this.config.get<string>('SUPPORT_CENTER_LINK') ||
+      'https://zoikomeds.com/contact';
 
     // Stated at boot either way: whether a pharmacy gets a purchase confirmation
     // is a question people ask of a running deployment, and the answer should be
