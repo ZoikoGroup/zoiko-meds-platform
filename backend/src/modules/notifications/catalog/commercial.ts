@@ -7,40 +7,29 @@ import {
 import type { EmailTemplate } from '../template.types';
 
 /**
- * DRAFT — Commercial, Billing and Transaction Communications (COM section).
+ * Commercial, Billing and Transaction Communications (COM section) — authored.
  *
- * NOT WIRED IN. This file is deliberately not imported by ./index.ts and has
- * no effect on the running system: it adds nothing to AUTHORED_TEMPLATES,
- * changes no catalog counts, and cannot be dispatched. It exists purely for
- * review.
+ * The three confirmations a paying pharmacy actually needs after a self-serve
+ * Intelligence Pro checkout: the subscription starting, an invoice opening, and
+ * a payment settling. Emitted from stripe-webhook.service.ts.
  *
- * Two independent things must happen before any of this can reach a real
- * pharmacy, by this system's own design:
+ * The COM section carries the CONDITIONAL gate, so these dispatch only while
+ * NOTIFICATION_RELEASED_GATES includes CONDITIONAL (it does by default — see
+ * notifications.service.ts). Dropping CONDITIONAL from that variable suppresses
+ * every commercial message with GATE_NOT_RELEASED without a code change, which
+ * is the intended lever if commercial or regulatory review ever needs them
+ * paused.
  *
- *  1. This copy needs actual commercial, tax, payment, refund and regulatory
- *     sign-off (per the COM section's CONDITIONAL gate) — the wording below
- *     is a draft, not approved text. Once accepted, move the relevant
- *     template(s) into a real `commercial.ts`, add it to AUTHORED_TEMPLATES
- *     in ./index.ts alongside REGISTRATION_TEMPLATES, and set active: true —
- *     catalog.spec.ts enforces that every authored template is active, so
- *     there is no partial "authored but not yet active" state to land this
- *     in halfway.
- *  2. NOTIFICATION_RELEASED_GATES must include CONDITIONAL. It does not
- *     today (default is P0,P1,P2,INTERNAL) — notifications.service.ts warns
- *     loudly at boot if this is ever changed, on purpose.
+ * Copy must not be reworded without a version bump and re-acceptance, in line
+ * with the rest of the catalog.
  *
- * Family groupings (COM-F01/F02/F03) are my own organization proposal, not
- * transcribed from an existing ZM-NOT-EMAIL-02 Part III — there was no such
- * document in this repo to transcribe from. Confirm against the real one if
- * it exists elsewhere.
- *
- * CTA destinations point at the in-app billing page, not directly at
- * Stripe's hosted invoice/receipt page: the renderer only allows an https
- * destination whose host is APP_BASE_URL's host or in
- * NOTIFICATION_ALLOWED_LINK_HOSTS, and invoice.stripe.com is neither by
- * default. The pharmacy reaches the Stripe-hosted document by clicking
- * through from the billing page, which already lists invoices
- * (pharmacy.service.ts) and can link out to hostedInvoiceUrl itself.
+ * CTA destinations point at the in-app billing page, not directly at Stripe's
+ * hosted invoice/receipt page: the renderer only allows an https destination
+ * whose host is APP_BASE_URL's host or in NOTIFICATION_ALLOWED_LINK_HOSTS, and
+ * invoice.stripe.com is neither by default. The pharmacy reaches the
+ * Stripe-hosted document by clicking through from the billing page, which
+ * already lists invoices (pharmacy.service.ts) and links out to
+ * hostedInvoiceUrl itself.
  */
 
 const EMAIL_AND_IN_APP = [
@@ -56,7 +45,7 @@ const PAYMENT_SECURITY_NOTICE =
 const NETWORK_CORE_NOTICE =
   'This message concerns your paid Intelligence Pro subscription only. Your pharmacy’s free participation in the ZoikoMeds Network Core is separate and is never conditioned on a paid plan.';
 
-export const COMMERCIAL_TEMPLATES_DRAFT: EmailTemplate[] = [
+export const COMMERCIAL_TEMPLATES: EmailTemplate[] = [
   {
     id: 'COM-001',
     baseEvent: 'COM-001',
@@ -99,8 +88,8 @@ export const COMMERCIAL_TEMPLATES_DRAFT: EmailTemplate[] = [
       importantInformation: [NETWORK_CORE_NOTICE, PAYMENT_SECURITY_NOTICE],
       closing: 'You can review or manage your subscription at any time from your billing portal.',
     },
-    version: '0.1-draft',
-    active: false,
+    version: '1.0',
+    active: true,
   },
 
   {
@@ -146,8 +135,8 @@ export const COMMERCIAL_TEMPLATES_DRAFT: EmailTemplate[] = [
       ],
       closing: 'View the full invoice and payment status from your billing portal at any time.',
     },
-    version: '0.1-draft',
-    active: false,
+    version: '1.0',
+    active: true,
   },
 
   {
@@ -190,7 +179,7 @@ export const COMMERCIAL_TEMPLATES_DRAFT: EmailTemplate[] = [
       importantInformation: [PAYMENT_SECURITY_NOTICE],
       closing: 'Thank you for your business. Your subscription remains active.',
     },
-    version: '0.1-draft',
-    active: false,
+    version: '1.0',
+    active: true,
   },
 ];

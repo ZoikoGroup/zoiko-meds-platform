@@ -1,4 +1,5 @@
 import type { EmailTemplate, RegisteredTemplate } from '../template.types';
+import { COMMERCIAL_TEMPLATES } from './commercial';
 import { DIRECTORY_BY_ID, TEMPLATE_DIRECTORY } from './directory';
 import { REGISTRATION_TEMPLATES } from './registration';
 
@@ -12,7 +13,10 @@ import { REGISTRATION_TEMPLATES } from './registration';
  * its copy, triggers, suppression logic, owners, and test cases are complete.
  */
 
-const AUTHORED: EmailTemplate[] = [...REGISTRATION_TEMPLATES];
+const AUTHORED: EmailTemplate[] = [
+  ...REGISTRATION_TEMPLATES,
+  ...COMMERCIAL_TEMPLATES,
+];
 
 // Fail fast at import time on a duplicate template ID or an authored template
 // that is missing from the approved directory. Both are release-blocking.

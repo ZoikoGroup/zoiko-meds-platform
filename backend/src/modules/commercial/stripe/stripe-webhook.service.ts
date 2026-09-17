@@ -165,26 +165,25 @@ export class StripeWebhookService {
    * guard, so nothing anywhere in that path can affect the financial
    * reconciliation it runs after.
    *
-   * COM-001/003/004 are drafted (catalog/commercial.draft.ts) but neither
-   * authored into AUTHORED_TEMPLATES nor released via
-   * NOTIFICATION_RELEASED_GATES — both deliberate, pending commercial, tax,
-   * payment, refund and regulatory sign-off. So today `run` always throws
-   * inside NotificationsService.emit() and is swallowed right here. But the
-   * guard is deliberately wider than just that call: the financial state this
-   * runs after (invoice recorded, subscription active) has already been
-   * committed by the time `run` executes, and a lookup failure, a missing
-   * billing profile, or a live mail outage must never re-litigate that by
-   * failing the webhook — draft template today, or a genuine send once
-   * accepted, the failure mode must stay the same. The moment the template is
-   * authored and the gate released, this starts sending with no further
-   * change to this file.
+   * COM-001/003/004 are authored (catalog/commercial.ts) and their CONDITIONAL
+   * gate is released by default, so these send for real. The guard is
+   * deliberately wider than the emit() call alone: the financial state this runs
+   * after (invoice recorded, subscription active) has already been committed by
+   * the time `run` executes, and a lookup failure, a missing billing profile, a
+   * suppressed recipient or a mail outage must never re-litigate that by failing
+   * the webhook. Stripe would retry the delivery, and a retry that re-runs
+   * reconciliation to salvage an email is a worse outcome than a missing email.
+   *
+   * Logged at warn rather than debug: a confirmation that did not go out is
+   * something support hears about, and the reason needs to be findable without
+   * raising the log level on a production service.
    */
   private async tryNotifyCommercial(templateId: string, run: () => Promise<void>): Promise<void> {
     try {
       await run();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      this.logger.debug(`${templateId} confirmation email not sent: ${detail}`);
+      this.logger.warn(`${templateId} confirmation email not sent: ${detail}`);
     }
   }
 
@@ -401,7 +400,7 @@ export class StripeWebhookService {
     return { reconciled: true };
   }
 
-  /** COM-001 — "Trial or paid subscription started" (currently draft; see tryNotifyCommercial). */
+  /** COM-001 — "Trial or paid subscription started". Guarded; see tryNotifyCommercial. */
   private async notifySubscriptionStarted(
     billingProfileId: string,
     priceCatalogEntryId: string | null,
@@ -472,7 +471,7 @@ export class StripeWebhookService {
         },
       });
 
-      // COM-004 — "Payment received" (currently draft; see tryNotifyCommercial).
+      // COM-004 — "Payment received". Guarded; see tryNotifyCommercial.
       await this.tryNotifyCommercial('COM-004', async () => {
         const profile = await this.billingContactFor(local.billingProfileId);
         if (!profile) return;
@@ -545,7 +544,7 @@ export class StripeWebhookService {
       },
     });
 
-    // COM-003 — "Invoice issued" (currently draft; see tryNotifyCommercial).
+    // COM-003 — "Invoice issued". Guarded; see tryNotifyCommercial.
     await this.tryNotifyCommercial('COM-003', async () => {
       const profile = await this.billingContactFor(local.billingProfileId);
       if (!profile) return;

@@ -20,11 +20,11 @@ import { NotificationsService } from '../notifications/notifications.service';
 const audit = () => ({ write: jest.fn() }) as unknown as AuditWriter;
 const cfg = (values: Record<string, string | undefined>) =>
   ({ get: (k: string) => values[k] }) as unknown as ConfigService;
-// COM-001/003/004 are drafted but not authored (see catalog/commercial.draft.ts),
-// so a real NotificationsService.emit() call throws for them today by design.
-// A plain resolving mock is enough here: these tests exercise webhook/checkout
-// behavior, not the commercial-email attempt, which is independently guarded
-// by tryNotifyCommercial so it can never affect what these tests assert on.
+// A plain resolving mock: these tests exercise webhook/checkout behavior, not
+// the commercial-email attempt. That attempt is independently guarded by
+// tryNotifyCommercial, so it can never affect what these tests assert on —
+// which is exactly the property the guard exists to provide now that
+// COM-001/003/004 send for real.
 const notifications = () => ({ emit: jest.fn().mockResolvedValue({}) }) as unknown as NotificationsService;
 
 const uniqueViolation = () => {
@@ -309,6 +309,9 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
  */
 describe('StripeWebhookService — recording a provider-originated invoice', () => {
   let prisma: any;
+  // Held rather than built inline: this block asserts on the confirmation
+  // emails the handlers emit, not just on the rows they write.
+  let notify: { emit: jest.Mock };
 
   const event = (type: string, object: any, id = 'evt_1') =>
     ({ id, type, data: { object } }) as any;
@@ -337,6 +340,24 @@ describe('StripeWebhookService — recording a provider-originated invoice', () 
     ...over,
   });
 
+  /**
+   * The local row the handlers read back. Carries every column the confirmation
+   * emails merge in — an incomplete fixture here would let a broken payload pass,
+   * since tryNotifyCommercial deliberately swallows the failure.
+   */
+  const localInvoice = (over: Record<string, unknown> = {}) => ({
+    id: 'inv_local',
+    status: 'OPEN',
+    billingProfileId: 'bp_1',
+    invoiceNumber: 'ZM-INV-0001',
+    currency: 'USD',
+    totalMinor: 11000,
+    periodStart: new Date('2026-09-01T00:00:00Z'),
+    periodEnd: new Date('2026-10-01T00:00:00Z'),
+    issuedAt: null,
+    ...over,
+  });
+
   const build = (supplierLegalEntity?: string) =>
     new StripeWebhookService(
       prisma as unknown as PrismaService,
@@ -348,11 +369,12 @@ describe('StripeWebhookService — recording a provider-originated invoice', () 
           ...(supplierLegalEntity ? { BILLING_SUPPLIER_LEGAL_ENTITY: supplierLegalEntity } : {}),
         }),
       ),
-      notifications(),
-      cfg({}),
+      notify as unknown as NotificationsService,
+      cfg({ APP_BASE_URL: 'https://app.zoikomeds.com' }),
     );
 
   beforeEach(() => {
+    notify = { emit: jest.fn().mockResolvedValue({}) };
     prisma = {
       providerEvent: {
         create: jest.fn().mockResolvedValue({ id: 'pe_1' }),
@@ -361,14 +383,18 @@ describe('StripeWebhookService — recording a provider-originated invoice', () 
       },
       invoice: {
         findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 'inv_local', status: 'OPEN', totalMinor: 11000 }),
+        create: jest.fn().mockResolvedValue(localInvoice()),
         // Reflects the row's id back so a handler chaining off ensureLocalInvoice's
         // return value (the backfill path) has something real to key its own
         // subsequent update on, the way Prisma's real update does.
-        update: jest.fn().mockResolvedValue({ id: 'inv_local', status: 'OPEN', totalMinor: 11000 }),
+        update: jest.fn().mockResolvedValue(localInvoice()),
       },
       billingProfile: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'bp_1', legalName: 'Acme Pharmacy LLC' }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'bp_1',
+          legalName: 'Acme Pharmacy LLC',
+          billingEmail: 'billing@acme-pharmacy.example',
+        }),
         findFirst: jest.fn().mockResolvedValue(null),
       },
       subscription: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
@@ -460,6 +486,60 @@ describe('StripeWebhookService — recording a provider-originated invoice', () 
     );
   });
 
+  it('sends the COM-003 invoice-issued confirmation when an invoice opens', async () => {
+    const service = build('Zoiko Healthcare Inc.');
+
+    await service.handle(event('invoice.finalized', providerInvoice()));
+
+    expect(notify.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateId: 'COM-003',
+        recipients: [{ email: 'billing@acme-pharmacy.example' }],
+        workflowRef: 'in_1',
+        payload: expect.objectContaining({
+          'Organization Name': 'Acme Pharmacy LLC',
+          'Invoice Number': 'ZM-INV-0001',
+          'Invoice Total': '$110.00',
+          'Billing Portal Link': 'https://app.zoikomeds.com/pharmacy/billing',
+        }),
+      }),
+    );
+  });
+
+  it('sends the COM-004 payment-received confirmation when a payment settles', async () => {
+    const service = build('Zoiko Healthcare Inc.');
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
+
+    await service.handle(event('invoice.paid', providerInvoice({ amount_paid: 11000 })));
+
+    expect(notify.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateId: 'COM-004',
+        recipients: [{ email: 'billing@acme-pharmacy.example' }],
+        payload: expect.objectContaining({
+          'Invoice Number': 'ZM-INV-0001',
+          'Amount Paid': '$110.00',
+        }),
+      }),
+    );
+  });
+
+  it('still records the payment when the confirmation email cannot be sent', async () => {
+    // The guard's whole purpose: Stripe must not retry a settled invoice
+    // because the mail provider was down.
+    const service = build('Zoiko Healthcare Inc.');
+    notify.emit.mockRejectedValue(new Error('smtp unavailable'));
+
+    const result = await service.handle(
+      event('invoice.paid', providerInvoice({ amount_paid: 11000 })),
+    );
+
+    expect(result.status).toBe(ProviderEventStatus.PROCESSED);
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'PAID' }) }),
+    );
+  });
+
   it('backfills the subscription link on an invoice an earlier event created without one', async () => {
     prisma.invoice.findFirst.mockResolvedValue({ id: 'inv_local', status: 'OPEN', subscriptionId: null });
     prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
@@ -507,6 +587,7 @@ describe('StripeWebhookService — recording a provider-originated invoice', () 
 describe('StripeWebhookService.reconcileCheckoutSession — the webhook is not the only route', () => {
   let service: StripeWebhookService;
   let prisma: any;
+  let notify: { emit: jest.Mock };
 
   const session = (over: Record<string, unknown> = {}) =>
     ({
@@ -536,16 +617,68 @@ describe('StripeWebhookService.reconcileCheckoutSession — the webhook is not t
       subscriptionLocation: { create: jest.fn().mockResolvedValue({}) },
       pharmacy: { update: jest.fn().mockResolvedValue({}) },
       invoice: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+      // Read only by the COM-001 confirmation, which merges the organization
+      // name and the exact approved price into the email.
+      billingProfile: {
+        findUnique: jest.fn().mockResolvedValue({
+          legalName: 'Acme Pharmacy LLC',
+          billingEmail: 'billing@acme-pharmacy.example',
+        }),
+      },
+      priceCatalogEntry: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ amountMinor: 4900, currency: 'USD', interval: 'MONTH' }),
+      },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
+    notify = { emit: jest.fn().mockResolvedValue({}) };
     service = new StripeWebhookService(
       prisma as unknown as PrismaService,
       audit(),
       { recordPaymentFailure: jest.fn() } as unknown as SubscriptionService,
       new StripeConfig(cfg({ STRIPE_SECRET_KEY: 'sk_test_abc' })),
-      notifications(),
-      cfg({}),
+      notify as unknown as NotificationsService,
+      cfg({ APP_BASE_URL: 'https://app.zoikomeds.com' }),
     );
+  });
+
+  it('sends the COM-001 subscription-started confirmation to the billing contact', async () => {
+    await service.reconcileCheckoutSession(session(), 'return');
+
+    expect(notify.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateId: 'COM-001',
+        recipients: [{ email: 'billing@acme-pharmacy.example' }],
+        workflowRef: 'sub_local',
+        payload: expect.objectContaining({
+          'Organization Name': 'Acme Pharmacy LLC',
+          'Billing Amount': '$49.00',
+          'Billing Interval': 'month',
+          'Billing Portal Link': 'https://app.zoikomeds.com/pharmacy/billing',
+        }),
+      }),
+    );
+  });
+
+  it('confirms the plan once, not once per route, when both run for one payment', async () => {
+    // The email carries the subscription id as its workflow ref, so the second
+    // route collapses onto the same notification event rather than mailing the
+    // pharmacy a duplicate receipt.
+    await service.reconcileCheckoutSession(session(), 'return');
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub_local' });
+    await service.reconcileCheckoutSession(session(), 'webhook');
+
+    expect(notify.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('activates the plan even when the confirmation email fails', async () => {
+    notify.emit.mockRejectedValue(new Error('smtp unavailable'));
+
+    const result = await service.reconcileCheckoutSession(session(), 'return');
+
+    expect(result).toMatchObject({ reconciled: true });
+    expect(prisma.subscription.create).toHaveBeenCalled();
   });
 
   it('creates the subscription when the pharmacy confirms on return', async () => {
