@@ -1,0 +1,35 @@
+name: Deploy Frontend to GCP VM
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # nginx serves frontend/dist/ as static files -- there is no process to
+      # restart, which is exactly why this was missed before: a push here
+      # updated GitHub but nothing on the VM ever rebuilt it, and there was no
+      # workflow run, log, or red X to notice by. This calls the committed
+      # deploy script so a CI run and a manual run on the box do the same
+      # thing, and the script itself proves the public URL served the new
+      # build before exiting 0 -- see frontend/scripts/deploy.sh for why that
+      # check exists rather than trusting a clean `npm run build`.
+      #
+      # Reuses the same GCP_VM_HOST / GCP_VM_USER / GCP_VM_SSH_KEY secrets as
+      # deploy.yml (the backend workflow) -- same VM, same repo.
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USER }}
+          key: ${{ secrets.GCP_VM_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
+            bash /var/www/zoiko-meds-platform/frontend/scripts/deploy.sh
