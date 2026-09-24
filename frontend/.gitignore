@@ -16,6 +16,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
+# The Android app build config is compiled into the bundle and holds no secrets.
+!.env.mobile
 
 # Editor directories and files
 .vscode/*

@@ -1,3 +1,4 @@
+import { SUPPORTS_VOICE_SEARCH } from '@/lib/platform'
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -572,6 +573,7 @@ export default function UserHome() {
                   aria-controls="home-medicine-suggestions"
                   className="h-12 rounded-xl ps-11 pe-11 text-sm"
                 />
+                {SUPPORTS_VOICE_SEARCH && (
                 <button
                   type="button"
                   onClick={triggerVoice}
@@ -580,6 +582,7 @@ export default function UserHome() {
                 >
                   <Mic className="size-5" />
                 </button>
+                )}
                 {showSuggestions && (
                   <MedicineSuggestions
                     id="home-medicine-suggestions"

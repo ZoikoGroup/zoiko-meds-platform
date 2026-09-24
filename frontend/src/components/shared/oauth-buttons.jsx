@@ -1,5 +1,6 @@
 import { oauthUrl } from '@/services/auth-api'
 import { Button } from '@/components/ui/button'
+import { openExternal } from '@/lib/native'
 
 // Brand marks kept inline (lucide has no brand logos). Small, theme-neutral.
 function GoogleMark() {
@@ -52,7 +53,9 @@ export function OAuthButtons({ label = 'Or continue with' }) {
             variant="outline"
             className="w-full gap-2 bg-card font-medium"
             onClick={() => {
-              window.location.href = oauthUrl(id)
+              // A page navigation on the web; the real browser in the app, since
+              // providers refuse sign-in inside an embedded WebView.
+              openExternal(oauthUrl(id))
             }}
           >
             <Mark />

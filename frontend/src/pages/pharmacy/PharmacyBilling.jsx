@@ -21,6 +21,8 @@ import {
 } from '@/services/pharmacy-api'
 import { CLASSIFICATION_META, DELINQUENCY_TIMELINE, formatMinor } from '@/lib/commercial'
 import { CreditCard, ExternalLink, FileText, Info, Loader2, ShieldCheck } from 'lucide-react'
+import { SUPPORTS_IN_APP_CHECKOUT } from '@/lib/platform'
+import { onAppResume, openExternal } from '@/lib/native'
 
 const STATE_META = {
   EVALUATION: { variant: 'info', label: 'Evaluation' },
@@ -76,6 +78,11 @@ export default function PharmacyBilling() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [actionError, setActionError] = useState('')
+  // App only: the payment step was handed to the user's browser (Play payments
+  // policy), so this page never sees the provider's return redirect. It re-reads
+  // the billing record when the app comes back to the foreground instead; the
+  // signature-verified webhook is what actually activates the plan.
+  const [awaitingExternal, setAwaitingExternal] = useState(false)
   /**
    * Where the return-from-checkout confirmation has got to.
    *
@@ -96,7 +103,13 @@ export default function PharmacyBilling() {
     try {
       const res = kind === 'checkout' ? await startBillingCheckout() : await openBillingPortal()
       if (!res?.url) throw new Error('The payment provider did not return a URL.')
-      window.location.assign(res.url)
+      if (SUPPORTS_IN_APP_CHECKOUT) {
+        window.location.assign(res.url)
+      } else {
+        await openExternal(res.url)
+        setBusy('')
+        setAwaitingExternal(true)
+      }
     } catch (err) {
       setActionError(err.message || 'Could not open the payment provider.')
       setBusy('')
@@ -137,6 +150,15 @@ export default function PharmacyBilling() {
    * whichever route arrives first activates the plan and the other finds the
    * work already done.
    */
+  // Gated on awaitingExternal so switching apps for any other reason costs nothing.
+  useEffect(() => {
+    if (SUPPORTS_IN_APP_CHECKOUT || !awaitingExternal) return
+    return onAppResume(() => {
+      setAwaitingExternal(false)
+      load()
+    })
+  }, [awaitingExternal, load])
+
   useEffect(() => {
     if (checkoutOutcome !== 'success' || !checkoutSessionId) return
 
@@ -257,6 +279,12 @@ export default function PharmacyBilling() {
         </div>
       )}
 
+      {awaitingExternal && (
+        <div role="status" className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/10 px-3 py-2 text-xs font-medium text-info max-w-4xl">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          Finish in your browser. Your plan here updates when you come back to the app.
+        </div>
+      )}
       {actionError && (
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-medium text-danger max-w-4xl">
           <Info className="mt-0.5 size-3.5 shrink-0" />

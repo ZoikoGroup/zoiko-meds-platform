@@ -25,23 +25,25 @@ Object.keys(routeMeta).forEach(key => {
   }
 });
 
-// Super Admin page chunks
-const Dashboard = lazyImport(() => import('@/pages/Dashboard'), 'Dashboard')
-const Governance = lazyImport(() => import('@/pages/Governance'), 'Governance')
-const PharmacyManagement = lazyImport(() => import('@/pages/PharmacyManagement'), 'PharmacyManagement')
-const UsersRoles = lazyImport(() => import('@/pages/UsersRoles'), 'UsersRoles')
-const VerificationCenter = lazyImport(() => import('@/pages/VerificationCenter'), 'VerificationCenter')
-const ZoikoSignal = lazyImport(() => import('@/pages/ZoikoSignal'), 'ZoikoSignal')
-const ZoikoAvail = lazyImport(() => import('@/pages/ZoikoAvail'), 'ZoikoAvail')
-const ZoikoAvailDocumentation = lazyImport(() => import('@/pages/ZoikoAvailDocumentation'), 'ZoikoAvailDocumentation')
-const ZoikoAvailSwagger = lazyImport(() => import('@/pages/ZoikoAvailSwagger'), 'ZoikoAvailSwagger')
-const MediBase = lazyImport(() => import('@/pages/MediBase'), 'MediBase')
-const MediBaseReview = lazyImport(() => import('@/pages/MediBaseReview'), 'MediBaseReview')
-const Reports = lazyImport(() => import('@/pages/Reports'), 'Reports')
-const Notifications = lazyImport(() => import('@/pages/Notifications'), 'Notifications')
-const AuditLogs = lazyImport(() => import('@/pages/AuditLogs'), 'AuditLogs')
-const Settings = lazyImport(() => import('@/pages/Settings'), 'Settings')
-const Commercial = lazyImport(() => import('@/pages/Commercial'), 'Commercial')
+// Super Admin page chunks. Behind the __ZM_ADMIN_CONSOLE__ build define so the
+// app build, which leaves the console on the web, drops these chunks entirely
+// rather than shipping pages nobody can reach.
+const Dashboard = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/Dashboard'), 'Dashboard') : null
+const Governance = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/Governance'), 'Governance') : null
+const PharmacyManagement = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/PharmacyManagement'), 'PharmacyManagement') : null
+const UsersRoles = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/UsersRoles'), 'UsersRoles') : null
+const VerificationCenter = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/VerificationCenter'), 'VerificationCenter') : null
+const ZoikoSignal = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/ZoikoSignal'), 'ZoikoSignal') : null
+const ZoikoAvail = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/ZoikoAvail'), 'ZoikoAvail') : null
+const ZoikoAvailDocumentation = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/ZoikoAvailDocumentation'), 'ZoikoAvailDocumentation') : null
+const ZoikoAvailSwagger = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/ZoikoAvailSwagger'), 'ZoikoAvailSwagger') : null
+const MediBase = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/MediBase'), 'MediBase') : null
+const MediBaseReview = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/MediBaseReview'), 'MediBaseReview') : null
+const Reports = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/Reports'), 'Reports') : null
+const Notifications = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/Notifications'), 'Notifications') : null
+const AuditLogs = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/AuditLogs'), 'AuditLogs') : null
+const Settings = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/Settings'), 'Settings') : null
+const Commercial = __ZM_ADMIN_CONSOLE__ ? lazyImport(() => import('@/pages/Commercial'), 'Commercial') : null
 
 // User Portal page chunks
 const UserHome = lazyImport(() => import('@/pages/UserHome'), 'UserHome')
@@ -74,6 +76,7 @@ const ResetPassword = lazyImport(() => import('@/pages/ResetPassword'), 'ResetPa
 const AuthCallback = lazyImport(() => import('@/pages/AuthCallback'), 'AuthCallback')
 const VerifyLogin = lazyImport(() => import('@/pages/VerifyLogin'), 'VerifyLogin')
 const NotFound = lazyImport(() => import('@/pages/NotFound'), 'NotFound')
+const WebOnlyConsole = __ZM_ADMIN_CONSOLE__ ? null : lazyImport(() => import('@/pages/WebOnlyConsole'), 'WebOnlyConsole')
 
 export const router = createBrowserRouter([
   // Public routes (only accessible when not logged in)
@@ -90,36 +93,45 @@ export const router = createBrowserRouter([
   // not bounce the visitor to a portal before they can set a new password.
   { path: 'forgot-password', element: <ForgotPassword />, errorElement: <RouteErrorBoundary /> },
   { path: 'reset-password', element: <ResetPassword />, errorElement: <RouteErrorBoundary /> },
-  // Super Admin routes (under /admin)
-  {
-    path: 'admin',
-    element: <AdminProtectedRoute />,
-    errorElement: <RouteErrorBoundary />,
-    children: [
-      {
-        element: <AppLayout />,
-        children: [
-          { index: true, element: <Navigate to="dashboard" replace /> },
-          { path: 'dashboard', element: <Dashboard /> },
-          { path: 'governance', element: <Governance /> },
-          { path: 'pharmacies', element: <PharmacyManagement /> },
-          { path: 'users', element: <UsersRoles /> },
-          { path: 'verification', element: <VerificationCenter /> },
-          { path: 'zoikosignal', element: <ZoikoSignal /> },
-          { path: 'zoikoavail', element: <ZoikoAvail /> },
-          { path: 'zoikoavail/documentation', element: <ZoikoAvailDocumentation /> },
-          { path: 'zoikoavail/swagger', element: <ZoikoAvailSwagger /> },
-          { path: 'medibase', element: <MediBase /> },
-          { path: 'medibase/review', element: <MediBaseReview /> },
-          { path: 'reports', element: <Reports /> },
-          { path: 'notifications', element: <Notifications /> },
-          { path: 'audit-logs', element: <AuditLogs /> },
-          { path: 'commercial', element: <Commercial /> },
-          { path: 'settings', element: <Settings /> },
-        ],
-      },
-    ],
-  },
+  // Super Admin routes (under /admin). In the app build the console stays on the
+  // web: any /admin URL — a deep link, or a super admin's portal home — lands on
+  // a screen that says so and opens the console in the browser.
+  ...(__ZM_ADMIN_CONSOLE__
+    ? [
+        {
+          path: 'admin',
+          element: <AdminProtectedRoute />,
+          errorElement: <RouteErrorBoundary />,
+          children: [
+            {
+              element: <AppLayout />,
+              children: [
+                { index: true, element: <Navigate to="dashboard" replace /> },
+                { path: 'dashboard', element: <Dashboard /> },
+                { path: 'governance', element: <Governance /> },
+                { path: 'pharmacies', element: <PharmacyManagement /> },
+                { path: 'users', element: <UsersRoles /> },
+                { path: 'verification', element: <VerificationCenter /> },
+                { path: 'zoikosignal', element: <ZoikoSignal /> },
+                { path: 'zoikoavail', element: <ZoikoAvail /> },
+                { path: 'zoikoavail/documentation', element: <ZoikoAvailDocumentation /> },
+                { path: 'zoikoavail/swagger', element: <ZoikoAvailSwagger /> },
+                { path: 'medibase', element: <MediBase /> },
+                { path: 'medibase/review', element: <MediBaseReview /> },
+                { path: 'reports', element: <Reports /> },
+                { path: 'notifications', element: <Notifications /> },
+                { path: 'audit-logs', element: <AuditLogs /> },
+                { path: 'commercial', element: <Commercial /> },
+                { path: 'settings', element: <Settings /> },
+              ],
+            },
+          ],
+        },
+      ]
+    : [
+        { path: 'admin/*', element: <Navigate to="/app/web-only" replace />, errorElement: <RouteErrorBoundary /> },
+        { path: 'app/web-only', element: <WebOnlyConsole />, errorElement: <RouteErrorBoundary /> },
+      ]),
   // OAuth landing
   { path: 'auth/callback', element: <AuthCallback />, errorElement: <RouteErrorBoundary /> },
   // Where an emailed sign-in link lands. Public, because it is the call that

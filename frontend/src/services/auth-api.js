@@ -1,4 +1,5 @@
 import { apiFetch, apiBaseUrl } from '@/lib/api-client'
+import { SUPPORTS_IN_PAGE_OAUTH } from '@/lib/platform'
 
 // Auth endpoints exposed by the NestJS backend (see modules/auth).
 
@@ -11,7 +12,10 @@ export const OAUTH_PROVIDERS = ['google']
  * success, back to the SPA /auth/callback with a token.
  */
 export function oauthUrl(provider) {
-  return `${apiBaseUrl()}/auth/${provider}`
+  // The app runs the consent screen in a Custom Tab; client=app asks the API to
+  // return through the app's deep link instead of the web callback page.
+  const client = SUPPORTS_IN_PAGE_OAUTH ? '' : '?client=app'
+  return `${apiBaseUrl()}/auth/${provider}${client}`
 }
 
 /**

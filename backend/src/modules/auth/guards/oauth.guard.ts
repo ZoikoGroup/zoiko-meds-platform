@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthGuard } from '@nestjs/passport';
+import { Request } from 'express';
+import { APP_OAUTH_STATE, mobileOAuthRedirect } from '../../../config/mobile-app';
 
 /**
  * Returns true only when both the client id and secret for a provider are set.
@@ -31,5 +33,19 @@ export class GoogleOAuthGuard extends AuthGuard('google') {
       );
     }
     return super.canActivate(context);
+  }
+
+  /**
+   * `GET /auth/google?client=app` marks a sign-in started from the Android app.
+   * The marker rides through Google as the OAuth `state` (a fixed value, never
+   * anything taken from the caller) so the callback knows to hand the session
+   * back to the app. Used only when the app redirect is configured.
+   */
+  getAuthenticateOptions(context: ExecutionContext) {
+    const req = context.switchToHttp().getRequest<Request>();
+    if (req.query?.client === 'app' && mobileOAuthRedirect(this.config)) {
+      return { state: APP_OAUTH_STATE };
+    }
+    return undefined;
   }
 }

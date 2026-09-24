@@ -10,13 +10,16 @@
  * as WebPage / FAQPage / Organization. Never emit Drug, Pharmacy, or Offer.
  */
 
+import { WEB_ORIGIN } from '@/lib/platform'
+
 const SITE_NAME = 'ZoikoMeds'
 
 // Absolute URL for canonical/OG. Defaults to the current location for the SPA.
 function resolveUrl(canonical) {
   if (canonical) return canonical
   if (typeof window === 'undefined') return undefined
-  return window.location.origin + window.location.pathname
+  // WEB_ORIGIN, not location.origin: inside the app the page is https://localhost.
+  return WEB_ORIGIN + window.location.pathname
 }
 
 export function Seo({ title, description, canonical, image, jsonLd, type = 'website' }) {

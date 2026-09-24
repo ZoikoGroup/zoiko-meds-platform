@@ -1,3 +1,4 @@
+import { saveFile } from '@/lib/native'
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
@@ -176,14 +177,7 @@ export default function PharmacyInventory() {
       ),
     ]
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `pharmacy-inventory-${new Date().toISOString().slice(0, 10)}.csv`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
+    saveFile(`pharmacy-inventory-${new Date().toISOString().slice(0, 10)}.csv`, blob)
     flash('Inventory exported as CSV.')
   }
 

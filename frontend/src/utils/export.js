@@ -1,14 +1,11 @@
 /** Client-side export helpers (no backend) — trigger a browser download. */
 
+import { saveFile } from '@/lib/native'
+
+// A browser download on the web; the share sheet in the app, which has no
+// download manager.
 function triggerDownload(blob, filename) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  return saveFile(filename, blob)
 }
 
 export function downloadJson(filename, data) {

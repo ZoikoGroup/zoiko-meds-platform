@@ -19,6 +19,7 @@ import {
   oauthSuccessRedirect,
   withQueryParam,
 } from '../../config/app-urls';
+import { APP_OAUTH_STATE, mobileOAuthRedirect } from '../../config/mobile-app';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -219,6 +220,12 @@ export class AuthController {
     userAgent: string,
   ) {
     const frontend = appBaseUrl(this.config);
+    // A sign-in started from the Android app (GoogleOAuthGuard sets state=app)
+    // ran in the phone's browser, so the session is handed back through the
+    // app's own scheme rather than to the web callback page. Only the fixed,
+    // validated MOBILE_OAUTH_REDIRECT is ever used — nothing from the request.
+    const appRedirect =
+      req.query?.state === APP_OAUTH_STATE ? mobileOAuthRedirect(this.config) : null;
     try {
       const profile = req.user as OAuthProfile | undefined;
       if (!profile) throw new Error('No OAuth profile on request');
@@ -227,10 +234,12 @@ export class AuthController {
         ipAddress,
         userAgent,
       );
-      const target = oauthSuccessRedirect(this.config);
+      const target = appRedirect ?? oauthSuccessRedirect(this.config);
       res.redirect(withQueryParam(target, 'token', accessToken));
     } catch {
-      res.redirect(`${frontend}/login?error=oauth`);
+      res.redirect(
+        appRedirect ? withQueryParam(appRedirect, 'error', 'oauth') : `${frontend}/login?error=oauth`,
+      );
     }
   }
 
