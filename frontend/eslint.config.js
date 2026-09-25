@@ -15,7 +15,8 @@ export default [
     files: ['**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2022,
-      globals: globals.browser,
+      // __ZM_*__ are build-time constants from platform-defines.js.
+      globals: { ...globals.browser, __ZM_NATIVE__: 'readonly', __ZM_ADMIN_CONSOLE__: 'readonly' },
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },

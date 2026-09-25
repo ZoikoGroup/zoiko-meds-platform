@@ -6,6 +6,12 @@
  * than silently booting on insecure defaults (e.g. a placeholder JWT secret).
  */
 
+import {
+  invalidMobileAppOrigins,
+  isValidMobileOAuthRedirect,
+  KNOWN_CAPACITOR_ORIGINS,
+} from './mobile-app';
+
 /** Placeholder/known-weak secrets that must never reach a running instance. */
 const FORBIDDEN_JWT_SECRETS = new Set([
   'change-me-in-production',
@@ -99,6 +105,21 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   if (anthropicKey && !anthropicKey.trim()) {
     errors.push(
       'ANTHROPIC_API_KEY is set to whitespace. Leave it unset to run without assisted reading.',
+    );
+  }
+
+  // --- Android app (see mobile-app.ts) ----------------------------------------
+  const badAppOrigins = invalidMobileAppOrigins(String(config.MOBILE_APP_ORIGINS ?? ''));
+  if (badAppOrigins.length > 0) {
+    errors.push(
+      `MOBILE_APP_ORIGINS may only list ${KNOWN_CAPACITOR_ORIGINS.join(', ')} (got "${badAppOrigins.join(', ')}"). ` +
+        'Web origins belong in CORS_ORIGIN.',
+    );
+  }
+  const mobileRedirect = String(config.MOBILE_OAUTH_REDIRECT ?? '').trim();
+  if (mobileRedirect && !isValidMobileOAuthRedirect(mobileRedirect)) {
+    errors.push(
+      `MOBILE_OAUTH_REDIRECT must be the app's own scheme, e.g. com.zoikomeds.app://auth/callback (got "${mobileRedirect}").`,
     );
   }
 

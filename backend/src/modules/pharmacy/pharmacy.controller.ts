@@ -513,6 +513,11 @@ export class PharmacyController {
     res.setHeader('Last-Modified', logo.updatedAt.toUTCString());
     // An image is not a document; refuse to let it be interpreted as one.
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Helmet defaults every response to Cross-Origin-Resource-Policy: same-origin.
+    // The website reaches this through its own-origin proxy, but the Android app
+    // loads it from https://localhost — cross-origin — and an <img> there would
+    // be blocked. A public logo is meant to be embedded, so say so.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.end(logo.data);
   }
 

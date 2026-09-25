@@ -7,6 +7,10 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       CORS_ORIGIN: https://zoikomeds.com,https://www.zoikomeds.com,https://app.zoikomeds.com
+      # Android app (see src/config/mobile-app.ts): its WebView origin, and the
+      # app-scheme return for Google sign-in.
+      MOBILE_APP_ORIGINS: https://localhost
+      MOBILE_OAUTH_REDIRECT: com.zoikomeds.app://auth/callback
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: zoikomeds-pgadmin

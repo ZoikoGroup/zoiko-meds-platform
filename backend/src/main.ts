@@ -10,6 +10,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppLogger } from './common/logger/app-logger.service';
 import { StripeConfig } from './modules/commercial/stripe/stripe.config';
 import { appBaseUrl, appBaseUrlWarning } from './config/app-urls';
+import { mobileAppOrigins } from './config/mobile-app';
 import { buildOpenApiDocument } from './config/openapi-document';
 import { MigrationStatusService } from './modules/health/migration-status.service';
 import { trustedProxyHops } from './common/client-ip';
@@ -66,7 +67,9 @@ async function bootstrap() {
     .map((o) => o.trim())
     .filter(Boolean);
   app.enableCors({
-    origin: corsOrigins,
+    // The Android app's WebView origin (https://localhost) is allowed through
+    // its own validated setting, MOBILE_APP_ORIGINS — see config/mobile-app.ts.
+    origin: [...corsOrigins, ...mobileAppOrigins(config)],
     credentials: true,
     // Expose the request id so browser clients (e.g. the ZoikoAvail sandbox)
     // can read it and surface a trace id for each request.
