@@ -94,6 +94,33 @@ jobs:
           echo "Release did not become live: PATCH /api/pharmacies/me never returned 401." >&2
           exit 1
 
+      # Code live is not config live. PR #115 shipped the app-origin CORS
+      # support, the deploy still failed to make the Android app work, and
+      # nothing in the pipeline noticed: MOBILE_APP_ORIGINS was set in
+      # docker-compose.prod.yml but the VM's API was restarted from an env that
+      # never carried it, so the app got no Access-Control-Allow-Origin on any
+      # request. This asks the running API exactly what the app will ask it, so
+      # a missing env var fails the release instead of the tester's sign-in.
+      - name: Verify the app origin is allowed by CORS
+        run: |
+          set -e
+          echo "Probing with the Capacitor WebView origin (https://localhost)..."
+          headers=$(curl -s -D - -o /dev/null \
+            -H 'Origin: https://localhost' \
+            https://get.zoikomeds.com/api/health)
+          echo "$headers" | grep -i '^HTTP/'
+          if echo "$headers" | grep -qi '^access-control-allow-origin: https://localhost'; then
+            echo "App origin allowed: MOBILE_APP_ORIGINS is live."
+          else
+            echo "The API does NOT answer with Access-Control-Allow-Origin for https://localhost." >&2
+            echo "Every request from the Android app will be blocked by the browser." >&2
+            echo "Fix: add these to the VM's backend .env (pm2/systemd hosts read it via --update-env)" >&2
+            echo "  MOBILE_APP_ORIGINS=https://localhost" >&2
+            echo "  MOBILE_OAUTH_REDIRECT=com.zoikomeds.app://auth/callback" >&2
+            echo "then restart the API (pm2 restart zoikomeds-api --update-env / systemctl restart)." >&2
+            exit 1
+          fi
+
       # The release being live says nothing about the database it is live
       # against. This is the check that would have caught 2026-08-17: the code
       # was current, the workflow was green, and every SavedMedicine query
