@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/shared/page-header'
 import { StatTile } from '@/components/shared/stat-tile'
@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/shared/status'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
+import { ErrorState } from '@/components/shared/states'
 import { getDashboard } from '@/services/pharmacy-api'
 import { STATUS_META } from '@/services/pharmacy-data'
 import {
@@ -31,31 +32,48 @@ export default function PharmacyDashboard() {
   const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [notLinked, setNotLinked] = useState(false)
+  const [loadError, setLoadError] = useState('')
+
+  const load = useCallback(() => {
+    setLoadError('')
+    getDashboard()
+      .then((d) => {
+        setData(d)
+        setNotLinked(false)
+      })
+      .catch((err) => {
+        // No pharmacy linked yet: point at onboarding instead of leaving the
+        // spinner up or showing demo stats as if they were the operator's.
+        if (err?.notLinked) {
+          setNotLinked(true)
+          return
+        }
+        setData(null)
+        setLoadError(err?.message || 'Could not load your dashboard.')
+      })
+  }, [])
 
   useEffect(() => {
-    let alive = true
-    const load = () => {
-      getDashboard()
-        .then((d) => {
-          if (!alive) return
-          setData(d)
-          setNotLinked(false)
-        })
-        .catch((err) => {
-          // No pharmacy linked yet: point at onboarding instead of leaving the
-          // spinner up or showing demo stats as if they were the operator's.
-          if (alive && err?.notLinked) setNotLinked(true)
-        })
-    }
     load()
-    window.addEventListener('pharmacy-inventory-updated', load)
-    window.addEventListener('focus', load)
+    const reload = () => load()
+    window.addEventListener('pharmacy-inventory-updated', reload)
+    window.addEventListener('focus', reload)
     return () => {
-      alive = false
-      window.removeEventListener('pharmacy-inventory-updated', load)
-      window.removeEventListener('focus', load)
+      window.removeEventListener('pharmacy-inventory-updated', reload)
+      window.removeEventListener('focus', reload)
     }
-  }, [])
+  }, [load])
+
+  if (loadError) {
+    return (
+      <ErrorState
+        title="Could not load your dashboard"
+        description={loadError}
+        onRetry={load}
+        className="max-w-3xl"
+      />
+    )
+  }
 
   if (notLinked) {
     return (

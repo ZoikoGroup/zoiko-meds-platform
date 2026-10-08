@@ -36,6 +36,17 @@ describe('routeForIncomingUrl — deep links are untrusted input', () => {
     expect(routeForIncomingUrl('com.zoikomeds.app://auth/other?token=jwt')).toBeNull()
   })
 
+  it('accepts the emailed reset link at auth/reset-password on the app scheme', () => {
+    // Sent when the reset was asked for in the app, so the link reopens the
+    // app instead of the browser.
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/reset-password?token=jwt')).toBe(
+      '/reset-password?token=jwt',
+    )
+    // Still an exact shape: no other path on the scheme is reachable.
+    expect(routeForIncomingUrl('com.zoikomeds.app://reset-password?token=jwt')).toBeNull()
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/reset-password/extra')).toBeNull()
+  })
+
   it('sends admin links to the web-only notice instead of a missing console', () => {
     expect(routeForIncomingUrl('https://app.zoikomeds.com/admin/users')).toBe('/app/web-only')
   })

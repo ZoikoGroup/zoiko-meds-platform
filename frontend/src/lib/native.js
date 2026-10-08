@@ -115,9 +115,14 @@ const ROOT_PATHS = new Set(['/', '/login', '/dashboard', '/pharmacy/dashboard', 
  * Turn an incoming URL into an in-app route, or null to ignore it.
  *
  * An incoming link is untrusted input: any app on the device can send one. Only
- * two shapes are accepted, and only the path is taken from either:
- *   https://app.zoikomeds.com/<path>          — App Links from emails etc.
- *   com.zoikomeds.app://auth/callback?token=… — the OAuth return from a Custom Tab
+ * three shapes are accepted, and only the path is taken from either:
+ *   https://app.zoikomeds.com/<path>              — App Links from emails etc.
+ *   com.zoikomeds.app://auth/callback?token=…     — the OAuth return from a Custom Tab
+ *   com.zoikomeds.app://auth/reset-password?…     — the emailed reset link when
+ *       the reset was asked for in the app (the API sends this instead of the
+ *       App Link, which would open the browser whenever assetlinks.json is not
+ *       verified). The token rides in the query of an email the user requested;
+ *       the path is fixed, so nothing else on the scheme is reachable.
  */
 export function routeForIncomingUrl(url) {
   let parsed
@@ -129,6 +134,9 @@ export function routeForIncomingUrl(url) {
   if (parsed.protocol === `${APP_ID}:`) {
     if (parsed.host === 'auth' && parsed.pathname === '/callback') {
       return `/auth/callback${parsed.search}`
+    }
+    if (parsed.host === 'auth' && parsed.pathname === '/reset-password') {
+      return `/reset-password${parsed.search}`
     }
     return null
   }

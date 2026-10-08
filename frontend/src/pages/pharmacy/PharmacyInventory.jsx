@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Flash, useFlash } from '@/components/shared/flash'
 import { PharmacyOnboardingState } from '@/components/shared/pharmacy-onboarding-state'
+import { ErrorState } from '@/components/shared/states'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog'
@@ -55,8 +56,10 @@ export default function PharmacyInventory() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
+  const [loadError, setLoadError] = useState('')
 
   const loadData = () => {
+    setLoadError('')
     getInventory()
       .then((r) => {
         setRows(r || [])
@@ -70,7 +73,9 @@ export default function PharmacyInventory() {
           setRows([])
           return
         }
-        setRows([])
+        // Not an empty table: that would read as "this pharmacy stocks nothing".
+        setRows(null)
+        setLoadError(err?.message || 'Could not load your inventory.')
       })
   }
 
@@ -207,6 +212,17 @@ export default function PharmacyInventory() {
     },
     { key: 'updated', header: 'Last updated', align: 'right', cell: (r) => <span className="text-xs text-muted-foreground">{r.updated}</span> },
   ]
+
+  if (loadError) {
+    return (
+      <ErrorState
+        title="Could not load your inventory"
+        description={loadError}
+        onRetry={loadData}
+        className="max-w-3xl"
+      />
+    )
+  }
 
   if (!rows) {
     return (

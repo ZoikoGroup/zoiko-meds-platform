@@ -5,25 +5,46 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { StatusBadge, ConfidenceBadge } from '@/components/shared/status'
 import { Flash, useFlash } from '@/components/shared/flash'
+import { ErrorState } from '@/components/shared/states'
 import { getInventory, updateAvailability } from '@/services/pharmacy-api'
 import { STATUS_META, AVAILABILITY_STATUSES } from '@/services/pharmacy-data'
 import { Loader2, Clock, Search } from 'lucide-react'
 
 export default function PharmacyAvailability() {
   const [rows, setRows] = useState(null)
+  const [loadError, setLoadError] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
   const [query, setQuery] = useState('')
   const [flashMsg, flash] = useFlash()
 
   useEffect(() => {
     let alive = true
-    getInventory().then((r) => alive && setRows(r)).catch(() => alive && setRows([]))
+    setLoadError('')
+    getInventory()
+      .then((r) => alive && setRows(r))
+      .catch((err) => {
+        if (!alive) return
+        setRows(null)
+        setLoadError(err?.message || 'Could not load availability.')
+      })
     return () => { alive = false }
-  }, [])
+  }, [reloadKey])
 
   const setStatus = async (m, status) => {
     setRows((rs) => rs.map((r) => (r.id === m.id ? { ...r, status, updated: 'just now' } : r)))
     await updateAvailability(m.id, status)
     flash(`${m.name} → ${STATUS_META[status].label}`)
+  }
+
+  if (loadError) {
+    return (
+      <ErrorState
+        title="Could not load availability"
+        description={loadError}
+        onRetry={() => setReloadKey((k) => k + 1)}
+        className="max-w-3xl"
+      />
+    )
   }
 
   if (!rows) {

@@ -64,6 +64,27 @@ export function mobileOAuthRedirect(config: ConfigService): string | null {
 /** The OAuth `state` value that marks a sign-in started from the app. */
 export const APP_OAUTH_STATE = 'app';
 
+/**
+ * A deep link into the app on its custom scheme, e.g.
+ * `com.zoikomeds.app://auth/reset-password`, or null when the app flow is not
+ * configured.
+ *
+ * The scheme is derived from the validated MOBILE_OAUTH_REDIRECT rather than a
+ * second setting: that value is the one place the backend learns the scheme the
+ * installed app registered, and the boot-time validator already guarantees it is
+ * a reverse-DNS custom scheme at host `auth` — never an http(s) URL that could
+ * smuggle a token to a web page. A path is confined to that host on purpose:
+ * anything else would mean inventing app entry points this file's validation
+ * has not reasoned about.
+ */
+export function mobileAppAuthLink(config: ConfigService, path: string): string | null {
+  const configured = config.get<string>('MOBILE_OAUTH_REDIRECT')?.trim();
+  if (!configured || !isValidMobileOAuthRedirect(configured)) return null;
+  const scheme = new URL(configured).protocol.replace(/:$/, '');
+  const clean = path.startsWith('/') ? path.slice(1) : path;
+  return `${scheme}://auth/${clean}`;
+}
+
 function splitList(raw: string): string[] {
   return raw
     .split(',')

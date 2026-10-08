@@ -73,6 +73,7 @@ import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 const ForgotPassword = lazyImport(() => import('@/pages/ForgotPassword'), 'ForgotPassword')
 const ResetPassword = lazyImport(() => import('@/pages/ResetPassword'), 'ResetPassword')
+const Privacy = lazyImport(() => import('@/pages/Privacy'), 'Privacy')
 const AuthCallback = lazyImport(() => import('@/pages/AuthCallback'), 'AuthCallback')
 const VerifyLogin = lazyImport(() => import('@/pages/VerifyLogin'), 'VerifyLogin')
 const NotFound = lazyImport(() => import('@/pages/NotFound'), 'NotFound')
@@ -93,6 +94,8 @@ export const router = createBrowserRouter([
   // not bounce the visitor to a portal before they can set a new password.
   { path: 'forgot-password', element: <ForgotPassword />, errorElement: <RouteErrorBoundary /> },
   { path: 'reset-password', element: <ResetPassword />, errorElement: <RouteErrorBoundary /> },
+  // Public privacy policy: Google Play requires a URL reachable without signing in.
+  { path: 'privacy', element: <Privacy />, errorElement: <RouteErrorBoundary /> },
   // Super Admin routes (under /admin). In the app build the console stays on the
   // web: any /admin URL — a deep link, or a super admin's portal home — lands on
   // a screen that says so and opens the console in the browser.

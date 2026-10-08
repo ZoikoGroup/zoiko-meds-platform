@@ -4,6 +4,7 @@ import type { NotificationStream } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { appBaseUrl } from '../../config/app-urls';
+import { mobileAppAuthLink } from '../../config/mobile-app';
 
 interface SendArgs {
   to: string;
@@ -118,18 +119,39 @@ export class MailService {
     });
   }
 
-  /** Password reset link for the forgot-password flow. */
+  /**
+   * Password reset link for the forgot-password flow.
+   *
+   * The link returns to wherever the reset was asked for: a request from the
+   * Android app (`client: 'app'`) gets the app's custom-scheme deep link so the
+   * button reopens the app — an App Link would open the browser whenever
+   * assetlinks.json is not verified, which is exactly the bug reported
+   * ("reset opens the platform instead of the app"). A request from the web
+   * keeps the plain SPA URL. The app email also carries a web fallback link for
+   * the reader who opens the message on a computer, where a custom scheme
+   * does nothing.
+   */
   async sendPasswordReset(params: {
     to: string;
     fullName: string;
     token: string;
+    client?: 'app';
   }): Promise<void> {
-    const link = `${this.appBaseUrl}/reset-password?token=${encodeURIComponent(params.token)}`;
+    const tokenQuery = `token=${encodeURIComponent(params.token)}`;
+    const webLink = `${this.appBaseUrl}/reset-password?${tokenQuery}`;
+    const appLink =
+      params.client === 'app' ? mobileAppAuthLink(this.config, '/reset-password') : null;
+    const link = appLink ? `${appLink}?${tokenQuery}` : webLink;
     const body = `
       ${this.greeting(params.fullName)}
       <p>We received a request to reset your ZoikoMeds password. Click below to
       choose a new one.</p>
       ${this.button(link, 'Reset password')}
+      ${
+        appLink
+          ? `<p class="muted">On a computer? <a href="${webLink}">Reset your password on the web</a> instead — the button above opens the ZoikoMeds app.</p>`
+          : ''
+      }
       <p class="muted">This link expires in 1 hour. If you didn't request a
       reset, no action is needed — your password stays the same.</p>
     `;
@@ -137,7 +159,9 @@ export class MailService {
       to: params.to,
       subject: 'Reset your ZoikoMeds password',
       html: this.layout('Reset your password', body),
-      text: `Reset your ZoikoMeds password: ${link}\nThis link expires in 1 hour. If you didn't request it, ignore this email.`,
+      text: `Reset your ZoikoMeds password: ${link}\n${
+        appLink ? `On a computer, use the web link instead: ${webLink}\n` : ''
+      }This link expires in 1 hour. If you didn't request it, ignore this email.`,
     });
   }
 
