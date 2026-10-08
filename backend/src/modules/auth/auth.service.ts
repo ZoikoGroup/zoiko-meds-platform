@@ -501,6 +501,9 @@ export class AuthService {
       to: user.email,
       fullName: user.fullName,
       token,
+      // Where the reset was asked for decides where the emailed link opens:
+      // the app asks for itself, the website stays on the website.
+      client: dto.client,
     });
 
     await this.auditWriter.write(

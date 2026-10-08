@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   invalidMobileAppOrigins,
   isValidMobileOAuthRedirect,
+  mobileAppAuthLink,
   mobileAppOrigins,
   mobileOAuthRedirect,
 } from './mobile-app';
@@ -66,6 +67,23 @@ describe('Android app settings', () => {
       expect(() =>
         validateEnv({ ...baseEnv, MOBILE_OAUTH_REDIRECT: 'https://app.zoikomeds.com/auth/callback' }),
       ).toThrow(/MOBILE_OAUTH_REDIRECT/);
+    });
+  });
+
+  describe('mobileAppAuthLink', () => {
+    it('builds deep links on the app scheme for fixed auth paths', () => {
+      const config = cfg({ MOBILE_OAUTH_REDIRECT: 'com.zoikomeds.app://auth/callback' });
+      expect(mobileAppAuthLink(config, '/reset-password')).toBe(
+        'com.zoikomeds.app://auth/reset-password',
+      );
+      expect(mobileAppAuthLink(config, 'callback')).toBe('com.zoikomeds.app://auth/callback');
+    });
+
+    it('is null when the app flow is not configured, and ignores an invalid value', () => {
+      expect(mobileAppAuthLink(cfg({}), '/reset-password')).toBeNull();
+      expect(
+        mobileAppAuthLink(cfg({ MOBILE_OAUTH_REDIRECT: 'https://app.zoikomeds.com/auth/callback' }), '/reset-password'),
+      ).toBeNull();
     });
   });
 });

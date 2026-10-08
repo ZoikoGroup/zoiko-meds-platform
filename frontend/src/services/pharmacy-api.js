@@ -1,14 +1,10 @@
 // Pharmacy Portal service layer.
 //
 // Inventory, reports, participation and the POS/ERP integration all hit the real
-// NestJS backend. Announcements are the only surface left resolving a fixture,
-// and it is marked TODO(backend) at its call site.
+// NestJS backend. None of them falls back to demo data: a failed request must
+// surface as an error, never as fixture stock the operator could read as their own.
 
 import { apiFetch } from '@/lib/api-client'
-import {
-  NOTIFICATIONS,
-  INVENTORY,
-} from './pharmacy-data'
 
 // Marker for "this account has no pharmacy linked yet". The API answers 403 with
 // this wording from PharmacyService.resolvePharmacyId. It is a real state with a
@@ -30,9 +26,9 @@ export const getInventory = async () => {
     return await apiFetch('/pharmacies/inventory')
   } catch (err) {
     if (isNotLinked(err)) throw new PharmacyNotLinkedError(err.message)
-    // Fallback to demo data if backend is unreachable or user is unauthenticated
-    console.warn('[pharmacy-api] Inventory API failed, using demo data')
-    return structuredClone(INVENTORY)
+    // No demo fallback. On a weak connection a fixture list ("Dolo 650", …) was
+    // shown as the pharmacy's own stock; the pages show an error with a retry.
+    throw err
   }
 }
 
@@ -79,33 +75,7 @@ export const getDashboard = async () => {
     return await apiFetch('/pharmacies/dashboard')
   } catch (err) {
     if (isNotLinked(err)) throw new PharmacyNotLinkedError(err.message)
-    console.warn('[pharmacy-api] Dashboard API failed, fallback to live inventory calculation')
-    const inv = await getInventory()
-    const available = inv.filter((m) => m.status === 'available').length
-    const limited = inv.filter((m) => m.status === 'limited').length
-    const outOfStock = inv.filter((m) => m.status === 'out-of-stock').length
-    return {
-      stats: {
-        total: inv.length,
-        available,
-        limited,
-        outOfStock,
-        pending: outOfStock + limited,
-      },
-      recentUpdates: inv.slice(0, 5).map((r) => ({
-        id: r.id,
-        name: r.name,
-        status: r.status,
-        when: r.updated || 'Just now',
-        by: 'Staff update',
-      })),
-      pendingUpdates: inv.filter((r) => r.status !== 'available').slice(0, 5).map((r) => ({
-        id: r.id,
-        name: r.name,
-        reason: r.status === 'out-of-stock' ? 'Marked out of stock — update if restocked' : 'Limited stock — confirm quantity band',
-      })),
-      notifications: NOTIFICATIONS.slice(0, 4),
-    }
+    throw err
   }
 }
 

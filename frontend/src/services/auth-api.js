@@ -115,10 +115,14 @@ export function changePasswordRequest(currentPassword, newPassword) {
   })
 }
 
-export function forgotPasswordRequest(email) {
+// `client` marks where the reset was asked for: 'app' (the Android shell) makes
+// the emailed link come back to the app on its custom scheme, mirroring the
+// OAuth sign-in's ?client=app. Omitted on the web, so a reset started on the
+// platform keeps its link on the platform.
+export function forgotPasswordRequest(email, client) {
   return apiFetch('/auth/forgot-password', {
     method: 'POST',
-    body: { email },
+    body: client ? { email, client } : { email },
     auth: false,
   })
 }

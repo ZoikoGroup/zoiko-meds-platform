@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { forgotPasswordRequest } from '@/services/auth-api'
+import { IS_NATIVE } from '@/lib/platform'
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('')
@@ -19,7 +20,8 @@ export default function ForgotPassword() {
     setError('')
     setLoading(true)
     try {
-      await forgotPasswordRequest(email)
+      // In the app the emailed link must reopen the app, not the website.
+      await forgotPasswordRequest(email, IS_NATIVE ? 'app' : undefined)
       setSent(true)
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.')
