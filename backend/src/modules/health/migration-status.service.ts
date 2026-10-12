@@ -190,10 +190,30 @@ export class MigrationStatusService {
         .filter((row) => row.finished_at !== null && row.rolled_back_at === null)
         .map((row) => row.migration_name),
     );
-    // Started and never finished. `migrate deploy` exits P3009 on these, so they
-    // block every later migration until resolved by hand.
+    // Started, never finished, and never resolved. `migrate deploy` exits P3009
+    // on exactly these, so they block every later migration until resolved by
+    // hand.
+    //
+    // `rolled_back_at` has to be excluded rather than treated as another kind of
+    // failure, because it is how a resolution is recorded, not how a fault is.
+    // `prisma migrate resolve --rolled-back` stamps that column and leaves
+    // `finished_at` null forever, so the row stays in the ledger as permanent
+    // evidence of the failed attempt; the ledger holds one row per attempt, not
+    // per migration, and the retry that succeeded is a second row. Reading the
+    // rolled-back row as a failure meant a migration that had been resolved and
+    // re-applied months ago still reported P3009 on every health check, while
+    // `prisma migrate status` on the same database said it was up to date.
+    //
+    // That false positive could not be cleared from the database side either:
+    // `resolve --applied` only inserts a further row, and the rolled-back one it
+    // leaves behind is what this filter was keying on.
+    //
+    // A migration that finished and was then rolled back is still not applied —
+    // the set above excludes it — so it surfaces as `pending`/`behind`, which is
+    // both true and actionable. It is not P3009, and saying so sent anyone
+    // reading it toward `migrate resolve` instead of `migrate deploy`.
     const failed = rows
-      .filter((row) => row.finished_at === null || row.rolled_back_at !== null)
+      .filter((row) => row.finished_at === null && row.rolled_back_at === null)
       .map((row) => row.migration_name)
       .sort();
     const pending = shipped.filter((name) => !applied.has(name));

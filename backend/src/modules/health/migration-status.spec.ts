@@ -122,8 +122,42 @@ describe('MigrationStatusService', () => {
 
     const status = await service.status();
 
-    expect(status.status).toBe('failed');
+    // Unapplied, so the database is behind — but not P3009. `migrate deploy`
+    // re-applies a rolled-back migration, so that is the right instruction;
+    // reporting it as failed sent operators to `migrate resolve` instead.
+    expect(status.status).toBe('behind');
     expect(status.applied).toBe(1);
+    expect(status.pending).toEqual(['20260814120000_saved_medicine_off_catalog']);
+    expect(status.failed).toEqual([]);
+  });
+
+  it('does not report a resolved-and-reapplied migration as failed', async () => {
+    // The shape a real ledger takes after `resolve --rolled-back` followed by a
+    // successful retry: one row per attempt, the failed one keeping a null
+    // `finished_at` forever as the record of what happened.
+    //
+    // Taken from the local database, where 0_init and
+    // 20260727120000_notification_delivery both carried this pair and every one
+    // of their 76 and 18 schema objects was present, while the health check
+    // still reported P3009 and `prisma migrate status` said "up to date".
+    answer([
+      {
+        migration_name: '0_init',
+        finished_at: null,
+        rolled_back_at: new Date('2026-07-18T05:10:32Z'),
+      },
+      {
+        migration_name: '0_init',
+        finished_at: new Date('2026-07-18T05:10:32Z'),
+        rolled_back_at: null,
+      },
+    ]);
+
+    const status = await service.status();
+
+    expect(status.failed).toEqual([]);
+    expect(status.applied).toBe(1);
+    expect(status.status).not.toBe('failed');
   });
 
   it('reports unknown, not ok, when the ledger cannot be read', async () => {

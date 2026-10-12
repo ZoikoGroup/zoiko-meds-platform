@@ -8,11 +8,11 @@
 # "succeeds" while the previous build keeps serving.
 #
 # Run it on the VM, from anywhere:
-#     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+#     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh <COMMIT_SHA>
 #
 # Override any of these if the host differs:
 #     REPO_DIR   checkout root                (default /var/www/zoiko-meds-platform)
-#     BRANCH     branch to deploy             (default main)
+#     BRANCH     branch the SHA must be on    (default main)
 #     PM2_NAME   pm2 process name             (default zoikomeds-api)
 #     CONTAINER_NAME docker container name       (default zoikomeds-api)
 #     SYSTEMD_UNIT systemd unit               (default zoikomeds-api)
@@ -38,10 +38,82 @@ log() { printf '\n[deploy] %s\n' "$*"; }
 
 cd "$REPO_DIR"
 
-log "Updating $BRANCH"
-git fetch origin "$BRANCH"
-git checkout "$BRANCH"
-git reset --hard "origin/$BRANCH"
+# --- the exact commit this run is authorised to deploy ------------------------
+#
+# Mandatory, and exact. This used to be `git reset --hard origin/$BRANCH`, which
+# deployed whatever main pointed at the moment the script happened to run --
+# not the commit whose CI run authorised the deploy. If main advanced between
+# CI going green and this script starting, production received a commit that no
+# successful CI run had ever tested, and the workflow still reported success.
+#
+# The SHA now travels unbroken from github.event.workflow_run.head_sha, through
+# the workflow's DEPLOY_SHA env var and the SSH command, to the reset below.
+#
+# There is deliberately NO fallback to origin/$BRANCH. A missing or unusable
+# SHA must fail the deploy loudly; silently widening it to "latest main" is the
+# precise bug this block exists to remove.
+DEPLOY_SHA="${1:-${DEPLOY_SHA:-}}"
+
+if [ -z "$DEPLOY_SHA" ]; then
+  echo "[deploy] FAILED: no deploy SHA given." >&2
+  echo "[deploy] Usage: bash $0 <full-40-character-commit-sha>" >&2
+  echo "[deploy]    or: DEPLOY_SHA=<sha> bash $0" >&2
+  echo "[deploy] This script will not fall back to origin/$BRANCH." >&2
+  exit 1
+fi
+
+# Normalise before anything compares this against git's own (lowercase) output.
+DEPLOY_SHA=$(printf '%s' "$DEPLOY_SHA" | tr 'A-F' 'a-f')
+
+# Full 40 hex only. An abbreviated SHA can turn ambiguous as the repository
+# grows, and accepting a branch or tag name here would reintroduce exactly the
+# floating target this check exists to eliminate.
+case "$DEPLOY_SHA" in
+  *[!0-9a-f]* | "")
+    echo "[deploy] FAILED: deploy SHA is not hexadecimal -- refusing." >&2
+    exit 1
+    ;;
+esac
+if [ ${#DEPLOY_SHA} -ne 40 ]; then
+  echo "[deploy] FAILED: deploy SHA must be the full 40 characters (got ${#DEPLOY_SHA})." >&2
+  exit 1
+fi
+
+log "Fetching $BRANCH"
+# Explicit refspec: the ancestry check below reads refs/remotes/origin/$BRANCH,
+# so that ref has to be updated -- not merely FETCH_HEAD.
+git fetch --prune origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+
+# The commit object must actually be here after the fetch.
+if ! git cat-file -e "${DEPLOY_SHA}^{commit}" 2>/dev/null; then
+  echo "[deploy] FAILED: $DEPLOY_SHA is not a commit in this repository" >&2
+  echo "[deploy] (checked after fetching $BRANCH)." >&2
+  exit 1
+fi
+
+# And it must be on $BRANCH. This is what stops an arbitrary commit -- one from
+# an unmerged branch, a fork, or one dropped from main by a force-push -- from
+# reaching production through the manual deploy path.
+if ! git merge-base --is-ancestor "$DEPLOY_SHA" "origin/${BRANCH}"; then
+  echo "[deploy] FAILED: $DEPLOY_SHA is not reachable from origin/${BRANCH}." >&2
+  echo "[deploy] Refusing to deploy a commit that is not on ${BRANCH}." >&2
+  exit 1
+fi
+
+log "Checking out exactly $DEPLOY_SHA"
+# -B so this works whether or not the local branch exists or is currently
+# checked out; --force because the working tree must match the commit exactly.
+# Note this may move the local branch BACKWARDS when main has already advanced:
+# that is the point -- the commit that passed CI is what ships.
+git checkout --quiet --force -B "$BRANCH" "$DEPLOY_SHA"
+git reset --hard "$DEPLOY_SHA"
+
+# Prove the checkout landed where it was told, rather than assuming it did.
+actual_sha=$(git rev-parse HEAD)
+if [ "$actual_sha" != "$DEPLOY_SHA" ]; then
+  echo "[deploy] FAILED: HEAD is $actual_sha but $DEPLOY_SHA was authorised." >&2
+  exit 1
+fi
 log "Now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
 cd "$REPO_DIR/backend"

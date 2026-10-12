@@ -1,19 +1,129 @@
-name: Deploy Backend to GCP VM
+name: Production Release (backend + frontend)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy.yml'
-  # Lets you re-run a release without pushing an empty commit — useful while the
-  # SSH reachability below is being sorted out.
+  # Gated on CI rather than on the push itself. Both deploys used to trigger
+  # straight from `push: main`, which meant they raced CI instead of following
+  # it: a merge whose tests failed still deployed, because nothing connected the
+  # two runs. `workflow_run` fires only after CI has finished, and the jobs below
+  # refuse to start unless it finished green.
+  #
+  # There is deliberately no paths filter and no substitute for one. An earlier
+  # attempt reproduced `paths:` by diffing HEAD_SHA^..HEAD_SHA, which is wrong
+  # for any push that lands more than one commit -- a direct multi-commit push
+  # or a rebase merge -- because it sees only the final commit. A push of
+  # "commit A: backend change" + "commit B: README" skipped the backend deploy
+  # entirely. That made it strictly weaker than the native `paths:` filter it
+  # replaced, which GitHub evaluates across every commit in the push.
+  # `workflow_run` cannot carry `paths:` at all, and the only correct
+  # alternative -- asking the API which commit was last deployed -- is more
+  # moving parts than an occasional redundant restart is worth. So every green
+  # CI on main releases the whole platform, including for a README-only change.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  # Manual release path, for a VM that was unreachable when the automatic run
+  # fired. It takes an explicit commit and will not accept "whatever main is
+  # now": an empty SHA fails rather than quietly becoming origin/main.
+  #
+  # NOTE: a manual run is NOT CI-gated. It releases the SHA given to it whether
+  # or not CI ever passed on that commit. Both deploy scripts still refuse any
+  # commit that is not reachable from origin/main, so the blast radius is
+  # "something that is on main", not "anything at all". Requiring a reviewer on
+  # top of that needs a GitHub Environment, which is repository configuration
+  # rather than workflow code -- see the audit report.
   workflow_dispatch:
+    inputs:
+      deploy_sha:
+        description: "Full 40-character commit SHA to release (must be on main). NOT CI-gated."
+        required: true
+        type: string
+
+# The release reaches the VM over SSH and needs nothing from the GitHub API.
+permissions:
+  contents: read
+
+# ONE group around the COMPLETE release -- backend and frontend together.
+#
+# This used to be two separate workflows sharing a group, which quietly produced
+# mixed releases. GitHub allows one run in progress and one pending per group,
+# and queueing a new run CANCELS whatever was already pending. So:
+#
+#     backend(A) running, frontend(A) pending
+#     backend(B) queues  -> frontend(A) cancelled
+#     frontend(B) queues -> backend(B)  cancelled
+#     => production ends up running backend A with frontend B
+#
+# Nothing in that sequence is a failure; every run is green. The fix is not a
+# different concurrency setting -- GitHub supports only `group` and
+# `cancel-in-progress`, with no queue-depth option -- but making the unit of
+# concurrency the release rather than the component. Backend and frontend are
+# now jobs inside one run, so they cannot be cancelled independently of one
+# another, and a pending release can only ever be replaced as a whole.
+#
+# cancel-in-progress is false on purpose: a release interrupted between
+# `prisma migrate deploy` and the restart leaves a migrated database with the
+# old build still serving. Queue behind it instead.
+#
+# Concurrency protects the shared /var/www/zoiko-meds-platform working tree and
+# the all-or-nothing shape of a release. It is NOT what makes the deployed
+# commit correct -- queueing actually gives main more time to advance while a
+# run waits. Exact-SHA pinning below is what guarantees that.
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+# The one commit this entire release is authorised to deploy, and the only thing
+# that decides what production ends up running. Set once here so the backend and
+# frontend jobs cannot possibly resolve different values.
+#
+# Passed into the remote shell as an environment variable rather than
+# interpolated into any `run:` or `script:` body on purpose: deploy_sha is
+# operator input, and ${{ }} interpolation happens while the script is being
+# assembled, before any validation step could reject it. As an env var it is a
+# value, never a fragment of shell source.
+env:
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || inputs.deploy_sha }}
 
 jobs:
-  deploy:
+  backend:
     runs-on: ubuntu-latest
+    # A green CI on a push to main, or a deliberate manual run. Anything else --
+    # a failed run, a cancelled run, a CI run from a pull request (including one
+    # from a fork), a push to any other branch -- stops here. The frontend job
+    # needs this one, so a skip here skips the whole release.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.name == 'CI' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     steps:
+      - name: Check the authorised commit
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DEPLOY_SHA:-}" ]; then
+            echo "::error::No deploy SHA. A workflow_run must carry head_sha and a" >&2
+            echo "manual run must be given deploy_sha. Refusing to deploy origin/main." >&2
+            exit 1
+          fi
+
+          # Full 40 hex. The deploy script re-checks this and also proves the
+          # commit exists and is on main; this is the early, cheap rejection.
+          case "$DEPLOY_SHA" in
+            *[!0-9a-fA-F]* | "")
+              echo "::error::deploy SHA is not hexadecimal -- refusing." >&2; exit 1 ;;
+          esac
+          if [ "${#DEPLOY_SHA}" -ne 40 ]; then
+            echo "::error::deploy SHA must be the full 40 characters (got ${#DEPLOY_SHA})." >&2
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run: deploying $DEPLOY_SHA. This path is NOT CI-gated."
+          else
+            echo "CI run ${{ github.event.workflow_run.id }} passed on $DEPLOY_SHA; deploying that commit."
+          fi
       # The VM runs Node under pm2/systemd, not docker compose. This calls the
       # committed deploy script so the CI path and a manual run on the box do
       # exactly the same thing (install -> generate -> migrate -> build ->
@@ -30,13 +140,16 @@ jobs:
       # firewall: authenticate with google-github-actions/auth (Workload Identity
       # Federation, no long-lived key), then reach the VM with
       #     gcloud compute ssh "$INSTANCE" --zone "$ZONE" --tunnel-through-iap \
-      #       --command 'bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh'
+      #       --command "bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh $DEPLOY_SHA"
       # which needs only ingress from Google's IAP range 35.235.240.0/20 on tcp:22
       # — narrower than an office CIDR, and never 0.0.0.0/0. Allowing GitHub's own
       # ranges (https://api.github.com/meta) on tcp:22 also works, but is wider.
       #
       # A manual release from the VM is always available as a fallback:
-      #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+      #     bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh <COMMIT_SHA>
+      #
+      # The SHA is mandatory there too: the script deploys the commit it is
+      # given and refuses to guess at origin/main.
       #
       # The migration ledger is printed before and after the deploy, because this
       # log is the only view of the database for anyone without VM access. On
@@ -51,6 +164,10 @@ jobs:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USER }}
           key: ${{ secrets.GCP_VM_SSH_KEY }}
+          # Carries DEPLOY_SHA into the remote shell as a value. If this ever
+          # failed to arrive, the deploy script's mandatory-SHA check fails the
+          # release -- it never falls back to origin/main.
+          envs: DEPLOY_SHA
           command_timeout: 15m
           script: |
             set -e
@@ -67,7 +184,7 @@ jobs:
               echo "(could not reach the API container; skipping)"
             echo "::endgroup::"
 
-            bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh
+            bash /var/www/zoiko-meds-platform/backend/scripts/deploy.sh "$DEPLOY_SHA"
 
             echo "::group::Migration ledger after deploy"
             npx prisma migrate status || true
@@ -145,3 +262,43 @@ jobs:
               exit 1
               ;;
           esac
+
+  # Second half of the same release, never a release of its own.
+  #
+  # `needs: backend` is what makes a backend failure stop the frontend: if the
+  # backend deploy or any of its three post-deploy verifications fails, this job
+  # is skipped and the workflow goes red. It also inherits the backend job's
+  # `if:` -- a skipped backend skips this too -- so the CI gate is enforced once
+  # and applies to the whole release.
+  #
+  # It deploys the SAME DEPLOY_SHA from the workflow env above. There is no path
+  # by which the frontend can ship a different commit than the backend.
+  frontend:
+    needs: backend
+    runs-on: ubuntu-latest
+    steps:
+      # nginx serves frontend/dist/ as static files -- there is no process to
+      # restart, which is exactly why this was missed before: a push here
+      # updated GitHub but nothing on the VM ever rebuilt it, and there was no
+      # workflow run, log, or red X to notice by. This calls the committed
+      # deploy script so a CI run and a manual run on the box do the same
+      # thing, and the script itself proves the public URL served the new
+      # build before exiting 0 -- see frontend/scripts/deploy.sh for why that
+      # check exists rather than trusting a clean `npm run build`.
+      #
+      # Reuses the same GCP_VM_HOST / GCP_VM_USER / GCP_VM_SSH_KEY secrets as
+      # deploy.yml (the backend workflow) -- same VM, same repo.
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USER }}
+          key: ${{ secrets.GCP_VM_SSH_KEY }}
+          # Carries DEPLOY_SHA into the remote shell as a value. If this ever
+          # failed to arrive, the deploy script's mandatory-SHA check fails the
+          # release -- it never falls back to origin/main.
+          envs: DEPLOY_SHA
+          command_timeout: 10m
+          script: |
+            set -e
+            bash /var/www/zoiko-meds-platform/frontend/scripts/deploy.sh "$DEPLOY_SHA"
