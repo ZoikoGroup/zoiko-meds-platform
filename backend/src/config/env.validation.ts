@@ -108,6 +108,32 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     );
   }
 
+  // Prescription scanning. Optional: unset simply means the feature is not
+  // offered, which the client discovers from /scan/prescription-status. Set to
+  // whitespace is a misconfiguration rather than a choice, and is caught here
+  // instead of surfacing as an unexplained 503 on the first upload.
+  const geminiKey = String(config.GEMINI_API_KEY ?? '');
+  if (geminiKey && !geminiKey.trim()) {
+    errors.push(
+      'GEMINI_API_KEY is set to whitespace. Leave it unset to run without prescription scanning.',
+    );
+  }
+
+  const geminiModel = String(config.GEMINI_MODEL ?? '');
+  if (geminiModel && !geminiModel.trim()) {
+    errors.push('GEMINI_MODEL must name a model when set, or be left unset.');
+  }
+
+  // The fallback chain. A value that parses to nothing usable would silently
+  // fall back to the defaults, which is the kind of surprise worth catching at
+  // boot rather than on the first scan after a deploy.
+  const geminiChain = String(config.GEMINI_PRESCRIPTION_MODELS ?? '');
+  if (geminiChain.trim() && !geminiChain.split(',').some((name) => name.trim())) {
+    errors.push(
+      'GEMINI_PRESCRIPTION_MODELS must be a comma-separated list of model names when set, or be left unset.',
+    );
+  }
+
   // --- Android app (see mobile-app.ts) ----------------------------------------
   const badAppOrigins = invalidMobileAppOrigins(String(config.MOBILE_APP_ORIGINS ?? ''));
   if (badAppOrigins.length > 0) {

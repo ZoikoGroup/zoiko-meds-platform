@@ -2,6 +2,7 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ScanController } from './scan.controller';
 import { VisionService } from './vision.service';
+import type { PrescriptionScanService } from './prescription-scan.service';
 
 /**
  * Assisted reading — the AI/Vision fallback behind on-device OCR.
@@ -26,6 +27,15 @@ const configWith = (env: Record<string, string>) =>
   }) as unknown as ConfigService;
 
 const KEY = 'sk-ant-not-a-real-key';
+
+/**
+ * The controller gained a second collaborator when prescription scanning landed
+ * (POST /scan/prescription). These tests are about the legacy vision route, so
+ * it is stubbed rather than exercised — reaching it from here would be testing
+ * the wrong thing.
+ */
+const noPrescriptions = {} as unknown as PrescriptionScanService;
+
 
 describe('VisionService.availability', () => {
   it('is unavailable, with a reason, when no key is configured', () => {
@@ -212,7 +222,7 @@ describe('VisionService.extractMedicines', () => {
 
 describe('ScanController', () => {
   it('reports availability, with the reason, from the service', () => {
-    const controller = new ScanController(new VisionService(configWith({})));
+    const controller = new ScanController(new VisionService(configWith({})), noPrescriptions);
 
     expect(controller.status()).toEqual({
       available: false,
@@ -223,6 +233,7 @@ describe('ScanController', () => {
   it('reports availability with no reason when it is on offer', () => {
     const controller = new ScanController(
       new VisionService(configWith({ ANTHROPIC_API_KEY: KEY })),
+      noPrescriptions,
     );
 
     expect(controller.status()).toEqual({ available: true });
@@ -230,7 +241,7 @@ describe('ScanController', () => {
 
   it('hands the images to the service and returns what it read', async () => {
     const vision = { extractMedicines: jest.fn().mockResolvedValue([{ name: 'Dolo 650' }]) };
-    const controller = new ScanController(vision as unknown as VisionService);
+    const controller = new ScanController(vision as unknown as VisionService, noPrescriptions);
 
     const result = await controller.extract({ images: ['data:image/jpeg;base64,AAAA'] });
 

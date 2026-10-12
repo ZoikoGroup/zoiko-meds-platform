@@ -27,6 +27,17 @@ import { ZoikoAvailDocsService } from './modules/admin/telemetry/zoikoavail-docs
 const SCAN_VISION_BODY_LIMIT = '12mb';
 
 /**
+ * Ceiling for the prescription-scan endpoint.
+ *
+ * One document rather than four images: ScanPrescriptionDto caps the file at
+ * 10 MB, and base64 inflates that by a third, so 16mb leaves room for the
+ * envelope without letting a single request exhaust the instance. Kept in step
+ * with MAX_DATA_URL_CHARS on purpose — a parser that rejects what the DTO
+ * admits kills the request before validation can explain why.
+ */
+const SCAN_PRESCRIPTION_BODY_LIMIT = '16mb';
+
+/**
  * Ceiling for a pharmacy profile save.
  *
  * The profile itself is a few hundred bytes; the allowance is for the licence
@@ -87,6 +98,16 @@ async function bootstrap() {
     jsonBodyLimit(
       SCAN_VISION_BODY_LIMIT,
       'The prescription images are too large to send. Try fewer pages, or a lower-resolution photo.',
+    ),
+  );
+
+  // The prescription reader takes the original file — a photo or a whole PDF —
+  // so it needs its own ceiling for the same reason, scoped the same way.
+  app.use(
+    `/${apiPrefix}/scan/prescription`,
+    jsonBodyLimit(
+      SCAN_PRESCRIPTION_BODY_LIMIT,
+      'That prescription file is too large to send. Use a file under 10 MB.',
     ),
   );
 

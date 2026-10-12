@@ -20,8 +20,12 @@ const ACCEPT = '.jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,appli
 // which has always taken `maxDistance` as a km ceiling.
 const DISTANCES_KM = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
-import { extractPrescriptionMeds, UnsupportedFormatError } from './extract-prescription'
-import { terminateOcrWorker } from './ocr-worker'
+// Reading happens on the server now: the file is posted to ZoikoMeds, read by a
+// document model and verified against MediBase before it comes back. The
+// on-device pipeline (Tesseract + pdf.js) is no longer on this path — see
+// prescription-reader.js.
+import { readPrescription, PrescriptionReadError, confirmMedicine } from './prescription-reader'
+import { MedicineConfirmation } from './medicine-confirmation'
 import { useLanguage } from '@/providers/language-provider'
 
 function isAcceptedFile(file) {
@@ -65,7 +69,12 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
   const [fileName, setFileName] = useState('')
   const [result, setResult] = useState(null)
   const [errorMessage, setErrorMessage] = useState('')
-  const [confirmed, setConfirmed] = useState(() => new Set())
+  // Rows the patient has settled, keyed by the row's own handle rather than by
+  // its name: a line whose handwriting could not be read has no name to key on.
+  const [resolved, setResolved] = useState(() => new Map())
+  // The one row whose confirmation controls are open, if any. Only one at a
+  // time: fourteen simultaneous search forms is a page nobody can read.
+  const [expandedKey, setExpandedKey] = useState(null)
   const [location, setLocation] = useState(() => localStorage.getItem(LOC_KEY) || '')
 
   useEffect(() => {
@@ -80,14 +89,16 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     }
   }, [])
 
-  // Release the OCR worker's WASM heap when the user navigates away.
-  useEffect(() => () => { void terminateOcrWorker() }, [])
-
   // Publish the detected list upward so it stays selectable from the search
   // view — the user should never have to re-scan to reach the next medicine.
   useEffect(() => {
-    onDetected?.(result?.medicines ?? [])
-  }, [result, onDetected])
+    const usable = (result?.medicines ?? [])
+      .map((medicine) => resolved.get(medicine.key) ?? medicine)
+      // Gate: only a medicine with a MediBase identity behind it goes further.
+      // An ambiguous or unread line has nothing to look up availability for.
+      .filter((medicine) => !medicine.needsConfirmation)
+    onDetected?.(usable)
+  }, [result, resolved, onDetected])
 
 
   const [distance, setDistance] = useState(25)
@@ -106,11 +117,12 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     setFileName(file.name)
     setErrorMessage('')
     setResult(null)
-    setConfirmed(new Set())
+    setResolved(new Map())
+    setExpandedKey(null)
     setStatus('preparing')
 
     try {
-      const extraction = await extractPrescriptionMeds(file, {
+      const extraction = await readPrescription(file, {
         onProgress: (update) => {
           setProgress(update)
           if (update.phase === 'matching') setStatus('matching')
@@ -121,11 +133,12 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
       setStatus('done')
       extraction.warnings.forEach((warning) => flash?.(warning))
     } catch (err) {
-      console.error('Prescription extraction failed:', err)
+      // Deliberately not console.error'd with the error object: a failure here
+      // can carry the request, and the request is a prescription.
       setErrorMessage(
-        err instanceof UnsupportedFormatError
+        err instanceof PrescriptionReadError
           ? err.message
-          : (err?.message ?? 'Something went wrong while reading your prescription.'),
+          : 'Something went wrong while reading your prescription.',
       )
       setStatus('failed')
     } finally {
@@ -154,12 +167,27 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     setResult(null)
     setErrorMessage('')
     setProgress(null)
-    setConfirmed(new Set())
+    setResolved(new Map())
+    setExpandedKey(null)
     lastFile.current = null
   }
 
-  const confirmMedicine = (name) => {
-    setConfirmed((current) => new Set(current).add(name))
+  /**
+   * Adopt the catalog medicine the patient chose for one row.
+   *
+   * Local: the identity already came from MediBase, as a candidate or as a
+   * catalog search hit, so confirming promotes it rather than re-verifying it.
+   * The prescription is not read again and no medicine record is created.
+   */
+  const resolveMedicine = (key, chosen) => {
+    setResolved((current) => {
+      const base = current.get(key) ?? (result?.medicines ?? []).find((m) => m.key === key)
+      if (!base) return current
+      const next = new Map(current)
+      next.set(key, confirmMedicine(base, chosen))
+      return next
+    })
+    setExpandedKey(null)
   }
 
   const persistLocation = (value) => {
@@ -205,50 +233,111 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     return ''
   })()
 
-  const renderMedicine = (medicine, { requireConfirm }) => {
-    const isConfirmed = confirmed.has(medicine.name)
+  /**
+   * One medicine row.
+   *
+   * Two shapes rather than two lists: a row with a MediBase identity offers
+   * Search, and a row without one offers the confirmation panel instead. The
+   * Search button is deliberately absent until an identity exists — there is
+   * nothing to look up availability for, and offering it would imply the
+   * reading had been verified.
+   */
+  /**
+   * One medicine row.
+   *
+   * Compact by default. A row that still needs a decision shows what was read,
+   * one line saying why it is not settled, and a Confirm button — the catalog
+   * choices and the search box only appear in the row the patient opened.
+   *
+   * Confirm does not confirm anything by itself. There is nothing safe for it
+   * to confirm: the medicine either has several possible catalog identities or
+   * none, so the button opens the controls that let the patient pick one. The
+   * row becomes verified when a MediBase identity is chosen, never before.
+   */
+  const renderMedicine = (medicine) => {
+    const current = resolved.get(medicine.key) ?? medicine
+    const needsConfirm = current.needsConfirmation
+    const isOpen = needsConfirm && expandedKey === medicine.key
+
     return (
       <motion.li
-        key={medicine.name}
+        key={medicine.key}
         initial={{ opacity: 0, x: -8 }}
         animate={{ opacity: 1, x: 0 }}
         className={cn(
-          'flex items-center justify-between gap-3 rounded-xl border bg-card p-3 transition-colors',
-          requireConfirm && !isConfirmed
-            ? 'border-warning/40 hover:border-warning/60'
-            : 'border-border hover:border-primary/30',
+          'flex flex-col rounded-xl border bg-card p-3 transition-colors',
+          needsConfirm ? 'border-warning/40' : 'border-border hover:border-primary/30',
         )}
       >
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span
-            className={cn(
-              'flex size-8 shrink-0 items-center justify-center rounded-lg',
-              requireConfirm && !isConfirmed ? 'bg-warning/10 text-warning' : 'bg-teal/10 text-teal',
-            )}
-          >
-            {requireConfirm && !isConfirmed ? <HelpCircle className="size-4" /> : <Pill className="size-4" />}
+        <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <span className="flex min-w-0 flex-1 items-center gap-2.5">
+            <span
+              className={cn(
+                'flex size-8 shrink-0 items-center justify-center rounded-lg',
+                needsConfirm ? 'bg-warning/10 text-warning' : 'bg-teal/10 text-teal',
+              )}
+            >
+              {needsConfirm ? <HelpCircle className="size-4" /> : <Pill className="size-4" />}
+            </span>
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-semibold text-foreground">{current.name}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {current.detail || t('prescriptionMedicine', 'Prescription medicine')}
+              </span>
+              {needsConfirm && current.note && (
+                // Wraps rather than truncates: on a 360px screen the text
+                // column is narrow enough that "Read from your prescri…" is the
+                // whole message gone, and this line is the reason the row is
+                // asking for anything.
+                <span className="text-[11px] leading-snug text-warning">
+                  {t(current.note.key, current.note.text)}
+                </span>
+              )}
+              {current.confirmedByUser && (
+                <span className="truncate text-[11px] text-muted-foreground">
+                  {t('readFromPrescription', 'Read from your prescription as')}{' '}
+                  <span className="font-medium">{current.sourceText}</span>
+                </span>
+              )}
+            </span>
           </span>
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-semibold text-foreground">{medicine.name}</span>
-            <span className="truncate text-xs text-muted-foreground">{medicine.detail}</span>
-            {requireConfirm && (
-              <span className="truncate text-[11px] text-warning">{medicine.reason}</span>
-            )}
-          </span>
+
+          {needsConfirm ? (
+            <Button
+              size="sm"
+              variant={isOpen ? 'ghost' : 'outline'}
+              className="shrink-0"
+              aria-expanded={isOpen}
+              onClick={() => setExpandedKey(isOpen ? null : medicine.key)}
+            >
+              {isOpen ? t('cancel', 'Cancel') : t('confirm', 'Confirm')}
+            </Button>
+          ) : (
+            <Button size="sm" className="shrink-0" onClick={() => onSearchMedicine?.(current)}>
+              {t('search', 'Search')}
+              <ArrowRight className="size-3.5" />
+            </Button>
+          )}
         </span>
-        {requireConfirm && !isConfirmed ? (
-          <Button size="sm" variant="outline" onClick={() => confirmMedicine(medicine.name)}>
-            {t('confirm', 'Confirm')}
-          </Button>
-        ) : (
-          <Button size="sm" onClick={() => onSearchMedicine?.(medicine)}>
-            {t('search', 'Search')}
-            <ArrowRight className="size-3.5" />
-          </Button>
+
+        {isOpen && (
+          <MedicineConfirmation
+            medicine={current}
+            onConfirm={(chosen) => resolveMedicine(medicine.key, chosen)}
+            t={t}
+          />
         )}
       </motion.li>
     )
   }
+
+  // Lists are derived from the merged state, so a row moves from "please
+  // confirm" to "ready to search" the moment the patient settles it.
+  const mergedMedicines = (result?.medicines ?? []).map(
+    (medicine) => resolved.get(medicine.key) ?? medicine,
+  )
+  const readyMedicines = mergedMedicines.filter((medicine) => !medicine.needsConfirmation)
+  const unconfirmedMedicines = mergedMedicines.filter((medicine) => medicine.needsConfirmation)
 
   const hasAnyResult = result && result.medicines.length > 0
 
@@ -293,18 +382,18 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
                 </Button>
               </div>
 
-              {result.confident.length > 0 && (
+              {readyMedicines.length > 0 && (
                 <>
                   <p className="text-sm text-muted-foreground">
                     {t('chooseMedicinesToSearch', 'Choose which medicines to search for availability near you.')}
                   </p>
                   <ul className="flex flex-col gap-2">
-                    {result.confident.map((medicine) => renderMedicine(medicine, { requireConfirm: false }))}
+                    {readyMedicines.map(renderMedicine)}
                   </ul>
                 </>
               )}
 
-              {result.unconfirmed.length > 0 && (
+              {unconfirmedMedicines.length > 0 && (
                 <>
                   <div className="flex items-center gap-2 pt-1">
                     <HelpCircle className="size-4 text-warning" />
@@ -319,7 +408,7 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
                     )}
                   </p>
                   <ul className="flex flex-col gap-2">
-                    {result.unconfirmed.map((medicine) => renderMedicine(medicine, { requireConfirm: true }))}
+                    {unconfirmedMedicines.map(renderMedicine)}
                   </ul>
                 </>
               )}
@@ -412,7 +501,10 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
                 {progressDetail ? ` · ${progressDetail}` : ''}
               </p>
               <p className="max-w-sm text-xs text-muted-foreground">
-                {t('deviceOnlyNotice', 'Reading happens on your device — the file is not uploaded.')}
+                {t(
+                  'secureReadingNotice',
+                  'Your file is securely sent for document processing. ZoikoMeds does not keep it afterwards.',
+                )}
               </p>
             </Card>
           </motion.div>
@@ -480,7 +572,7 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
         <p className="text-sm leading-relaxed text-muted-foreground">
           {t(
             'prescriptionPrivacyNotice',
-            'Privacy notice: Your prescription is read on your device. The image is not uploaded unless you choose assisted reading. To look each medicine up, only the extracted medicine name is sent to the ZoikoMeds catalog — never the image, and never anything that identifies you. ZoikoMeds does not process, validate, or fulfil prescriptions, and provides no medical advice.',
+            'Privacy notice: Your prescription is securely sent for document processing. ZoikoMeds does not retain the uploaded file after processing. Extracted medicines are checked against MediBase before they are shown as verified. ZoikoMeds does not process, validate, or fulfil prescriptions. No medical advice is provided.',
           )}
         </p>
       </div>
