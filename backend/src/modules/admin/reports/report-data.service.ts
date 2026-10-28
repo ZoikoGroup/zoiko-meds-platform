@@ -8,7 +8,7 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { PUBLIC_SIGNAL_WHERE } from '../../availability/availability.visibility';
+import { publicSignalWhere } from '../../availability/availability.visibility';
 import { reportPurpose } from './report-purpose';
 
 /**
@@ -167,7 +167,7 @@ export class ReportDataService {
     const [signals, visible, medicinesWithSignals, contributing, participating] =
       await Promise.all([
         this.prisma.availabilitySignal.count(),
-        this.prisma.availabilitySignal.count({ where: PUBLIC_SIGNAL_WHERE }),
+        this.prisma.availabilitySignal.count({ where: publicSignalWhere() }),
         this.distinct('medicineId'),
         this.distinct('pharmacyId'),
         this.prisma.pharmacy.count({
@@ -222,7 +222,7 @@ export class ReportDataService {
     const [total, visible, suppressed, unknown, awaiting, medicines, pharmacies] =
       await Promise.all([
         this.prisma.availabilitySignal.count(),
-        this.prisma.availabilitySignal.count({ where: PUBLIC_SIGNAL_WHERE }),
+        this.prisma.availabilitySignal.count({ where: publicSignalWhere() }),
         this.prisma.availabilitySignal.count({
           where: { confidence: AvailabilityConfidence.SUPPRESSED },
         }),

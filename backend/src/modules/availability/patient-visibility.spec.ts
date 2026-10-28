@@ -7,10 +7,27 @@ import {
 import {
   PATIENT_VISIBLE_CLASSIFICATIONS,
   PUBLIC_PHARMACY_WHERE,
-  PUBLIC_SIGNAL_WHERE,
-  PUBLIC_SIGNALS_INCLUDE,
+  publicPharmacyWhere,
+  publicSignalWhere,
+  publicSignalsInclude,
   VISIBLE_SIGNAL_WHERE,
 } from './availability.visibility';
+
+/**
+ * Two builds of the shared rule, compared.
+ *
+ * The rule now carries the instant it was built — a trial is live until its own
+ * end date, so the clause is `evaluationEndsAt > <now>` — and two calls a
+ * millisecond apart therefore differ in exactly one value and nowhere else.
+ * That single value is normalised away here; everything else still has to match
+ * exactly, which is the whole point of these tests. Identity (`toBe`) stopped
+ * being the right question once the rule became a function rather than a frozen
+ * object.
+ */
+const sameRule = (value: unknown) =>
+  JSON.parse(JSON.stringify(value ?? null), (key: string, v: unknown) =>
+    key === 'gt' ? '<built-at>' : v,
+  );
 
 /**
  * Which pharmacies a patient may be shown (MSA-54).
@@ -216,7 +233,7 @@ describe('a signal is judged on its own standing too', () => {
   });
 
   it('carries the pharmacy rule with it, so a signal cannot escape it', () => {
-    expect(PUBLIC_SIGNAL_WHERE.pharmacy).toEqual(PUBLIC_PHARMACY_WHERE);
+    expect(sameRule(publicSignalWhere().pharmacy)).toEqual(sameRule(publicPharmacyWhere()));
   });
 });
 
@@ -225,14 +242,14 @@ describe('every patient surface uses this one rule', () => {
   // medicines and ZoikoSignal all read the same object. Per-service filtering
   // is what let them drift apart in the first place.
   it('the include used by saved medicines and ZoikoSignal nests it', () => {
-    expect(PUBLIC_SIGNALS_INCLUDE.where).toEqual(PUBLIC_SIGNAL_WHERE);
+    expect(sameRule(publicSignalsInclude().where)).toEqual(sameRule(publicSignalWhere()));
     expect(
-      (PUBLIC_SIGNALS_INCLUDE.where as Prisma.AvailabilitySignalWhereInput).pharmacy,
-    ).toEqual(PUBLIC_PHARMACY_WHERE);
+      sameRule((publicSignalsInclude().where as Prisma.AvailabilitySignalWhereInput).pharmacy),
+    ).toEqual(sameRule(publicPharmacyWhere()));
   });
 
   it('the classification restriction is present in the nested form as well', () => {
-    const nested = (PUBLIC_SIGNALS_INCLUDE.where as Prisma.AvailabilitySignalWhereInput)
+    const nested = (publicSignalsInclude().where as Prisma.AvailabilitySignalWhereInput)
       .pharmacy as Prisma.PharmacyWhereInput;
 
     expect(nested.commercialClassification).toEqual({

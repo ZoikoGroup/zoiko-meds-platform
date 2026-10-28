@@ -237,11 +237,58 @@ describe('EntitlementService — entitlement and eligibility are separate questi
   });
 
   it('grants Pro features during a no-card evaluation', async () => {
+    // The evaluation itself, not just the label: Pro now follows the trial's
+    // own end date, so the subscription row has to be here and still open.
+    const endsAt = new Date(Date.now() + 10 * 86_400_000);
     prisma.pharmacy.findUnique.mockResolvedValue(
-      pharmacy({ commercialClassification: CommercialClassification.PRO_EVALUATION }),
+      pharmacy({
+        commercialClassification: CommercialClassification.PRO_EVALUATION,
+        subscriptionLocations: [
+          { subscription: { state: 'EVALUATION', offer: 'PHARMACY_INTELLIGENCE_PRO', evaluationEndsAt: endsAt } },
+        ],
+      }),
     );
     const result = await service.resolveForPharmacy('ph_1');
     expect(result.features).toContain(CommercialFeature.LOCAL_DEMAND_DASHBOARD);
+  });
+
+  it('withdraws Pro the moment the evaluation window closes, before any job runs', async () => {
+    // The classification still says PRO_EVALUATION — expireEvaluations rewrites
+    // it on a schedule — but the window shut yesterday. Trusting the string here
+    // is what handed out free Pro for as long as the scheduler was behind.
+    const endedAt = new Date(Date.now() - 86_400_000);
+    prisma.pharmacy.findUnique.mockResolvedValue(
+      pharmacy({
+        commercialClassification: CommercialClassification.PRO_EVALUATION,
+        subscriptionLocations: [
+          { subscription: { state: 'EVALUATION', offer: 'PHARMACY_INTELLIGENCE_PRO', evaluationEndsAt: endedAt } },
+        ],
+      }),
+    );
+    const result = await service.resolveForPharmacy('ph_1');
+
+    expect(result.features).not.toContain(CommercialFeature.LOCAL_DEMAND_DASHBOARD);
+    // Network Core capability is untouched: the trial ending is not a demotion
+    // out of the free network.
+    expect(result.features).toContain(CommercialFeature.AVAILABILITY_SIGNALS);
+  });
+
+  it('picks the paid subscription over a stale cancelled one, whatever the row order', async () => {
+    // The regression this guards: an evaluation that ended and was never
+    // released sat in front of the paid term, and [0] took it — stripping every
+    // paid analytic from a pharmacy whose billing page read Intelligence Pro.
+    prisma.pharmacy.findUnique.mockResolvedValue(
+      pharmacy({
+        commercialClassification: CommercialClassification.PRO_ACTIVE,
+        subscriptionLocations: [
+          { subscription: { state: 'CANCELED', offer: 'PHARMACY_INTELLIGENCE_PRO', evaluationEndsAt: null } },
+          { subscription: { state: 'ACTIVE', offer: 'PHARMACY_INTELLIGENCE_PRO', evaluationEndsAt: null } },
+        ],
+      }),
+    );
+    const result = await service.resolveForPharmacy('ph_1');
+    expect(result.features).toContain(CommercialFeature.LOCAL_DEMAND_DASHBOARD);
+    expect(result.features).toContain(CommercialFeature.ANALYTICS_EXPORT);
   });
 
   it('treats a paid pharmacy with lapsed verification as entitled but ineligible (S-B4)', async () => {

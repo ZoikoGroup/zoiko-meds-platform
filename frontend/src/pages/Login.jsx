@@ -68,6 +68,10 @@ export default function Login() {
 
   // Feedback states
   const [loading, setLoading] = useState(false)
+  // Back from a completed password reset: on the web from the reset page, or
+  // in the app from the reset email's way back. Read once, like the notices
+  // below, and only ever a flag — nothing here signs anybody in.
+  const [passwordReset] = useState(() => searchParams.get('reset') === 'success')
   // Read once on mount, and only in the initializer: consuming the flag clears
   // it, so re-running this on every render would swallow the reason.
   const [error, setError] = useState(() => {
@@ -237,6 +241,11 @@ export default function Login() {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {passwordReset && !error && (
+              <div role="status" className="rounded-lg bg-teal/10 p-3 text-xs font-medium text-teal leading-snug">
+                Password updated. Sign in with your new password.
+              </div>
+            )}
             {error && (
               <div className="rounded-lg bg-destructive/10 p-3 text-xs font-medium text-destructive leading-snug">
                 ⚠️ {error}

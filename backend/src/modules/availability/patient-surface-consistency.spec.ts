@@ -12,9 +12,26 @@ import { PharmacyService } from '../pharmacy/pharmacy.service';
 import {
   ACTIVE_PHARMACY_MANAGER_WHERE,
   PUBLIC_PHARMACY_WHERE,
-  PUBLIC_SIGNALS_INCLUDE,
-  PUBLIC_SIGNAL_WHERE,
+  publicPharmacyWhere,
+  publicSignalsInclude,
+  publicSignalWhere,
 } from './availability.visibility';
+
+/**
+ * Two builds of the shared rule, compared.
+ *
+ * The rule now carries the instant it was built — a trial is live until its own
+ * end date, so the clause is `evaluationEndsAt > <now>` — and two calls a
+ * millisecond apart therefore differ in exactly one value and nowhere else.
+ * That single value is normalised away here; everything else still has to match
+ * exactly, which is the whole point of these tests. Identity (`toBe`) stopped
+ * being the right question once the rule became a function rather than a frozen
+ * object.
+ */
+const sameRule = (value: unknown) =>
+  JSON.parse(JSON.stringify(value ?? null), (key: string, v: unknown) =>
+    key === 'gt' ? '<built-at>' : v,
+  );
 
 /**
  * Every patient-facing query asks the same visibility question.
@@ -78,18 +95,40 @@ function signalService(prisma: any) {
 describe('/availability — medicine availability', () => {
   it('filters signals through the shared rule', async () => {
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       availabilitySignal: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     await new AvailabilityService(prisma as unknown as PrismaService).getAvailability('med_1');
     const [args] = prisma.availabilitySignal.findMany.mock.calls[0];
 
-    expect(args.where.pharmacy).toBe(PUBLIC_PHARMACY_WHERE);
-    expect(args.where.confidence).toEqual(PUBLIC_SIGNAL_WHERE.confidence);
+    expect(sameRule(args.where.pharmacy)).toEqual(sameRule(publicPharmacyWhere()));
+    expect(args.where.confidence).toEqual(publicSignalWhere().confidence);
   });
 
   it('carries the operator clause with it', async () => {
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       availabilitySignal: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
@@ -103,6 +142,17 @@ describe('/availability — medicine availability', () => {
 describe('/me/search — patient medicine search', () => {
   it('nests the shared include on the signals it reads', async () => {
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       searchHistory: { create: jest.fn() },
       medicineEntity: { findMany: jest.fn().mockResolvedValue([]) },
     };
@@ -110,7 +160,7 @@ describe('/me/search — patient medicine search', () => {
     await meService(prisma).search('user_1', { q: 'paracetamol' } as never);
     const [args] = prisma.medicineEntity.findMany.mock.calls[0];
 
-    expect(args.include.availabilitySignals).toBe(PUBLIC_SIGNALS_INCLUDE);
+    expect(sameRule(args.include.availabilitySignals)).toEqual(sameRule(publicSignalsInclude()));
     expect(args.include.availabilitySignals.where.pharmacy.users).toEqual(OPERATOR_CLAUSE);
   });
 });
@@ -136,7 +186,9 @@ describe('/me/saved — saved medicines', () => {
     await meService(prisma).listSaved('user_1');
     const [args] = prisma.savedMedicine.findMany.mock.calls[0];
 
-    expect(args.include.medicine.include.availabilitySignals).toBe(PUBLIC_SIGNALS_INCLUDE);
+    expect(sameRule(args.include.medicine.include.availabilitySignals)).toEqual(
+      sameRule(publicSignalsInclude()),
+    );
     expect(
       args.include.medicine.include.availabilitySignals.where.pharmacy.users,
     ).toEqual(OPERATOR_CLAUSE);
@@ -153,7 +205,9 @@ describe('ZoikoSignal — the alerts a saved medicine drives', () => {
     await (signalService(prisma) as any).loadSavedWithSignals('user_1');
     const [args] = prisma.savedMedicine.findMany.mock.calls[0];
 
-    expect(args.include.medicine.include.availabilitySignals).toBe(PUBLIC_SIGNALS_INCLUDE);
+    expect(sameRule(args.include.medicine.include.availabilitySignals)).toEqual(
+      sameRule(publicSignalsInclude()),
+    );
     expect(
       args.include.medicine.include.availabilitySignals.where.pharmacy.users,
     ).toEqual(OPERATOR_CLAUSE);
@@ -167,7 +221,7 @@ describe('GET /pharmacies and /pharmacies/:id — the public routes', () => {
     await pharmacyService(prisma).listVerified();
     const [args] = prisma.pharmacy.findMany.mock.calls[0];
 
-    expect(args.where).toBe(PUBLIC_PHARMACY_WHERE);
+    expect(sameRule(args.where)).toEqual(sameRule(publicPharmacyWhere()));
   });
 
   it('the detail route adds only the id to it', async () => {
@@ -178,7 +232,7 @@ describe('GET /pharmacies and /pharmacies/:id — the public routes', () => {
       .catch(() => undefined); // 404 for a hidden pharmacy; the query is the subject.
     const [args] = prisma.pharmacy.findFirst.mock.calls[0];
 
-    expect(args.where).toEqual({ id: 'ph_1', ...PUBLIC_PHARMACY_WHERE });
+    expect(sameRule(args.where)).toEqual(sameRule({ id: 'ph_1', ...publicPharmacyWhere() }));
     expect(args.where.users).toEqual(OPERATOR_CLAUSE);
   });
 });
@@ -188,6 +242,17 @@ describe('the pharmacy portal reads the same rule it is judged by', () => {
     // The banner and the patient queries have to agree. This is the surface
     // where disagreeing is worst: it tells the operator they are live.
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       pharmacy: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'ph_1',

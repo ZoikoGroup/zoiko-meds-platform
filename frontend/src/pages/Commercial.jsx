@@ -757,8 +757,9 @@ export default function Commercial() {
                   </div>
                 ))}
                 <p className="mt-3 text-xs leading-relaxed text-info">
-                  A verified pharmacy is never removed from the free availability network because a
-                  paid-intelligence payment failed.
+                  A failed payment never removes a pharmacy's account, profile or inventory, and
+                  the pharmacy stays in patient search for the whole 20-day recovery window. Listing
+                  resumes automatically once a subscription is active again.
                 </p>
               </CardContent>
             </Card>

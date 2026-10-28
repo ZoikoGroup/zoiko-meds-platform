@@ -1,5 +1,6 @@
 import {
   BillingCapability,
+  BillingInterval,
   CommercialClassification,
   CommercialOffer,
   SubscriptionState,
@@ -316,3 +317,143 @@ export function violatesSeparationOfDuties(
 
   return operationalRole && financialAuthority;
 }
+
+/**
+ * Subscription states that still entitle a pharmacy to be shown to patients.
+ *
+ * The delinquency timeline above is the grace period, and this list is written
+ * from it rather than from a second opinion about how long is fair: a payment
+ * that fails buys the pharmacy until day 20 (PRO_DELINQUENCY_DAYS.DOWNGRADE) to
+ * fix it, passing through PAST_DUE, EXPANSION_BLOCKED and
+ * PAID_FEATURES_RESTRICTED on the way. Paid *features* switch off at day 14;
+ * being findable by a patient does not, because a pharmacy that is still
+ * expected to pay is still expected to be trading.
+ *
+ * At day 20 `advanceDelinquency` moves the subscription to CANCELED, which is
+ * absent here — that is the point at which commercial eligibility ends.
+ * ELIGIBILITY_RESTRICTED is absent too: verification has lapsed, and no amount
+ * of paying restores a pharmacy whose authority to dispense is in question.
+ */
+export const VISIBILITY_ENTITLING_STATES: readonly SubscriptionState[] = [
+  SubscriptionState.ACTIVE,
+  SubscriptionState.PAST_DUE,
+  SubscriptionState.EXPANSION_BLOCKED,
+  SubscriptionState.PAID_FEATURES_RESTRICTED,
+];
+
+/**
+ * Classifications that carry patient visibility without a self-serve
+ * subscription row behind them.
+ *
+ * An Order Form is invoiced by Finance rather than collected through the
+ * provider (S-N1), and a pilot is deliberately non-billable — neither should be
+ * hidden for failing to hold a Stripe subscription they were never meant to
+ * have. Everything else must earn visibility from a live trial or a paid term.
+ */
+export const COMMERCIALLY_AUTHORISED_CLASSIFICATIONS: readonly CommercialClassification[] = [
+  CommercialClassification.ENTERPRISE_CONTRACT_ACTIVE,
+  CommercialClassification.PILOT_NON_BILLABLE,
+];
+
+/**
+ * Does this one subscription, right now, entitle its locations to be shown?
+ *
+ * An evaluation is judged on its own end date, never on the classification
+ * string. The classification is written by a background job, so between the
+ * trial lapsing and that job running there is a window in which the pharmacy
+ * still reads PRO_EVALUATION; trusting the string there would hand out free
+ * visibility for as long as the scheduler happened to be down. The dates are
+ * the fact; the classification is a cache of it.
+ */
+export function subscriptionEntitlesVisibility(
+  subscription: { state: SubscriptionState; evaluationEndsAt: Date | null },
+  now: Date = new Date(),
+): boolean {
+  if (subscription.state === SubscriptionState.EVALUATION) {
+    return subscription.evaluationEndsAt !== null && subscription.evaluationEndsAt > now;
+  }
+  return VISIBILITY_ENTITLING_STATES.includes(subscription.state);
+}
+
+/**
+ * Commercial eligibility for patient visibility, answered from state the
+ * platform owns rather than from anything a browser said.
+ *
+ * Deliberately NOT sufficient on its own: `isPatientVisible` requires this AND
+ * verification AND participation AND an operator account. Paying must never buy
+ * a pharmacy past a safety gate.
+ */
+export function isCommerciallyEligibleForVisibility(input: {
+  commercialClassification: CommercialClassification;
+  subscriptions: readonly { state: SubscriptionState; evaluationEndsAt: Date | null }[];
+  now?: Date;
+}): boolean {
+  if (COMMERCIALLY_AUTHORISED_CLASSIFICATIONS.includes(input.commercialClassification)) {
+    return true;
+  }
+  const now = input.now ?? new Date();
+  return input.subscriptions.some((s) => subscriptionEntitlesVisibility(s, now));
+}
+
+/**
+ * End of a billing period that starts at `start`.
+ *
+ * Here rather than private to a service because two different paths create paid
+ * terms — an administrator converting a location, and the provider webhook
+ * reconciling a self-serve checkout — and a subscription whose renewal date
+ * depends on which path created it is a subscription nobody can explain.
+ */
+export function billingPeriodEnd(start: Date, interval: BillingInterval): Date {
+  const end = new Date(start);
+  if (interval === BillingInterval.YEAR) end.setFullYear(end.getFullYear() + 1);
+  else end.setMonth(end.getMonth() + 1);
+  return end;
+}
+
+/**
+ * May this pharmacy operate at all, regardless of what it has paid (S-B4)?
+ *
+ * Eligibility and entitlement are different questions and are answered
+ * separately: a paid pharmacy with lapsed credentials is entitled to Pro and
+ * simultaneously not permitted to use it. Lifted here from EntitlementService,
+ * unchanged, because two callers now need the same answer — the entitlement
+ * resolver, and the sweep that stops billing a pharmacy whose authority to
+ * dispense is in question. A second copy would drift, and the direction of
+ * drift is "kept charging someone we had already switched off".
+ */
+export function operatingEligibility(
+  verificationStatus: VerificationStatus,
+  classification: CommercialClassification,
+): { eligible: boolean; reason?: string } {
+  if (classification === CommercialClassification.SUSPENDED_COMPLIANCE) {
+    return { eligible: false, reason: 'Pharmacy is suspended pending compliance review.' };
+  }
+  if (classification === CommercialClassification.CLOSED) {
+    return { eligible: false, reason: 'Pharmacy is closed.' };
+  }
+  if (classification === CommercialClassification.REJECTED) {
+    return { eligible: false, reason: 'Pharmacy verification was rejected.' };
+  }
+  if (verificationStatus === VerificationStatus.SUSPENDED) {
+    return { eligible: false, reason: 'Pharmacy verification is suspended.' };
+  }
+  if (verificationStatus !== VerificationStatus.VERIFIED) {
+    return { eligible: false, reason: 'Pharmacy verification is not approved.' };
+  }
+  return { eligible: true };
+}
+
+/**
+ * Subscription states from which the provider can still raise another charge.
+ *
+ * EVALUATION is absent because a trial has no charge to prevent; CANCELED and
+ * ELIGIBILITY_RESTRICTED are absent because the renewal has already been
+ * stopped. This is the search space for the S-B4 sweep, and keeping it narrow
+ * is what stops that sweep walking the whole subscription history every hour.
+ */
+export const RENEWABLE_STATES: readonly SubscriptionState[] = [
+  SubscriptionState.ACTIVE,
+  SubscriptionState.PAST_DUE,
+  SubscriptionState.EXPANSION_BLOCKED,
+  SubscriptionState.PAID_FEATURES_RESTRICTED,
+];

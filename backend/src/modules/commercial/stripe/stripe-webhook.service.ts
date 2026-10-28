@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   BillingChannel,
+  BillingInterval,
   CommercialClassification,
   CommercialOffer,
   type Invoice,
@@ -17,6 +18,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../../admin/audit.writer';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { SubscriptionService } from '../subscription.service';
+import { billingPeriodEnd } from '../commercial.doctrine';
 import { StripeConfig } from './stripe.config';
 import { offerProductName } from './stripe.service';
 
@@ -355,6 +357,20 @@ export class StripeWebhookService {
     if (existing) return { reconciled: true, reason: 'already' };
 
     const now = new Date();
+
+    // The term this was sold on, so the renewal date is recorded rather than
+    // left null. Without it the pharmacy's billing page showed an active plan
+    // with no next-payment date, and nothing downstream could tell when the
+    // period ended. Defaults to monthly, which is what self-serve checkout
+    // sells (see pharmacy-checkout.controller).
+    const price = priceCatalogEntryId
+      ? await this.prisma.priceCatalogEntry.findUnique({
+          where: { id: priceCatalogEntryId },
+          select: { interval: true },
+        })
+      : null;
+    const interval = price?.interval ?? BillingInterval.MONTH;
+
     const created = await this.prisma.$transaction(async (tx) => {
       const sub = await tx.subscription.create({
         data: {
@@ -366,11 +382,22 @@ export class StripeWebhookService {
           // Obligation starts at confirmed payment; nothing earlier is billable.
           commercialEffectiveAt: now,
           currentPeriodStart: now,
+          currentPeriodEnd: billingPeriodEnd(now, interval),
           providerSubscriptionId,
           // Binds the subscription to the approved price it was sold at, so the
           // amount is explainable and an invoice can stamp its catalog version.
           priceCatalogEntryId,
         },
+      });
+
+      // Whatever covered this pharmacy before — an evaluation it is converting
+      // from, or a cancelled term it is replacing — stops covering it now. Left
+      // unreleased, the old link competed with this one for the answer to
+      // "which subscription governs this pharmacy", and the loser was the
+      // pharmacy that had just paid.
+      await tx.subscriptionLocation.updateMany({
+        where: { pharmacyId, releasedAt: null },
+        data: { releasedAt: now },
       });
 
       await tx.subscriptionLocation.create({
@@ -515,8 +542,11 @@ export class StripeWebhookService {
     const subId = await this.localSubscriptionId(inv);
     if (!subId) return;
 
-    // Enters the S-L1 recovery timeline. Network Core participation is untouched:
-    // a verified pharmacy is never evicted from the free network for non-payment.
+    // Enters the S-L1 recovery timeline. Nothing about the pharmacy's record
+    // changes here: the account, profile and inventory are untouched, and it
+    // stays in patient search for the whole 20-day window. Only if the timeline
+    // reaches CANCELED (day 20) does listing stop, and subscribing again
+    // restores it with no administrator step.
     await this.subscriptions.recordPaymentFailure(null, subId);
 
     await this.audit.write(null, 'commercial.stripe.payment_failed', 'Subscription', subId, {
@@ -597,10 +627,18 @@ export class StripeWebhookService {
     if (!local) return;
 
     // Downgrade, not removal: paid intelligence stops, free participation does not.
+    const canceledAt = new Date();
     await this.prisma.$transaction(async (tx) => {
       await tx.subscription.update({
         where: { id: local.id },
-        data: { state: SubscriptionState.CANCELED, canceledAt: new Date() },
+        data: { state: SubscriptionState.CANCELED, canceledAt },
+      });
+      // A cancelled subscription stops covering its locations. Leaving them
+      // unreleased left a dead row competing with a live one for the answer to
+      // "which subscription governs this pharmacy".
+      await tx.subscriptionLocation.updateMany({
+        where: { subscriptionId: local.id, releasedAt: null },
+        data: { releasedAt: canceledAt },
       });
       for (const loc of local.locations) {
         const pharmacy = await tx.pharmacy.findUnique({

@@ -130,6 +130,16 @@ export class MailService {
    * keeps the plain SPA URL. The app email also carries a web fallback link for
    * the reader who opens the message on a computer, where a custom scheme
    * does nothing.
+   *
+   * The web link of an app request is marked `client=app`, so a reset that
+   * ends up in the browser can hand the person back to the app afterwards. It
+   * ends up there more often than the button suggests: mail clients commonly
+   * drop links on a custom scheme, and when MOBILE_OAUTH_REDIRECT is not
+   * configured there is no app link at all and the web link is the only one.
+   * Without the mark the reset page had no way to know an app was waiting, and
+   * left the person signed out in their browser. The mark is a hint, not a
+   * credential: it only decides whether the success page offers to open the
+   * app, and the return link it builds carries no token.
    */
   async sendPasswordReset(params: {
     to: string;
@@ -138,7 +148,9 @@ export class MailService {
     client?: 'app';
   }): Promise<void> {
     const tokenQuery = `token=${encodeURIComponent(params.token)}`;
-    const webLink = `${this.appBaseUrl}/reset-password?${tokenQuery}`;
+    const webLink = `${this.appBaseUrl}/reset-password?${tokenQuery}${
+      params.client === 'app' ? '&client=app' : ''
+    }`;
     const appLink =
       params.client === 'app' ? mobileAppAuthLink(this.config, '/reset-password') : null;
     const link = appLink ? `${appLink}?${tokenQuery}` : webLink;
@@ -149,7 +161,7 @@ export class MailService {
       ${this.button(link, 'Reset password')}
       ${
         appLink
-          ? `<p class="muted">On a computer? <a href="${webLink}">Reset your password on the web</a> instead — the button above opens the ZoikoMeds app.</p>`
+          ? `<p class="muted">Button not opening the app, or on a computer? <a href="${webLink}">Reset your password in your browser</a> instead.</p>`
           : ''
       }
       <p class="muted">This link expires in 1 hour. If you didn't request a
@@ -160,7 +172,9 @@ export class MailService {
       subject: 'Reset your ZoikoMeds password',
       html: this.layout('Reset your password', body),
       text: `Reset your ZoikoMeds password: ${link}\n${
-        appLink ? `On a computer, use the web link instead: ${webLink}\n` : ''
+        appLink
+          ? `If that does not open the app, or you are on a computer, use this link instead: ${webLink}\n`
+          : ''
       }This link expires in 1 hour. If you didn't request it, ignore this email.`,
     });
   }

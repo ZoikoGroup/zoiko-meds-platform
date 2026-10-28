@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AvailabilityConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withLogoUrl } from '../pharmacy/logo/pharmacy-logo.service';
-import { PUBLIC_SIGNAL_WHERE, signalAgeMinutes } from './availability.visibility';
+import { publicSignalWhere, signalAgeMinutes } from './availability.visibility';
 
 /**
  * ZoikoAvail™ — availability confidence engine.
@@ -28,7 +28,7 @@ export class AvailabilityService {
     const signals = await this.prisma.availabilitySignal.findMany({
       where: {
         medicineId,
-        ...PUBLIC_SIGNAL_WHERE,
+        ...publicSignalWhere(),
       },
       select: {
         confidence: true,

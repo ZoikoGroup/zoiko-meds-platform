@@ -15,6 +15,8 @@ import { EntitlementService } from './entitlement.service';
 import { PriceCatalogService } from './price-catalog.service';
 import { SubscriptionService } from './subscription.service';
 import { UsageMeteringService } from './usage-metering.service';
+import { CommercialLifecycleScheduler } from './commercial-lifecycle.scheduler';
+import { InitialEvaluationService } from './initial-evaluation.service';
 
 /**
  * Commercial module — ZM-COM-BILL-001.
@@ -41,6 +43,12 @@ import { UsageMeteringService } from './usage-metering.service';
     SubscriptionService,
     UsageMeteringService,
     CapabilityService,
+    // Without this registered nothing advances commercial state: trials never
+    // expire and delinquency never moves. See the class comment.
+    CommercialLifecycleScheduler,
+    // Report and controlled backfill for pharmacies that joined the network
+    // before the initial trial was granted automatically.
+    InitialEvaluationService,
   ],
   exports: [
     PriceCatalogService,
@@ -53,6 +61,8 @@ import { UsageMeteringService } from './usage-metering.service';
     SubscriptionService,
     UsageMeteringService,
     CapabilityService,
+    CommercialLifecycleScheduler,
+    InitialEvaluationService,
   ],
 })
 export class CommercialModule {}

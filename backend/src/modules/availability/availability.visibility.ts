@@ -2,9 +2,14 @@ import {
   AvailabilityConfidence,
   CommercialClassification,
   Prisma,
+  SubscriptionState,
   UserRole,
   VerificationStatus,
 } from '@prisma/client';
+import {
+  COMMERCIALLY_AUTHORISED_CLASSIFICATIONS,
+  VISIBILITY_ENTITLING_STATES,
+} from '../commercial/commercial.doctrine';
 
 /**
  * ZoikoAvail™ — the single rule that decides which availability records a
@@ -82,7 +87,16 @@ export const ACTIVE_PHARMACY_MANAGER_WHERE: Prisma.PharmacyWhereInput = {
   users: { some: { isActive: true, role: { in: PHARMACY_OPERATOR_ROLES } } },
 };
 
-/** A pharmacy whose signals may be shown publicly. */
+/**
+ * The safety gates: everything about a pharmacy that is true regardless of what
+ * it pays.
+ *
+ * Kept as a plain constant, and kept separate from commercial eligibility on
+ * purpose. These clauses have no notion of "now" and never will, so they stay
+ * comparable, spreadable and testable on their own — and the separation makes
+ * the invariant in `publicPharmacyWhere` legible: paying is added to these, it
+ * never replaces one of them.
+ */
 export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
   // Not yet verified, rejected or suspended: not part of the verified network,
   // so it must never be presented as one.
@@ -105,7 +119,65 @@ export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
 };
 
 /**
- * The same rule as `PUBLIC_PHARMACY_WHERE`, asked of a row already in hand.
+ * Commercial eligibility, as a query clause.
+ *
+ * A function rather than a constant because it compares against `now`: a trial
+ * is live until its own end date, and a constant captured at module load would
+ * freeze that comparison at process start. The dates are asked of the database
+ * on every query, so a trial that lapses one second ago stops being visible on
+ * the next search — not when a background job next happens to run.
+ *
+ * The classification is deliberately NOT consulted for evaluations here. It is
+ * written by `expireEvaluations`, so between a trial lapsing and that job
+ * running the pharmacy still reads PRO_EVALUATION; trusting the string would
+ * grant free visibility for as long as the scheduler was behind or down.
+ */
+export function commerciallyEligibleWhere(now: Date = new Date()): Prisma.PharmacyWhereInput {
+  return {
+    OR: [
+      // Invoiced outside the provider, or deliberately non-billable: no
+      // self-serve subscription row is expected to exist. See
+      // COMMERCIALLY_AUTHORISED_CLASSIFICATIONS.
+      { commercialClassification: { in: [...COMMERCIALLY_AUTHORISED_CLASSIFICATIONS] } },
+      // A live trial, or a paid term that has not yet run out of grace.
+      {
+        subscriptionLocations: {
+          some: {
+            releasedAt: null,
+            subscription: {
+              OR: [
+                { state: SubscriptionState.EVALUATION, evaluationEndsAt: { gt: now } },
+                { state: { in: [...VISIBILITY_ENTITLING_STATES] } },
+              ],
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * The whole rule: a pharmacy whose signals may be shown publicly.
+ *
+ * Safety AND commerce, in that order and both required. Payment is additive —
+ * it can never satisfy verification, participation, a claimed classification or
+ * an operator account, so a paying pharmacy whose licence lapses disappears
+ * exactly as an unpaid one does.
+ */
+export function publicPharmacyWhere(now: Date = new Date()): Prisma.PharmacyWhereInput {
+  // The commercial clause is an OR, and object spread keeps only one key of a
+  // name: spread at the top level, a caller adding its own `OR` beside this —
+  // `{ ...publicPharmacyWhere(), OR: [...] }` — would silently replace it and
+  // list every unpaid pharmacy. Inside `AND` it cannot collide with a caller's
+  // OR. The safety clauses stay flat so they remain readable and comparable.
+  // A caller that needs its own AND should compose rather than spread:
+  // `{ AND: [publicPharmacyWhere(), extra] }`.
+  return { ...PUBLIC_PHARMACY_WHERE, AND: [commerciallyEligibleWhere(now)] };
+}
+
+/**
+ * The same rule as `publicPharmacyWhere`, asked of a row already in hand.
  *
  * The where-clause decides which pharmacies a patient query returns. This
  * answers whether one particular pharmacy is among them — which is what the
@@ -114,8 +186,8 @@ export const PUBLIC_PHARMACY_WHERE: Prisma.PharmacyWhereInput = {
  * and the failure is silent and in the worst direction: a portal cheerfully
  * reporting "visible to users" about a pharmacy no search returns.
  *
- * Built from the same constant, not a second copy of the list, so a
- * classification added to or removed from the allowlist moves both at once.
+ * Built from the same constants, not a second copy of the lists, so a
+ * classification added to or removed from either allowlist moves both at once.
  */
 export function isPatientVisible(pharmacy: {
   verificationStatus: VerificationStatus;
@@ -130,18 +202,30 @@ export function isPatientVisible(pharmacy: {
    * mistake silent, so the type asks the question out loud.
    */
   hasActiveManager: boolean;
+  /**
+   * Whether a live trial, a paid term still within its grace period, or an
+   * authorised enterprise/pilot standing covers this pharmacy right now.
+   *
+   * Required for the same reason as `hasActiveManager`, and the newer of the
+   * two mistakes: a caller that omits it is a caller that tells an unpaid
+   * pharmacy patients can find it. Compute it with
+   * `isCommerciallyEligibleForVisibility`, from subscription rows — never from
+   * the classification string alone, and never from anything the browser said.
+   */
+  commerciallyEligible: boolean;
 }): boolean {
   return (
     pharmacy.verificationStatus === VerificationStatus.VERIFIED &&
     pharmacy.isParticipating === true &&
     PATIENT_VISIBLE_CLASSIFICATIONS.includes(pharmacy.commercialClassification) &&
-    pharmacy.hasActiveManager === true
+    pharmacy.hasActiveManager === true &&
+    pharmacy.commerciallyEligible === true
   );
 }
 
 /**
  * A signal that may be shown publicly, for queries already scoped to a public
- * pharmacy (e.g. an include on a Pharmacy row that PUBLIC_PHARMACY_WHERE
+ * pharmacy (e.g. an include on a Pharmacy row that publicPharmacyWhere
  * selected).
  */
 export const VISIBLE_SIGNAL_WHERE: Prisma.AvailabilitySignalWhereInput = {
@@ -150,19 +234,17 @@ export const VISIBLE_SIGNAL_WHERE: Prisma.AvailabilitySignalWhereInput = {
 };
 
 /** A signal that may be shown publicly, pharmacy standing included. */
-export const PUBLIC_SIGNAL_WHERE: Prisma.AvailabilitySignalWhereInput = {
-  ...VISIBLE_SIGNAL_WHERE,
-  pharmacy: PUBLIC_PHARMACY_WHERE,
-};
+export function publicSignalWhere(now: Date = new Date()): Prisma.AvailabilitySignalWhereInput {
+  return { ...VISIBLE_SIGNAL_WHERE, pharmacy: publicPharmacyWhere(now) };
+}
 
 /**
  * Publicly visible signals with their pharmacy, for `include` on a
  * MedicineEntity or SavedMedicine query.
  */
-export const PUBLIC_SIGNALS_INCLUDE = {
-  where: PUBLIC_SIGNAL_WHERE,
-  include: { pharmacy: true },
-};
+export function publicSignalsInclude(now: Date = new Date()) {
+  return { where: publicSignalWhere(now), include: { pharmacy: true } };
+}
 
 /**
  * Age of a signal in minutes.

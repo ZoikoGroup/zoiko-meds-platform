@@ -39,10 +39,25 @@ const PHARMACY = {
   updatedAt: new Date('2026-01-01T00:00:00Z'),
   jurisdiction: { code: 'IN', name: 'India' },
   users: [{ id: 'user_manager' }],
+  // Covered by an active plan. This suite is about the verification, location
+  // and operator gates; a fixture with no plan would fail all of them for a
+  // billing reason none of these tests is about.
+  subscriptionLocations: [{ subscription: { state: 'ACTIVE', evaluationEndsAt: null } }],
 };
 
 function buildService(row: Record<string, any>) {
   const prisma: any = {
+    // Covered by an active plan, so these specs keep testing the gate
+    // they are about rather than the billing one. See commercial-visibility.spec.ts
+    // for the tests that exercise this gate directly.
+    subscriptionLocation: {
+    findMany: jest.fn().mockResolvedValue([
+    { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+    ]),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    create: jest.fn().mockResolvedValue({}),
+    upsert: jest.fn().mockResolvedValue({}),
+    },
     pharmacy: {
       findUnique: jest.fn().mockResolvedValue(row),
       findFirst: jest.fn().mockResolvedValue(row),

@@ -13,8 +13,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
-  PUBLIC_PHARMACY_WHERE,
-  PUBLIC_SIGNALS_INCLUDE,
+  publicPharmacyWhere,
+  publicSignalsInclude,
   VISIBLE_SIGNAL_WHERE,
 } from '../availability/availability.visibility';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
@@ -89,7 +89,7 @@ export class MeService {
 
     const medicines = await this.prisma.medicineEntity.findMany({
       where,
-      include: { availabilitySignals: PUBLIC_SIGNALS_INCLUDE },
+      include: { availabilitySignals: publicSignalsInclude() },
       take: 50,
     });
 
@@ -200,7 +200,7 @@ export class MeService {
       orderBy: { createdAt: 'desc' },
       include: {
         medicine: {
-          include: { availabilitySignals: PUBLIC_SIGNALS_INCLUDE },
+          include: { availabilitySignals: publicSignalsInclude() },
         },
       },
     });
@@ -422,8 +422,12 @@ export class MeService {
       await Promise.all([
         this.prisma.savedMedicine.count({ where: { userId } }),
         this.prisma.searchHistory.count({ where: { userId } }),
+        // The pharmacies this patient could actually be shown — the same rule
+        // as search. A bare VERIFIED count included pharmacies that are not
+        // located, not claimed, not operated or not covered by a plan, so the
+        // dashboard promised more pharmacies than any search could return.
         this.prisma.pharmacy.count({
-          where: { verificationStatus: 'VERIFIED' },
+          where: publicPharmacyWhere(),
         }),
         this.prisma.alertPreference.findUnique({ where: { userId } }),
         this.prisma.searchHistory.findMany({
@@ -433,7 +437,7 @@ export class MeService {
         }),
         this.prisma.medicineEntity.findMany({
           where: { isSuppressed: false },
-          include: { availabilitySignals: PUBLIC_SIGNALS_INCLUDE },
+          include: { availabilitySignals: publicSignalsInclude() },
           take: 20,
         }),
       ]);
@@ -512,7 +516,7 @@ export class MeService {
         // neither is one nobody has claimed, or one no pharmacy account is
         // linked to any more. The clauses live in the shared object rather
         // than being listed here, so this query cannot fall behind them.
-        ...PUBLIC_PHARMACY_WHERE,
+        ...publicPharmacyWhere(),
         ...(forMedicine
           ? {
               availabilitySignals: {

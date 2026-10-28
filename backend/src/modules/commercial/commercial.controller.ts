@@ -40,6 +40,9 @@ import {
 } from './dto/commercial-billing.dto';
 import { GrantCapabilityDto } from './dto/grant-capability.dto';
 import { ActivateProDto } from './dto/activate-pro.dto';
+import { EvaluationBackfillDto } from './dto/evaluation-backfill.dto';
+import { InitialEvaluationService } from './initial-evaluation.service';
+import { ClientIp } from '../../common/decorators/client-ip.decorator';
 
 /**
  * Commercial administration.
@@ -65,6 +68,7 @@ export class CommercialController {
     private readonly tax: TaxService,
     private readonly invoices: InvoiceService,
     private readonly stripe: StripeService,
+    private readonly initialEvaluations: InitialEvaluationService,
   ) {}
 
   // --- Payment provider status --------------------------------------------
@@ -348,6 +352,41 @@ export class CommercialController {
   ) {
     await this.capabilities.require(user.id, BillingCapability.CHANGE_PLAN);
     return this.subscriptions.startEvaluation(user.id, body);
+  }
+
+  @Get('evaluations/remediation')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Report verified pharmacies by commercial standing and patient visibility',
+    description:
+      'Read-only. Counts verified pharmacies by classification and trial/subscription standing, how many are listed ' +
+      'before and after commercial eligibility, and which would receive an initial trial from the backfill.',
+  })
+  async evaluationRemediation(@CurrentUser() user: AuthenticatedUser) {
+    await this.capabilities.require(user.id, BillingCapability.VIEW_PLAN_AND_USAGE);
+    return this.initialEvaluations.remediationReport();
+  }
+
+  @Post('evaluations/backfill')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Grant the initial trial to network pharmacies that never received one',
+    description:
+      'A dry run unless dryRun is false. Grants only to verified, listable Network Core pharmacies that have never ' +
+      'held an Intelligence Pro subscription; never restarts or extends a trial. Idempotent.',
+  })
+  async evaluationBackfill(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: EvaluationBackfillDto,
+    @ClientIp() ipAddress: string,
+  ) {
+    await this.capabilities.require(user.id, BillingCapability.CHANGE_PLAN);
+    return this.initialEvaluations.backfill({
+      actorId: user.id,
+      dryRun: dto.dryRun,
+      limit: dto.limit,
+      ipAddress,
+    });
   }
 
   @Post('subscriptions/pro')

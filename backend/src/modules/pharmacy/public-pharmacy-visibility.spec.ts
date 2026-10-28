@@ -7,7 +7,7 @@ import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.serv
 import { NotificationPreferencesService } from './notification-preferences.service';
 import { PharmacyNotificationService } from './notifications/pharmacy-notification.service';
 import { PharmacyService } from './pharmacy.service';
-import { PUBLIC_PHARMACY_WHERE } from '../availability/availability.visibility';
+import { publicPharmacyWhere } from '../availability/availability.visibility';
 
 /**
  * The two public pharmacy routes.
@@ -112,6 +112,17 @@ function buildService(rows: Array<Record<string, any>>) {
   };
 
   const prisma: any = {
+    // Covered by an active plan, so these specs keep testing the gate
+    // they are about rather than the billing one. See commercial-visibility.spec.ts
+    // for the tests that exercise this gate directly.
+    subscriptionLocation: {
+    findMany: jest.fn().mockResolvedValue([
+    { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+    ]),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    create: jest.fn().mockResolvedValue({}),
+    upsert: jest.fn().mockResolvedValue({}),
+    },
     pharmacy: {
       // `select` is honoured so the projection can be asserted: the real query
       // narrows the columns, and a stub returning whole rows would report a
@@ -178,7 +189,15 @@ describe('GET /pharmacies — the public list', () => {
 
     await service.listVerified();
 
-    expect(prisma.pharmacy.findMany.mock.calls[0][0].where).toEqual(PUBLIC_PHARMACY_WHERE);
+    // Normalised on the one value two builds of the rule legitimately differ
+    // on — the instant it was built, which the live-trial clause carries.
+    const sameRule = (v: unknown) =>
+      JSON.parse(JSON.stringify(v ?? null), (k: string, x: unknown) =>
+        k === 'gt' ? '<built-at>' : x,
+      );
+    expect(sameRule(prisma.pharmacy.findMany.mock.calls[0][0].where)).toEqual(
+      sameRule(publicPharmacyWhere()),
+    );
   });
 
   it('exposes no internal standing on the rows it does return', async () => {

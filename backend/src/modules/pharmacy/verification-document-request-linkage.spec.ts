@@ -83,6 +83,17 @@ function buildService({
   };
 
   const prisma: any = {
+    // Covered by an active plan, so these specs keep testing the gate
+    // they are about rather than the billing one. See commercial-visibility.spec.ts
+    // for the tests that exercise this gate directly.
+    subscriptionLocation: {
+    findMany: jest.fn().mockResolvedValue([
+    { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+    ]),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    create: jest.fn().mockResolvedValue({}),
+    upsert: jest.fn().mockResolvedValue({}),
+    },
     pharmacy: {
       findUnique: jest.fn().mockResolvedValue(pharmacy),
       findMany: jest.fn().mockResolvedValue([]),

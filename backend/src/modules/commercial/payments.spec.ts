@@ -144,6 +144,9 @@ describe('StripeWebhookService — a duplicate delivery never charges twice (S-1
       },
       invoice: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
       subscription: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+      // Cancellation releases the locations the subscription covered, so a dead
+      // term stops competing with a live one.
+      subscriptionLocation: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
       pharmacy: { findUnique: jest.fn(), update: jest.fn() },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
@@ -614,7 +617,12 @@ describe('StripeWebhookService.reconcileCheckoutSession — the webhook is not t
         create: jest.fn().mockResolvedValue({ id: 'sub_local' }),
         update: jest.fn(),
       },
-      subscriptionLocation: { create: jest.fn().mockResolvedValue({}) },
+      subscriptionLocation: {
+        create: jest.fn().mockResolvedValue({}),
+        // Activation releases whatever covered the pharmacy before, so an
+        // ended evaluation cannot keep competing with the paid term.
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       pharmacy: { update: jest.fn().mockResolvedValue({}) },
       invoice: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
       // Read only by the COM-001 confirmation, which merges the organization

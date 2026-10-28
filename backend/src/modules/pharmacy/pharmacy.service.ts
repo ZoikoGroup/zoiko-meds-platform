@@ -53,7 +53,9 @@ import {
   PharmacyNotificationService,
 } from './notifications/pharmacy-notification.service';
 import { AcceptedDocument, readVerificationDocument } from './verification-document';
-import { PUBLIC_PHARMACY_WHERE } from '../availability/availability.visibility';
+import { publicPharmacyWhere } from '../availability/availability.visibility';
+import { loadCommercialEligibility } from '../commercial/commercial-eligibility';
+import { grantInitialEvaluation } from '../commercial/initial-evaluation';
 import {
   PROMOTION_REASONS,
   promoteClaimedByReporting,
@@ -279,7 +281,7 @@ export class PharmacyService {
       // had claimed was listed on this public route while /me/search and
       // /availability correctly hid it — the same inconsistency MSA-54 closed
       // everywhere else, left open here because this query predates the rule.
-      where: PUBLIC_PHARMACY_WHERE,
+      where: publicPharmacyWhere(),
       select: {
         id: true,
         name: true,
@@ -314,7 +316,7 @@ export class PharmacyService {
    */
   async findById(id: string) {
     const pharmacy = await this.prisma.pharmacy.findFirst({
-      where: { id, ...PUBLIC_PHARMACY_WHERE },
+      where: { id, ...publicPharmacyWhere() },
     });
     // Returning null here would serialize as a 200 with an empty body, which
     // clients cannot distinguish from a successful fetch — surface a 404.
@@ -351,7 +353,21 @@ export class PharmacyService {
         role: { in: PHARMACY_OPERATOR_ROLES },
       },
     });
-    const visibility = { ...pharmacy, hasActiveManager: activeManagers > 0 };
+    // The other half of the same question. Verification and an operator say
+    // the pharmacy may be listed; this says whether its plan still pays for
+    // the listing. Read from subscription rows, so a trial that lapsed a
+    // second ago is already reflected here and the operator is told the
+    // truth before any background job has run.
+    const commerciallyEligible = await loadCommercialEligibility(
+      this.prisma,
+      pharmacyId,
+      pharmacy.commercialClassification,
+    );
+    const visibility = {
+      ...pharmacy,
+      hasActiveManager: activeManagers > 0,
+      commerciallyEligible,
+    };
 
     const latestReq = await this.prisma.verificationRequest.findFirst({
       where: { pharmacyId },
@@ -1266,6 +1282,7 @@ export class PharmacyService {
         classification: CommercialClassification.DIRECTORY_UNCLAIMED,
         participatesInNetworkCore: false,
         canSeeFinancialDetail: false,
+        commerciallyEligible: false,
         plan: null,
         invoices: [],
       };
@@ -1335,6 +1352,18 @@ export class PharmacyService {
       invoices = rows;
     }
 
+    // Whether a trial or paid term currently covers this pharmacy, decided here
+    // rather than inferred by the page from the plan state. The billing screen
+    // has to tell an operator whether patients can find them, and a client that
+    // works that out from `plan.state` would be a second copy of the rule —
+    // drifting silently, in the direction of telling an unpaid pharmacy it is
+    // listed.
+    const commerciallyEligible = await loadCommercialEligibility(
+      this.prisma,
+      pharmacyId,
+      pharmacy?.commercialClassification ?? CommercialClassification.DIRECTORY_UNCLAIMED,
+    );
+
     return {
       linked: true,
       pharmacyName: pharmacy?.name ?? null,
@@ -1342,6 +1371,7 @@ export class PharmacyService {
         pharmacy?.commercialClassification ?? CommercialClassification.DIRECTORY_UNCLAIMED,
       participatesInNetworkCore: true,
       canSeeFinancialDetail,
+      commerciallyEligible,
       plan,
       invoices,
     };
@@ -1941,11 +1971,21 @@ export class PharmacyService {
     ipAddress?: string,
     reason: string = PROMOTION_REASONS.REPORTED,
   ): Promise<boolean> {
-    return promoteClaimedByReporting(this.prisma, this.auditWriter, pharmacyId, {
+    const promoted = await promoteClaimedByReporting(this.prisma, this.auditWriter, pharmacyId, {
       actorId,
       ipAddress,
       reason,
     });
+    // Joining the network is when the 30-day trial starts. See
+    // initial-evaluation.ts; it never throws, so this write cannot fail on it.
+    if (promoted) {
+      await grantInitialEvaluation(this.prisma, this.auditWriter, pharmacyId, {
+        trigger: 'network-join',
+        actorId,
+        ipAddress,
+      });
+    }
+    return promoted;
   }
 
   async addInventoryItem(

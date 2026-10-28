@@ -9,6 +9,10 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { IS_NATIVE } from '@/lib/platform'
+import { pickPrescriptionImage } from '@/lib/native'
+import { reverseGeocode } from '@/lib/geocode'
+import { LOCATION_NAME_UNAVAILABLE, describeLocationFailure, getCurrentLocation } from '@/lib/current-location'
 
 const LOC_KEY = 'zoiko-user-loc'
 const MAX_BYTES = 10 * 1024 * 1024
@@ -54,8 +58,24 @@ function isAcceptedFile(file) {
  *                          changes, so the page can keep the medicines
  *                          selectable after the user moves to the search view.
  *                          Must be referentially stable (useCallback).
+ * @param location          optional; with onLocationChange, the page's own
+ *                          location, which is the one its search reads. The
+ *                          panel then shows and edits that instead of keeping
+ *                          a copy the search never sees.
+ * @param onLocationChange  called with typed text, when the page owns location.
+ * @param onUseMyLocation   called for "Use my current location", when the page
+ *                          owns location, so the coordinates reach its search.
+ * @param locating          whether the page is finding the location.
  */
-export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
+export function ScanPrescription({
+  onSearchMedicine,
+  onDetected,
+  flash,
+  location: pageLocation,
+  onLocationChange,
+  onUseMyLocation,
+  locating: pageLocating,
+}) {
   const { t } = useLanguage()
   const fileInput = useRef(null)
   const cameraInput = useRef(null)
@@ -161,6 +181,42 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     handleFiles(e.dataTransfer.files)
   }
 
+  /**
+   * Camera and gallery in the Android app. They go through the camera plugin
+   * because the app's WebView sends every file input to the file manager — see
+   * pickPrescriptionImage. Whatever comes back joins the same handleFiles path
+   * as a browsed file, so validation, upload and reading are unchanged.
+   *
+   * Only ever called in the app. On the web the buttons click their inputs
+   * directly and synchronously: Safari opens a file dialog only from inside the
+   * click itself, and an await in between would silently stop it opening.
+   */
+  const pickFromDevice = async (source, fallbackInput) => {
+    let outcome
+    try {
+      outcome = await pickPrescriptionImage(source)
+    } catch (err) {
+      // A permission refused, no camera, or a camera that failed. Said once, in
+      // the same place as a rejected file, and never answered with the file
+      // manager instead.
+      flash?.(
+        t(
+          err?.messageKey ?? (source === 'camera' ? 'cameraFailed' : 'galleryFailed'),
+          err?.fallback ??
+            (source === 'camera'
+              ? 'The camera could not take the photo. Please try again.'
+              : 'The photo could not be opened. Please try again.'),
+        ),
+      )
+      return
+    }
+    if (outcome.kind === 'file') handleFiles([outcome.file])
+    // The app was built without the camera plugin: keep the old behaviour
+    // rather than leave the button doing nothing.
+    else if (outcome.kind === 'unavailable') fallbackInput.current?.click()
+    // 'cancelled': the person closed the camera or the picker. Nothing to say.
+  }
+
   const reset = () => {
     setStatus('idle')
     setFileName('')
@@ -195,25 +251,39 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
     if (value) localStorage.setItem(LOC_KEY, value)
   }
 
-  const useCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      flash?.('Location is not supported on this device.')
+  // Used only when no page owns the location (the panel on its own). Inside the
+  // search page, onUseMyLocation does this, so the coordinates reach the search.
+  //
+  // This used to discard the position it was given and store the words
+  // "Current location", which no search can use; and it answered every failure
+  // with "Could not access your location", whatever the cause.
+  const findCurrentLocation = async () => {
+    setLocating(true)
+    let position
+    try {
+      position = await getCurrentLocation()
+    } catch (err) {
+      const failure = describeLocationFailure(err)
+      setLocating(false)
+      flash?.(t(failure.key, failure.fallback))
       return
     }
-    setLocating(true)
-    navigator.geolocation.getCurrentPosition(
-      () => {
-        setLocating(false)
-        persistLocation('Current location')
-        flash?.('Using your current location.')
-      },
-      () => {
-        setLocating(false)
-        flash?.('Could not access your location. Enter it manually.')
-      },
-      { timeout: 8000 },
-    )
+    persistLocation(`${position.lat.toFixed(4)}, ${position.lng.toFixed(4)}`)
+    flash?.(t('usingCurrentLocation', 'Using your current location'))
+    const label = await reverseGeocode(position.lat, position.lng)
+    setLocating(false)
+    if (label) persistLocation(label)
+    else flash?.(t(LOCATION_NAME_UNAVAILABLE.key, LOCATION_NAME_UNAVAILABLE.fallback))
   }
+
+  // The page's location when it owns one, otherwise the panel's own.
+  const ownsLocation = typeof onLocationChange === 'function'
+  const shownLocation = ownsLocation ? (pageLocation ?? '') : location
+  const changeShownLocation = ownsLocation ? onLocationChange : persistLocation
+  const findingLocation = onUseMyLocation ? Boolean(pageLocating) : locating
+  const handleUseMyCurrentLocation = onUseMyLocation
+    ? () => onUseMyLocation({ announce: true })
+    : findCurrentLocation
 
   const busy = status === 'preparing' || status === 'reading' || status === 'matching'
   const statusLabel =
@@ -547,11 +617,21 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
             {/* or — camera / gallery */}
             <div className="my-4 text-center text-sm text-muted-foreground">{t('or', 'or')}</div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Button variant="outline" size="lg" className="h-12" onClick={() => cameraInput.current?.click()}>
+              <Button
+                variant="outline"
+                size="lg"
+                className="h-12"
+                onClick={() => (IS_NATIVE ? pickFromDevice('camera', cameraInput) : cameraInput.current?.click())}
+              >
                 <Camera className="size-4" />
                 {t('takePhoto', 'Take a photo')}
               </Button>
-              <Button variant="outline" size="lg" className="h-12" onClick={() => galleryInput.current?.click()}>
+              <Button
+                variant="outline"
+                size="lg"
+                className="h-12"
+                onClick={() => (IS_NATIVE ? pickFromDevice('gallery', galleryInput) : galleryInput.current?.click())}
+              >
                 <ImageIcon className="size-4" />
                 {t('fromGallery', 'From gallery')}
               </Button>
@@ -561,7 +641,13 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
       </AnimatePresence>
 
       {/* Hidden inputs. accept="image/jpeg,image/png" makes iOS transcode HEIC
-          captures to JPEG rather than handing us an undecodable file. */}
+          captures to JPEG rather than handing us an undecodable file.
+          In the Android app the camera and gallery buttons go through the
+          camera plugin instead (pickFromDevice), because Capacitor's WebView
+          opens the camera only for accept="image/*" and sends every other file
+          input to the file manager. The last two inputs are kept there only for
+          an app build made without the plugin. Changing the accept list here
+          would not fix the app, and would cost iOS its HEIC transcoding. */}
       <input ref={fileInput} type="file" accept={ACCEPT} className="hidden" onChange={(e) => handleFiles(e.target.files)} />
       <input ref={cameraInput} type="file" accept="image/jpeg,image/png" capture="environment" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
       <input ref={galleryInput} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
@@ -586,19 +672,19 @@ export function ScanPrescription({ onSearchMedicine, onDetected, flash }) {
           <MapPin className="pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             id="scan-location"
-            value={location}
-            onChange={(e) => persistLocation(e.target.value)}
+            value={shownLocation}
+            onChange={(e) => changeShownLocation(e.target.value)}
             placeholder={t('searchAreaPlaceholder', 'City, ZIP code, or postcode')}
             className="h-11 rounded-xl ps-10"
           />
         </div>
         <button
           type="button"
-          onClick={useCurrentLocation}
-          disabled={locating}
+          onClick={handleUseMyCurrentLocation}
+          disabled={findingLocation}
           className="flex w-fit items-center gap-1.5 text-sm font-semibold text-teal transition-colors hover:text-teal/80 disabled:opacity-60"
         >
-          {locating ? <Loader2 className="size-4 animate-spin" /> : <LocateFixed className="size-4" />}
+          {findingLocation ? <Loader2 className="size-4 animate-spin" /> : <LocateFixed className="size-4" />}
           {t('useMyCurrentLocation', 'Use my current location')}
         </button>
       </div>

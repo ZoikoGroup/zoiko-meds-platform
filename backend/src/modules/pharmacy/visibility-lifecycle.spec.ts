@@ -59,9 +59,19 @@ function buildWorld({
   pharmacy,
   signals = [],
   accounts,
+  commerciallyEligible = true,
 }: {
   pharmacy: Row;
   signals?: Row[];
+  /**
+   * Whether a live trial or paid term covers this pharmacy.
+   *
+   * Defaults to covered, because this suite is about verification, location
+   * and operator accounts — a fixture with no plan would fail every one of
+   * them for a billing reason the test was never written about. The commercial
+   * gate has its own tests in commercial-visibility.spec.ts.
+   */
+  commerciallyEligible?: boolean;
   /**
    * The accounts linked to this pharmacy.
    *
@@ -271,6 +281,7 @@ function buildWorld({
       isPatientVisible({
         ...(pharmacies.find((p) => p.id === pharmacy.id)! as any),
         hasActiveManager: hasActiveManager(pharmacy.id),
+        commerciallyEligible,
       }),
     signals: () => availabilitySignals.map((s) => ({ ...s })),
     /** Unlink every account from the pharmacy, the way a Super Admin can. */
