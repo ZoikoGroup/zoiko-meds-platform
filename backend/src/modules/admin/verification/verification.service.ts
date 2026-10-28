@@ -17,6 +17,7 @@ import {
   PROMOTION_REASONS,
   promoteClaimedByReporting,
 } from '../../pharmacy/classification-promotion';
+import { grantInitialEvaluation } from '../../commercial/initial-evaluation';
 import { CreateVerificationDto } from './dto/create-verification.dto';
 import { UpdateVerificationDto } from './dto/update-verification.dto';
 
@@ -361,11 +362,21 @@ export class VerificationService {
     // happens to touch inventory again. Every condition is in the write's own
     // `where`, so an ineligible record is untouched.
     if (dto.status === VerificationRequestStatus.APPROVED && result.req.pharmacyId) {
-      await promoteClaimedByReporting(this.prisma, this.audit, result.req.pharmacyId, {
-        actorId,
-        ipAddress,
-        reason: PROMOTION_REASONS.LISTABLE,
-      });
+      const promoted = await promoteClaimedByReporting(
+        this.prisma,
+        this.audit,
+        result.req.pharmacyId,
+        { actorId, ipAddress, reason: PROMOTION_REASONS.LISTABLE },
+      );
+      // Joining the network starts the 30-day trial (initial-evaluation.ts).
+      // A re-approval promotes nothing, so it grants nothing either.
+      if (promoted) {
+        await grantInitialEvaluation(this.prisma, this.audit, result.req.pharmacyId, {
+          trigger: 'network-join',
+          actorId,
+          ipAddress,
+        });
+      }
     }
 
     const firstTime = await this.firstTimePharmacyIds([result.req]);

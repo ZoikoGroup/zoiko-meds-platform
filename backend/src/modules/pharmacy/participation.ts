@@ -1,5 +1,8 @@
 import { CommercialClassification, VerificationStatus } from '@prisma/client';
-import { isPatientVisible } from '../availability/availability.visibility';
+import {
+  PATIENT_VISIBLE_CLASSIFICATIONS,
+  isPatientVisible,
+} from '../availability/availability.visibility';
 
 /**
  * Whether a pharmacy may be listed to patients.
@@ -80,6 +83,11 @@ export function patientListingBlockedReason(pharmacy: {
   isParticipating: boolean;
   commercialClassification: CommercialClassification;
   hasActiveManager: boolean;
+  /** A live trial, a paid term in grace, or an authorised enterprise/pilot
+   *  standing. Required here for the same reason isPatientVisible requires
+   *  it: this function's whole job is to tell an operator the truth about
+   *  whether patients can find them. */
+  commerciallyEligible: boolean;
   latitude: number | null;
   longitude: number | null;
 }): string | null {
@@ -114,7 +122,28 @@ export function patientListingBlockedReason(pharmacy: {
 
   // Approval says the pharmacy is real. It does not say anyone has taken
   // responsibility for what it reports, and patients are only shown pharmacies
-  // where someone has.
+  // where someone has. Asked before the plan below: a record still being
+  // claimed has no billing problem to report, and telling its operator to
+  // subscribe would be an instruction they cannot act on.
+  if (!PATIENT_VISIBLE_CLASSIFICATIONS.includes(pharmacy.commercialClassification)) {
+    return (
+      'Your licence is approved. Your pharmacy account is still being set up on ' +
+      'the ZoikoMeds network, so patient searches do not include it yet. The ' +
+      'ZoikoMeds team completes this step — there is nothing for you to do.'
+    );
+  }
+
+  // Everything about the pharmacy is in order; the plan that pays for its
+  // listing is not. The one gate on this list the operator clears themselves.
+  if (!pharmacy.commerciallyEligible) {
+    return (
+      'Your licence is approved, but your ZoikoMeds plan is not active, so ' +
+      'patient searches do not include your pharmacy. Your profile, inventory ' +
+      'and history are all kept — subscribe on the Billing page and your ' +
+      'pharmacy is listed again straight away.'
+    );
+  }
+
   return (
     'Your licence is approved. Your pharmacy account is still being set up on ' +
     'the ZoikoMeds network, so patient searches do not include it yet. The ' +
@@ -144,6 +173,9 @@ export function reviewerListingBlockedReason(pharmacy: {
   isParticipating: boolean;
   commercialClassification: CommercialClassification;
   hasActiveManager: boolean;
+  /** See patientListingBlockedReason: a reviewer must be told the same
+   *  truth about patient listing as the operator is. */
+  commerciallyEligible: boolean;
   latitude: number | null;
   longitude: number | null;
 }): string | null {
@@ -173,9 +205,22 @@ export function reviewerListingBlockedReason(pharmacy: {
     );
   }
 
+  // The claim question before the billing one: an unclaimed or still-pending
+  // record is not a pharmacy that forgot to pay, and reporting it as one sends
+  // the reviewer after the wrong thing.
+  if (!PATIENT_VISIBLE_CLASSIFICATIONS.includes(pharmacy.commercialClassification)) {
+    return (
+      'Verified, but not listed to patients: its commercial standing is ' +
+      `${pharmacy.commercialClassification}, which is not one patients are shown.`
+    );
+  }
+
+  // Everything else is in order and the plan is not. A billing matter, not a
+  // verification or claim problem the reviewer can clear.
   return (
-    'Verified, but not listed to patients: its commercial standing is ' +
-    `${pharmacy.commercialClassification}, which is not one patients are shown.`
+    'Verified, but not listed to patients: no active trial or paid ' +
+    'subscription covers this pharmacy. Its record and inventory are intact; ' +
+    'listing resumes when the pharmacy subscribes.'
   );
 }
 
@@ -206,6 +251,11 @@ export function pharmacyVisibilityState(pharmacy: {
   isParticipating: boolean;
   commercialClassification: CommercialClassification;
   hasActiveManager: boolean;
+  /** A live trial, a paid term in grace, or an authorised enterprise/pilot
+   *  standing. Required here for the same reason isPatientVisible requires
+   *  it: this function's whole job is to tell an operator the truth about
+   *  whether patients can find them. */
+  commerciallyEligible: boolean;
 }): PharmacyVisibilityState {
   switch (pharmacy.verificationStatus) {
     case VerificationStatus.VERIFIED:

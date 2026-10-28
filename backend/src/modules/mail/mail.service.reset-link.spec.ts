@@ -44,7 +44,10 @@ describe('sendPasswordReset — where the link opens', () => {
     expect(text).toContain('https://app.zoikomeds.com/reset-password?token=abc');
     expect(text).not.toContain('com.zoikomeds.app://');
     // No web fallback: the link already is the web.
-    expect(html).not.toContain('On a computer?');
+    expect(html).not.toContain('on a computer?');
+    // And no app mark: a reset asked for on the web stays on the web.
+    expect(html).not.toContain('client=app');
+    expect(text).not.toContain('client=app');
   });
 
   it('points at the app scheme when the reset was asked for in the app', async () => {
@@ -55,7 +58,33 @@ describe('sendPasswordReset — where the link opens', () => {
     // …and a computer-bound reader still gets the web link.
     expect(html).toContain('https://app.zoikomeds.com/reset-password?token=abc');
     expect(text).toContain('com.zoikomeds.app://auth/reset-password?token=abc');
-    expect(text).toContain('use the web link instead: https://app.zoikomeds.com/reset-password?token=abc');
+    expect(text).toContain('use this link instead: https://app.zoikomeds.com/reset-password?token=abc');
+  });
+
+  it('tells a phone reader the web link is for them too, when the button will not open', async () => {
+    // Mail clients often drop links on a custom scheme, leaving the button dead.
+    // The fallback used to say it was for computers, so a phone reader had no
+    // reason to think it applied to them.
+    const { html } = await sendPasswordReset(APP_SCHEME_ENV, { token: 'abc', client: 'app' });
+    expect(html).toContain('Button not opening the app, or on a computer?');
+  });
+
+  it('marks the web link of an app request, so the reset page can hand back to the app', async () => {
+    const { html, text } = await sendPasswordReset(APP_SCHEME_ENV, { token: 'abc', client: 'app' });
+    expect(html).toContain('href="https://app.zoikomeds.com/reset-password?token=abc&client=app"');
+    expect(text).toContain('https://app.zoikomeds.com/reset-password?token=abc&client=app');
+    // The app's own link is untouched: inside the app there is nothing to return to.
+    expect(html).toContain('href="com.zoikomeds.app://auth/reset-password?token=abc"');
+  });
+
+  it('marks the web link even when it is the only link, because the app is still waiting', async () => {
+    // MOBILE_OAUTH_REDIRECT missing: no app link at all, so this web link is
+    // what the person on the phone will tap, and the only way back is the mark.
+    const { html } = await sendPasswordReset({ APP_BASE_URL: APP_SCHEME_ENV.APP_BASE_URL }, {
+      token: 'abc',
+      client: 'app',
+    });
+    expect(html).toContain('/reset-password?token=abc&client=app');
   });
 
   it('falls back to the web link when the app flow is not configured', async () => {

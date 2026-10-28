@@ -57,7 +57,7 @@ export const CLASSIFICATION_META = {
   DIRECTORY_UNCLAIMED: { label: 'Directory (unclaimed)', variant: 'secondary', billable: false },
   CLAIMED_PENDING: { label: 'Claimed — authority pending', variant: 'warning', billable: false },
   VERIFICATION_IN_REVIEW: { label: 'Verification in review', variant: 'warning', billable: false },
-  VERIFIED_NETWORK_CORE: { label: 'Network Core (free)', variant: 'success', billable: false },
+  VERIFIED_NETWORK_CORE: { label: 'Network Core', variant: 'secondary', billable: false },
   PRO_EVALUATION: { label: 'Pro evaluation', variant: 'info', billable: false },
   PRO_ACTIVE: { label: 'Intelligence Pro', variant: 'default', billable: true },
   ENTERPRISE_CONTRACT_ACTIVE: { label: 'Enterprise contract', variant: 'default', billable: true },
@@ -183,7 +183,9 @@ export const DELINQUENCY_TIMELINE = [
   { day: 'Day 14', action: 'Pro exports and advanced paid actions restricted' },
   {
     day: 'Day 20',
-    action: 'Unpaid Pro downgrades to Network Core — the pharmacy stays in the free network',
+    action:
+      'Subscription cancelled — the pharmacy stops appearing in patient medicine ' +
+      'search until it subscribes again. Profile, inventory and history are kept.',
   },
 ]
 

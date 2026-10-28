@@ -1,6 +1,25 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { AvailabilityService } from './availability.service';
-import { PUBLIC_PHARMACY_WHERE, signalAgeMinutes } from './availability.visibility';
+import {
+  publicPharmacyWhere,
+  signalAgeMinutes,
+} from './availability.visibility';
+
+/**
+ * Two builds of the shared rule, compared.
+ *
+ * The rule now carries the instant it was built — a trial is live until its own
+ * end date, so the clause is `evaluationEndsAt > <now>` — and two calls a
+ * millisecond apart therefore differ in exactly one value and nowhere else.
+ * That single value is normalised away here; everything else still has to match
+ * exactly, which is the whole point of these tests. Identity (`toBe`) stopped
+ * being the right question once the rule became a function rather than a frozen
+ * object.
+ */
+const sameRule = (value: unknown) =>
+  JSON.parse(JSON.stringify(value ?? null), (key: string, v: unknown) =>
+    key === 'gt' ? '<built-at>' : v,
+  );
 
 /**
  * ZoikoAvail™ public availability lookup.
@@ -47,7 +66,7 @@ describe('AvailabilityService.getAvailability', () => {
 
     const [args] = prisma.availabilitySignal.findMany.mock.calls[0];
     expect(args.where.confidence).toEqual({ not: 'SUPPRESSED' });
-    expect(args.where.pharmacy).toEqual(PUBLIC_PHARMACY_WHERE);
+    expect(sameRule(args.where.pharmacy)).toEqual(sameRule(publicPharmacyWhere()));
     expect(args.where.pharmacy).toMatchObject({
       verificationStatus: 'VERIFIED',
       isParticipating: true,

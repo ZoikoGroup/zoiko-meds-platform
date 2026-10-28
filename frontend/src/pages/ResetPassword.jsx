@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { resetPasswordRequest } from '@/services/auth-api'
 import { useAuth } from '@/providers/auth-provider'
+import { IS_NATIVE, WEB_ORIGIN } from '@/lib/platform'
+import { appSignInAfterResetUrl, isAndroidBrowser } from '@/lib/app-return'
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams()
@@ -15,9 +17,17 @@ export default function ResetPassword() {
   const navigate = useNavigate()
   const { logout } = useAuth()
 
+  // A reset asked for in the app but being finished in a phone's browser — the
+  // email marks its web link `client=app` for exactly this. Here, and only
+  // here, success offers the way back to the app instead of this site's
+  // sign-in, which used to be where the person was left.
+  const returnToApp = !IS_NATIVE && searchParams.get('client') === 'app' && isAndroidBrowser()
+
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  // Its own toggle: revealing one field must not reveal the other.
+  const [showConfirm, setShowConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
@@ -40,7 +50,12 @@ export default function ResetPassword() {
       // against is gone, and a stale token would bounce us off /login.
       logout()
       setDone(true)
-      setTimeout(() => navigate('/login', { replace: true }), 2200)
+      // The way back to the app is a button, never a timer: a browser opens an
+      // app only from the person's own tap, and leaving this page on a timer
+      // would drop them on this site's sign-in — the bug. Everywhere else
+      // (inside the app, or a reset that began on the web) sign-in is next, now
+      // with a note that says why.
+      if (!returnToApp) setTimeout(() => navigate('/login?reset=success', { replace: true }), 2200)
     } catch (err) {
       setError(err.message || 'This link is invalid or has expired.')
     } finally {
@@ -62,9 +77,29 @@ export default function ResetPassword() {
                 <CheckCircle2 className="size-6" />
               </div>
               <h2 className="text-lg font-bold text-foreground">Password updated</h2>
-              <p className="text-sm text-muted-foreground">
-                Your password has been set. Redirecting you to sign in…
-              </p>
+              {returnToApp ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Your password has been set. Open the ZoikoMeds app and sign in with your new
+                    password.
+                  </p>
+                  <Button asChild variant="teal" className="mt-2 w-full">
+                    <a href={appSignInAfterResetUrl(WEB_ORIGIN)}>Open the ZoikoMeds app</a>
+                  </Button>
+                  {/* If the app cannot be opened, this page stays put — the
+                      password is already changed — and this is the way on. */}
+                  <Link
+                    to="/login?reset=success"
+                    className="text-center text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    Sign in on the web instead
+                  </Link>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Your password has been set. Redirecting you to sign in…
+                </p>
+              )}
             </div>
           ) : !token ? (
             <div className="flex flex-col items-center gap-3 py-4 text-center">
@@ -105,6 +140,7 @@ export default function ResetPassword() {
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground outline-none"
+                    aria-label={showPassword ? 'Hide new password' : 'Show new password'}
                   >
                     {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
@@ -121,13 +157,21 @@ export default function ResetPassword() {
                   </span>
                   <Input
                     id="confirm"
-                    type={showPassword ? 'text' : 'password'}
+                    type={showConfirm ? 'text' : 'password'}
                     required
                     placeholder="Re-enter your new password"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 pr-10"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirm(!showConfirm)}
+                    className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground outline-none"
+                    aria-label={showConfirm ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showConfirm ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
                 </div>
               </div>
 

@@ -50,4 +50,24 @@ describe('routeForIncomingUrl — deep links are untrusted input', () => {
   it('sends admin links to the web-only notice instead of a missing console', () => {
     expect(routeForIncomingUrl('https://app.zoikomeds.com/admin/users')).toBe('/app/web-only')
   })
+
+  it('accepts the way back from a reset finished in the browser, at auth/login', () => {
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/login?reset=success')).toBe(
+      '/login?reset=success',
+    )
+    // Without the flag it is still just the sign-in screen.
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/login')).toBe('/login')
+  })
+
+  it('carries only the reset flag back, never a token or a destination of its own', () => {
+    // Any app on the phone can send this link. Whatever else it carries — a
+    // token that could be mistaken for a session, a "next" page — is dropped.
+    expect(
+      routeForIncomingUrl('com.zoikomeds.app://auth/login?reset=success&token=jwt&next=/admin'),
+    ).toBe('/login?reset=success')
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/login?token=jwt')).toBe('/login')
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/login?reset=yes')).toBe('/login')
+    // And it is an exact path, like the others.
+    expect(routeForIncomingUrl('com.zoikomeds.app://auth/login/extra')).toBeNull()
+  })
 })

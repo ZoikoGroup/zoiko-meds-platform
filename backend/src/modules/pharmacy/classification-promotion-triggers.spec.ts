@@ -15,6 +15,20 @@ import { PharmacyNotificationService } from './notifications/pharmacy-notificati
 import { PharmacyService } from './pharmacy.service';
 import { PROMOTABLE_WHERE, promotableWhere } from './classification-promotion';
 import { VISIBLE_SIGNAL_WHERE } from '../availability/availability.visibility';
+import { grantInitialEvaluation } from '../commercial/initial-evaluation';
+
+// The grant is exercised against a database fake in initial-evaluation.spec.ts.
+// Here the question is only whether each path asks for it, and only when the
+// promotion actually happened.
+jest.mock('../commercial/initial-evaluation', () => ({
+  ...jest.requireActual('../commercial/initial-evaluation'),
+  grantInitialEvaluation: jest.fn(),
+}));
+const grant = grantInitialEvaluation as jest.MockedFunction<typeof grantInitialEvaluation>;
+beforeEach(() => {
+  grant.mockReset();
+  grant.mockResolvedValue({ granted: false, reason: 'already-had-plan' });
+});
 
 /**
  * Which of the three conditions is allowed to be the last one.
@@ -108,6 +122,17 @@ describe('a pharmacy adding its address and map location', () => {
 
   function buildService(geocoded: { lat: number; lng: number } | null) {
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       pharmacy: {
         findUnique: jest.fn().mockResolvedValue(unlocated),
         // The duplicate-location probe.
@@ -217,6 +242,30 @@ describe('a pharmacy adding its address and map location', () => {
     expect(attempt(prisma).where).toEqual(promotableWhere(PHARMACY));
   });
 
+  it('starts the network-join trial when the save promotes the pharmacy', async () => {
+    const { service, prisma, audit } = buildService({ lat: 17.5878172, lng: 78.4236196 });
+
+    await save(service);
+
+    expect(grant).toHaveBeenCalledTimes(1);
+    expect(grant).toHaveBeenCalledWith(prisma, audit, PHARMACY, {
+      trigger: 'network-join',
+      actorId: USER.id,
+      ipAddress: '10.0.0.1',
+    });
+  });
+
+  it('starts no trial when the save promoted nothing', async () => {
+    // Already in the network, or not yet eligible: the promotion matched no
+    // row, so nothing joined and there is no trial to start.
+    const { service, prisma } = buildService({ lat: 17.5878172, lng: 78.4236196 });
+    prisma.pharmacy.updateMany.mockResolvedValue({ count: 0 });
+
+    await save(service);
+
+    expect(grant).not.toHaveBeenCalled();
+  });
+
   it('says in the audit trail that becoming listable was what unblocked it', async () => {
     const { service, audit } = buildService({ lat: 17.5878172, lng: 78.4236196 });
 
@@ -259,6 +308,17 @@ describe('an admin locating the record from Pharmacy Management', () => {
 
   function buildService() {
     const tx: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       pharmacy: {
         findUnique: jest.fn().mockResolvedValue(existing),
         findMany: jest.fn().mockResolvedValue([]),
@@ -269,6 +329,17 @@ describe('an admin locating the record from Pharmacy Management', () => {
       jurisdiction: { upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN' }) },
     };
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       pharmacy: {
         findUnique: jest.fn().mockResolvedValue(existing),
         findMany: jest.fn().mockResolvedValue([]),
@@ -320,6 +391,31 @@ describe('an admin locating the record from Pharmacy Management', () => {
 
     expect(attempt(prisma)).toBeUndefined();
   });
+
+  it('starts the trial for each record the admin edit promotes', async () => {
+    const { service, prisma } = buildService();
+
+    await service.bulkSetStatus('admin_1', ['ph_1', 'ph_2'], VerificationStatus.VERIFIED);
+
+    expect(grant.mock.calls.map(([db, , id, options]) => [db, id, options.trigger])).toEqual([
+      [prisma, 'ph_1', 'network-join'],
+      [prisma, 'ph_2', 'network-join'],
+    ]);
+  });
+
+  it('starts none when the edit promoted nothing', async () => {
+    const { service, prisma } = buildService();
+    prisma.pharmacy.updateMany.mockResolvedValue({ count: 0 });
+
+    await service.update(
+      'admin_1',
+      PHARMACY,
+      { latitude: 17.5878172, longitude: 78.4236196 } as never,
+      '10.0.0.1',
+    );
+
+    expect(grant).not.toHaveBeenCalled();
+  });
 });
 
 /** And so can the reviewer, by approving a pharmacy that is already reporting. */
@@ -336,6 +432,17 @@ describe('a reviewer approving a located, reporting pharmacy', () => {
 
   function buildService() {
     const tx: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       verificationRequest: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(REQUEST),
@@ -370,6 +477,17 @@ describe('a reviewer approving a located, reporting pharmacy', () => {
       },
     };
     const prisma: any = {
+      // Covered by an active plan, so these specs keep testing the gate
+      // they are about rather than the billing one. See commercial-visibility.spec.ts
+      // for the tests that exercise this gate directly.
+      subscriptionLocation: {
+        findMany: jest.fn().mockResolvedValue([
+          { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
       pharmacy: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       verificationRequest: {
         findUnique: jest.fn().mockResolvedValue(REQUEST),
@@ -408,5 +526,53 @@ describe('a reviewer approving a located, reporting pharmacy', () => {
     );
 
     expect(attempt(prisma)).toBeUndefined();
+  });
+
+  it('starts the trial when approval is what brings the pharmacy into the network', async () => {
+    const { service, prisma } = buildService();
+
+    await service.update(
+      'admin_1',
+      'req_1',
+      { status: VerificationRequestStatus.APPROVED } as never,
+      '10.0.0.1',
+    );
+
+    expect(grant).toHaveBeenCalledTimes(1);
+    expect(grant).toHaveBeenCalledWith(prisma, expect.anything(), PHARMACY, {
+      trigger: 'network-join',
+      actorId: 'admin_1',
+      ipAddress: '10.0.0.1',
+    });
+  });
+
+  it('starts no second trial on a re-approval, which promotes nothing', async () => {
+    // A verification retry, or a reviewer approving the same request twice:
+    // the record is no longer DIRECTORY_UNCLAIMED, so the promotion matches
+    // nothing and no trial is asked for.
+    const { service, prisma } = buildService();
+    prisma.pharmacy.updateMany.mockResolvedValue({ count: 0 });
+
+    await service.update(
+      'admin_1',
+      'req_1',
+      { status: VerificationRequestStatus.APPROVED } as never,
+      '10.0.0.1',
+    );
+
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('starts no trial on a rejection', async () => {
+    const { service } = buildService();
+
+    await service.update(
+      'admin_1',
+      'req_1',
+      { status: VerificationRequestStatus.REJECTED } as never,
+      '10.0.0.1',
+    );
+
+    expect(grant).not.toHaveBeenCalled();
   });
 });

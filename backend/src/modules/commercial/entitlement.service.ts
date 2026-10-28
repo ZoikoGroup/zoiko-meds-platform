@@ -5,7 +5,11 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { participatesInNetworkCore } from './commercial.doctrine';
+import {
+  operatingEligibility,
+  participatesInNetworkCore,
+  subscriptionEntitlesVisibility,
+} from './commercial.doctrine';
 
 /**
  * Feature keys the platform gates on. Deliberately coarse and named after
@@ -105,7 +109,18 @@ export class EntitlementService {
         commercialClassification: true,
         subscriptionLocations: {
           where: { releasedAt: null },
-          select: { subscription: { select: { state: true, offer: true } } },
+          // Ordered, because the row that decides this must not be whichever one
+          // the database happened to return first. A pharmacy that evaluated and
+          // then bought has two unreleased links until the expiry job releases
+          // the old one, and reading [0] unordered let a CANCELED evaluation
+          // strip every paid analytics feature from a pharmacy that had just
+          // paid — with its billing page still reading Intelligence Pro.
+          orderBy: { activatedAt: 'desc' },
+          select: {
+            subscription: {
+              select: { state: true, offer: true, evaluationEndsAt: true },
+            },
+          },
         },
       },
     });
@@ -122,9 +137,32 @@ export class EntitlementService {
     }
 
     const classification = pharmacy.commercialClassification;
-    const subscriptionState = pharmacy.subscriptionLocations[0]?.subscription.state ?? null;
+    const now = new Date();
+    const subscriptions = pharmacy.subscriptionLocations.map((link) => link.subscription);
+
+    // Deterministic, and never positional: the subscription that governs this
+    // pharmacy is the one actually entitling it right now, and only if none
+    // does do we fall back to the most recent for its delinquency state. Row
+    // order decides nothing.
+    const effective =
+      subscriptions.find((s) => subscriptionEntitlesVisibility(s, now)) ?? subscriptions[0] ?? null;
+    const subscriptionState = effective?.state ?? null;
 
     let features = this.featuresFor(classification);
+
+    // A lapsed trial grants nothing extra, whatever the classification still
+    // says. `expireEvaluations` rewrites PRO_EVALUATION to Network Core, but it
+    // runs on a schedule, and between the window closing and that job running
+    // the string is stale. The dates are the fact; trusting the string here
+    // handed out free Pro for as long as the scheduler was behind.
+    if (
+      classification === CommercialClassification.PRO_EVALUATION &&
+      !subscriptions.some(
+        (s) => s.state === SubscriptionState.EVALUATION && subscriptionEntitlesVisibility(s, now),
+      )
+    ) {
+      features = this.featuresFor(CommercialClassification.VERIFIED_NETWORK_CORE);
+    }
 
     // Delinquency withdraws paid analytics but never Network Core (S-L1).
     if (
@@ -180,25 +218,9 @@ export class EntitlementService {
     verificationStatus: VerificationStatus,
     classification: CommercialClassification,
   ): { eligible: boolean; reason?: string } {
-    if (classification === CommercialClassification.SUSPENDED_COMPLIANCE) {
-      return { eligible: false, reason: 'Pharmacy is suspended pending compliance review.' };
-    }
-    if (classification === CommercialClassification.CLOSED) {
-      return { eligible: false, reason: 'Pharmacy is closed.' };
-    }
-    if (classification === CommercialClassification.REJECTED) {
-      return { eligible: false, reason: 'Pharmacy verification was rejected.' };
-    }
-    if (verificationStatus === VerificationStatus.SUSPENDED) {
-      return { eligible: false, reason: 'Pharmacy verification is suspended.' };
-    }
-    if (verificationStatus !== VerificationStatus.VERIFIED) {
-      return {
-        eligible: false,
-        reason: 'Pharmacy verification is not approved.',
-      };
-    }
-    return { eligible: true };
+    // Delegated, not restated: the S-B4 sweep asks the same question before it
+    // stops a pharmacy's billing, and the two must never answer differently.
+    return operatingEligibility(verificationStatus, classification);
   }
 
   /**

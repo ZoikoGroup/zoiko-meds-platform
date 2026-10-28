@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -21,9 +22,12 @@ import { StripeService } from './stripe/stripe.service';
 import {
   PRO_DELINQUENCY_DAYS,
   PRO_EVALUATION_DAYS,
+  RENEWABLE_STATES,
+  operatingEligibility,
   isNonProductionClassification,
   proDelinquencyState,
   reasonsConversionBlocked,
+  billingPeriodEnd,
 } from './commercial.doctrine';
 
 const MS_PER_DAY = 86_400_000;
@@ -70,6 +74,27 @@ export class SubscriptionService {
     }
 
     const subscription = await this.prisma.$transaction(async (tx) => {
+      // A double-submitted request, or two administrators at once, must not
+      // leave two overlapping trials. Serialise on the pharmacy row, then
+      // refuse while a trial is still running — including the one granted
+      // automatically on joining the network. Starting a further evaluation
+      // after one has ended remains a deliberate administrator decision.
+      await tx.$queryRaw`SELECT id FROM "Pharmacy" WHERE id = ${input.pharmacyId} FOR UPDATE`;
+      const running = await tx.subscriptionLocation.findFirst({
+        where: {
+          pharmacyId: input.pharmacyId,
+          releasedAt: null,
+          subscription: { state: SubscriptionState.EVALUATION, evaluationEndsAt: { gt: now } },
+        },
+        select: { subscription: { select: { evaluationEndsAt: true } } },
+      });
+      if (running) {
+        throw new ConflictException(
+          'This pharmacy already has an Intelligence Pro evaluation running until ' +
+            `${running.subscription.evaluationEndsAt?.toISOString()}.`,
+        );
+      }
+
       const created = await tx.subscription.create({
         data: {
           billingProfileId: input.billingProfileId,
@@ -484,6 +509,13 @@ export class SubscriptionService {
         });
 
         if (target === SubscriptionState.CANCELED) {
+          // Same reason as expireEvaluations: a cancelled term stops covering
+          // its locations, and saying so here keeps the "which subscription
+          // governs this pharmacy" question answerable.
+          await tx.subscriptionLocation.updateMany({
+            where: { subscriptionId: sub.id, releasedAt: null },
+            data: { releasedAt: now },
+          });
           for (const loc of sub.locations) {
             const pharmacy = await tx.pharmacy.findUnique({
               where: { id: loc.pharmacyId },
@@ -535,6 +567,15 @@ export class SubscriptionService {
           where: { id: sub.id },
           data: { state: SubscriptionState.CANCELED, canceledAt: now },
         });
+        // Release them. A location left unreleased keeps claiming to be covered
+        // by a subscription that has ended, and every later reader that asks
+        // "which subscription governs this pharmacy" has to pick between a dead
+        // row and a live one. Releasing here is what makes that question have a
+        // single answer.
+        await tx.subscriptionLocation.updateMany({
+          where: { subscriptionId: sub.id, releasedAt: null },
+          data: { releasedAt: now },
+        });
         for (const loc of sub.locations) {
           await tx.pharmacy.update({
             where: { id: loc.pharmacyId },
@@ -561,21 +602,116 @@ export class SubscriptionService {
     actorId: string | null,
     subscriptionId: string,
   ): Promise<Subscription> {
+    // The provider call comes FIRST, and the local state only follows if it
+    // succeeded.
+    //
+    // This method used to write ELIGIBILITY_RESTRICTED and stop, which recorded
+    // "renewal blocked" without blocking any renewal: Stripe had never been
+    // told, so the next period was charged anyway. Writing the row first would
+    // reproduce that in a subtler way — a failed provider call leaving a
+    // database that says billing is stopped while the money keeps moving. If
+    // the call throws, nothing is persisted, the subscription stays in a
+    // renewable state, and the next sweep retries it.
+    //
+    // Nothing is lost by ordering it this way: patient visibility and paid
+    // features are already denied live by the eligibility rule, so the window
+    // between the two is a billing window only.
+    await this.stripe.cancelSubscription(subscriptionId);
+
     const updated = await this.prisma.subscription.update({
       where: { id: subscriptionId },
       data: { state: SubscriptionState.ELIGIBILITY_RESTRICTED },
     });
     await this.audit.write(actorId, 'commercial.subscription.eligibility_restricted', 'Subscription', subscriptionId, {
       reason: 'Verification or credential lapsed; renewal blocked pending re-verification.',
+      // Named so an operator reading the log knows the paid term was honoured
+      // rather than cut short — no refund, no forfeited time.
+      providerAction: 'cancel_at_period_end',
     });
     return updated;
   }
 
+  /**
+   * Stop billing every pharmacy that policy has switched off (S-B4).
+   *
+   * The sweep half of `restrictForEligibility`, which takes one subscription id
+   * and therefore could never be scheduled. Without it the rule existed only on
+   * paper: a pharmacy whose verification lapsed was hidden from patients and
+   * denied every paid feature, and went on being charged monthly for it.
+   *
+   * Scoped tightly on purpose. Only Intelligence Pro — an Order Form's cure
+   * periods are contractual and must never inherit this schedule (S-L3), the
+   * same reason `advanceDelinquency` filters the offer. Only states the
+   * provider can still raise a charge from, so the query does not walk years of
+   * cancelled history every hour. Only subscriptions whose locations are still
+   * unreleased, because a released location is one this subscription no longer
+   * covers.
+   *
+   * Safe to run repeatedly: a subscription that has already been restricted is
+   * no longer in RENEWABLE_STATES, so the next pass does not select it, and the
+   * provider call underneath is an idempotent update rather than a create.
+   */
+  async restrictIneligibleSubscriptions(): Promise<{ restricted: number; failed: number }> {
+    // No `now` parameter, unlike its two siblings: eligibility is a question
+    // about the pharmacy's current standing, not about elapsed time, so there
+    // is no clock to inject or to freeze in a test.
+    const candidates = await this.prisma.subscription.findMany({
+      where: {
+        offer: CommercialOffer.PHARMACY_INTELLIGENCE_PRO,
+        state: { in: [...RENEWABLE_STATES] },
+        locations: { some: { releasedAt: null } },
+      },
+      select: {
+        id: true,
+        locations: {
+          where: { releasedAt: null },
+          select: {
+            pharmacy: {
+              select: { id: true, verificationStatus: true, commercialClassification: true },
+            },
+          },
+        },
+      },
+    });
+
+    let restricted = 0;
+    let failed = 0;
+
+    for (const subscription of candidates) {
+      // Every location this subscription still covers has to be ineligible
+      // before its billing stops. A multi-location subscription with one good
+      // branch is still owed the service it pays for, and cutting it off
+      // because a sibling lapsed would be the platform's mistake, not the
+      // pharmacy's.
+      const pharmacies = subscription.locations.map((l) => l.pharmacy);
+      if (pharmacies.length === 0) continue;
+      const allIneligible = pharmacies.every(
+        (p) => !operatingEligibility(p.verificationStatus, p.commercialClassification).eligible,
+      );
+      if (!allIneligible) continue;
+
+      try {
+        await this.restrictForEligibility(null, subscription.id);
+        restricted += 1;
+      } catch (err) {
+        // One pharmacy's provider failure must not abandon the rest of the
+        // sweep, and it must not be recorded as success. The subscription stays
+        // in a renewable state, so the next run selects it again.
+        failed += 1;
+        this.logger.error(
+          `Could not stop billing for subscription ${subscription.id}: ` +
+            `${err instanceof Error ? err.message : 'unknown provider error'}`,
+        );
+      }
+    }
+
+    return { restricted, failed };
+  }
+
   private periodEnd(start: Date, interval: BillingInterval): Date {
-    const end = new Date(start);
-    if (interval === BillingInterval.YEAR) end.setFullYear(end.getFullYear() + 1);
-    else end.setMonth(end.getMonth() + 1);
-    return end;
+    // Delegated, not duplicated: the webhook path creates paid terms too, and
+    // two copies of this arithmetic is two renewal dates for the same plan.
+    return billingPeriodEnd(start, interval);
   }
 
   /**

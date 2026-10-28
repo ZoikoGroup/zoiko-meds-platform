@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
-  PUBLIC_SIGNALS_INCLUDE,
+  publicSignalsInclude,
   signalAgeMinutes,
 } from '../../availability/availability.visibility';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
@@ -859,7 +859,7 @@ export class PatientSignalService {
           // Same governed-visibility rule as every other patient surface: a
           // withdrawn or unverified pharmacy's signal must not drive an alert
           // about what is in stock.
-          include: { availabilitySignals: PUBLIC_SIGNALS_INCLUDE },
+          include: { availabilitySignals: publicSignalsInclude() },
         },
       },
     });

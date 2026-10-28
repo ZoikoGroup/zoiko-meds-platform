@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Card } from '@/components/ui/card'
@@ -11,6 +11,13 @@ import { MedicineSuggestions } from '@/components/shared/medicine-suggestions'
 import { useMedicineSuggestions } from '@/hooks/use-medicine-suggestions'
 import { mapsHref, pharmacyDirectionsHref, telHref, CONFIRM_NOTE, availabilityMeta } from '@/lib/availability'
 import { reverseGeocode } from '@/lib/geocode'
+import {
+  LOCATION_NAME_UNAVAILABLE,
+  describeLocationFailure,
+  getCurrentLocation,
+  locationServicesEnabled,
+} from '@/lib/current-location'
+import { onAppResume } from '@/lib/native'
 import { validateLocation } from '@/lib/location-data'
 import { searchNearbyAvailability } from '@/services/nearby-availability'
 import {
@@ -159,35 +166,86 @@ export default function UserSearch() {
     if (value) localStorage.setItem(LOC_KEY, value)
   }
 
-  // Ask the browser for the user's coordinates. This updates the draft location
-  // only — it does NOT run a search (the user must click Search Availability).
-  const useMyLocation = () => {
-    if (!('geolocation' in navigator)) {
+  // Bumped by every location request and every keystroke, so a place-name
+  // lookup that finishes late cannot overwrite what was typed since.
+  const locationRun = useRef(0)
+
+  // After "Location is off", one quiet retry when the person comes back to the
+  // app — they have usually just been to Settings. Disarmed by any new request,
+  // by typing or undoing a location, by unmounting, and after it fires once, so
+  // it can never prompt twice or replace a place the person chose themselves.
+  const resumeRetry = useRef(null)
+  const disarmResumeRetry = () => {
+    resumeRetry.current?.()
+    resumeRetry.current = null
+  }
+  useEffect(() => disarmResumeRetry, [])
+
+  // The person has taken the location into their own hands — typed one, or
+  // undone the one they had. Nothing still in flight may overwrite that: not a
+  // place-name lookup, and not a retry waiting for them to come back.
+  const abandonLocationRequest = () => {
+    locationRun.current += 1
+    disarmResumeRetry()
+  }
+
+  // A typed place. Shared by this form's field and the scan panel's, so a
+  // location typed on either one is the location the search uses.
+  const changeLocation = (value) => {
+    abandonLocationRequest()
+    persistLocation(value)
+    // Typing a place switches off precise coordinates.
+    setCoords(null)
+    setGeoStatus('idle')
+    if (activeSearch) clearResults()
+  }
+
+  // Find the user's coordinates. This updates the draft location only — it does
+  // NOT run a search (the user must click Search Availability).
+  //
+  // `announce` confirms success out loud. The search form shows its own
+  // "Using your current location" line instead; the scan panel has none.
+  // Guarded so passing this straight to onClick (which supplies an event) works.
+  const findMyLocation = async (options) => {
+    const announce = options?.announce === true
+    disarmResumeRetry()
+    const run = ++locationRun.current
+    setGeoStatus('loading')
+
+    let next
+    try {
+      next = await getCurrentLocation()
+    } catch (err) {
+      if (run !== locationRun.current) return
+      const failure = describeLocationFailure(err)
       setGeoStatus('error')
-      flash(t('geolocationUnsupported', 'Location isn’t supported by this browser. Enter a city instead.'))
+      flash(t(failure.key, failure.fallback))
+      // Retry only if Location is on by the time they are back. Checking does
+      // not prompt, so someone who chose not to turn it on is not asked again.
+      if (failure.reason === 'services-disabled') {
+        resumeRetry.current = onAppResume(async () => {
+          disarmResumeRetry()
+          if ((await locationServicesEnabled()) === true) findMyLocation(options)
+        })
+      }
       return
     }
-    setGeoStatus('loading')
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-        setCoords(next)
-        setGeoStatus('ok')
-        // Show coordinates immediately, then replace with a readable place name
-        // once reverse geocoding resolves (falls back to coords on failure).
-        persistLocation(`${next.lat.toFixed(4)}, ${next.lng.toFixed(4)}`)
-        reverseGeocode(next.lat, next.lng).then((label) => {
-          if (label) persistLocation(label)
-        })
-        // Draft changed — clear any previous results; require a new search.
-        if (activeSearch) clearResults()
-      },
-      () => {
-        setGeoStatus('error')
-        flash(t('geolocationFailed', 'Couldn’t get your location. Enter a city instead.'))
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
-    )
+    // Typed over, or asked again, while the device was answering.
+    if (run !== locationRun.current) return
+
+    setCoords({ lat: next.lat, lng: next.lng })
+    setGeoStatus('ok')
+    // Show coordinates immediately, then replace them with a readable place
+    // name. The coordinates are what the search uses either way, so a failed
+    // lookup is said plainly rather than treated as a failed location.
+    persistLocation(`${next.lat.toFixed(4)}, ${next.lng.toFixed(4)}`)
+    // Draft changed — clear any previous results; require a new search.
+    clearResults()
+    if (announce) flash(t('usingCurrentLocation', 'Using your current location'))
+    const label = await reverseGeocode(next.lat, next.lng)
+    if (run !== locationRun.current) return
+    if (label) persistLocation(label)
+    else flash(t(LOCATION_NAME_UNAVAILABLE.key, LOCATION_NAME_UNAVAILABLE.fallback))
   }
 
   // The ONLY entry point that fetches results. Validates that a medicine and a
@@ -335,6 +393,13 @@ export default function UserSearch() {
           onSearchMedicine={selectDetectedMedicine}
           onDetected={handleDetected}
           flash={flash}
+          // The scan panel's location field and button act on this page's
+          // location, which is the one the search reads. They used to keep a
+          // private copy, so a location set there never reached the search.
+          location={location}
+          onLocationChange={changeLocation}
+          onUseMyLocation={findMyLocation}
+          locating={geoStatus === 'loading'}
         />
       </div>
 
@@ -405,13 +470,7 @@ export default function UserSearch() {
                   <Input
                     id="search-area"
                     value={location}
-                    onChange={(e) => {
-                      persistLocation(e.target.value)
-                      // Typing a place switches off precise coordinates.
-                      setCoords(null)
-                      setGeoStatus('idle')
-                      if (activeSearch) clearResults()
-                    }}
+                    onChange={(e) => changeLocation(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                     placeholder={t('searchAreaPlaceholder', 'City, ZIP code, or postcode')}
                     aria-label={t('searchArea', 'Search area')}
@@ -419,7 +478,7 @@ export default function UserSearch() {
                   />
                   <button
                     type="button"
-                    onClick={useMyLocation}
+                    onClick={findMyLocation}
                     disabled={geoStatus === 'loading'}
                     className="absolute end-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-accent disabled:opacity-60"
                   >
@@ -439,6 +498,7 @@ export default function UserSearch() {
                     <button
                       type="button"
                       onClick={() => {
+                        abandonLocationRequest()
                         setLocation('')
                         setCoords(null)
                         setGeoStatus('idle')
@@ -459,6 +519,7 @@ export default function UserSearch() {
                     <button
                       type="button"
                       onClick={() => {
+                        abandonLocationRequest()
                         setLocation('')
                         setCoords(null)
                         setGeoStatus('idle')

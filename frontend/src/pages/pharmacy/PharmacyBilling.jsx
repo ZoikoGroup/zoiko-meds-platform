@@ -231,6 +231,12 @@ export default function PharmacyBilling() {
 
   const plan = CLASSIFICATION_META[data.classification]
   const state = data.plan ? STATE_META[data.plan.state] : null
+  // Only meaningful while the trial is the thing covering the pharmacy; once a
+  // subscription takes over, the renewal date below is what matters.
+  const trialEndsAt =
+    data.commerciallyEligible && data.plan?.state === 'EVALUATION' && data.plan.evaluationEndsAt
+      ? new Date(data.plan.evaluationEndsAt).toLocaleDateString()
+      : null
 
   return (
     <div className="flex flex-col gap-6">
@@ -307,6 +313,25 @@ export default function PharmacyBilling() {
               {state && <Badge variant={state.variant} size="sm">{state.label}</Badge>}
             </div>
 
+            {/* What the plan actually means for patients, in one line.
+                `commerciallyEligible` is the server's own answer — the same one
+                the patient queries use — rather than something inferred here
+                from plan.state, which would be a second copy of the rule. */}
+            {data.commerciallyEligible ? (
+              <p className="text-xs leading-relaxed text-success">
+                {trialEndsAt
+                  ? `Free trial active until ${trialEndsAt}. Patients can find your pharmacy.`
+                  : 'Your subscription is active. Patients can find your pharmacy.'}
+              </p>
+            ) : (
+              <p className="text-xs leading-relaxed text-warning">
+                {data.plan?.evaluationEndsAt
+                  ? 'Your free trial has ended. Subscribe to restore your pharmacy in patient search.'
+                  : 'No active plan. Subscribe to restore your pharmacy in patient search.'}{' '}
+                Your profile, inventory and history are all kept.
+              </p>
+            )}
+
             {data.plan ? (
               <dl className="flex flex-col gap-2 text-sm">
                 <div className="flex justify-between gap-4">
@@ -344,9 +369,9 @@ export default function PharmacyBilling() {
               </dl>
             ) : (
               <p className="text-xs leading-relaxed text-muted-foreground">
-                You are on free Network Core participation. There is nothing to pay, and your
-                pharmacy appears in patient search on the same terms as any other verified
-                pharmacy.
+                You do not have a plan yet. Verified pharmacies appear in patient medicine
+                search while a free trial or a subscription is active — start one below and
+                your pharmacy is listed straight away.
               </p>
             )}
 
@@ -475,8 +500,9 @@ export default function PharmacyBilling() {
           <CardHeader>
             <CardTitle>If a payment fails</CardTitle>
             <CardDescription>
-              Your pharmacy is never removed from the free availability network because of a
-              payment problem.
+              You have 20 days to fix it. Your pharmacy stays in patient search throughout —
+              it is only delisted if the subscription is cancelled at the end of that window,
+              and your profile, inventory and history are kept either way.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-1 pt-4">

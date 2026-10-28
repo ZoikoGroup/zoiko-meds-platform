@@ -1,5 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Pharmacy, Prisma, VerificationRequestStatus, VerificationStatus } from '@prisma/client';
+import {
+  Pharmacy,
+  Prisma,
+  SubscriptionState,
+  VerificationRequestStatus,
+  VerificationStatus,
+} from '@prisma/client';
+import { isCommerciallyEligibleForVisibility } from '../../commercial/commercial.doctrine';
+import { grantInitialEvaluation } from '../../commercial/initial-evaluation';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
@@ -38,6 +46,15 @@ const JURISDICTION_INCLUDE = {
     where: { isActive: true, role: { in: PHARMACY_OPERATOR_ROLES } },
     select: { id: true },
     take: 1,
+  },
+  // Commercial standing, loaded with the row rather than queried per record:
+  // `toDto` is synchronous and mapped over a page of pharmacies, so asking the
+  // database inside it would be one query per row. Unreleased links only — a
+  // released location is one its subscription no longer covers — and the states
+  // and dates are judged by the commercial doctrine, never here.
+  subscriptionLocations: {
+    where: { releasedAt: null },
+    select: { subscription: { select: { state: true, evaluationEndsAt: true } } },
   },
 } as const;
 
@@ -390,11 +407,19 @@ export class PharmacyAdminService {
    * part of the edit the admin asked for.
    */
   private async promoteIfListable(id: string, actorId: string, ipAddress?: string) {
-    await promoteClaimedByReporting(this.prisma, this.audit, id, {
+    const promoted = await promoteClaimedByReporting(this.prisma, this.audit, id, {
       actorId,
       ipAddress,
       reason: PROMOTION_REASONS.LISTABLE,
     });
+    // Joining the network starts the 30-day trial (initial-evaluation.ts).
+    if (promoted) {
+      await grantInitialEvaluation(this.prisma, this.audit, id, {
+        trigger: 'network-join',
+        actorId,
+        ipAddress,
+      });
+    }
   }
 
   async remove(actorId: string, id: string, ipAddress?: string) {
@@ -467,6 +492,9 @@ export class PharmacyAdminService {
     p: Pharmacy & {
       jurisdiction?: { code: string; name: string } | null;
       users?: Array<{ id: string }>;
+      subscriptionLocations?: Array<{
+        subscription: { state: SubscriptionState; evaluationEndsAt: Date | null };
+      }>;
     },
   ) {
     // Whether anybody is running this branch. Absent on a row fetched without
@@ -474,7 +502,14 @@ export class PharmacyAdminService {
     // "unknown, do not claim visibility", which errs towards telling the
     // reviewer to look rather than towards a false "listed".
     const hasActiveManager = (p.users?.length ?? 0) > 0;
-    const visibility = { ...p, hasActiveManager };
+    // Same treatment, same reason: a row fetched without the include has no
+    // subscriptions to judge, and guessing "eligible" there would put a false
+    // "listed" in front of a reviewer. Absent reads as not eligible.
+    const commerciallyEligible = isCommerciallyEligibleForVisibility({
+      commercialClassification: p.commercialClassification,
+      subscriptions: (p.subscriptionLocations ?? []).map((link) => link.subscription),
+    });
+    const visibility = { ...p, hasActiveManager, commerciallyEligible };
     return {
       id: p.id,
       name: p.name,

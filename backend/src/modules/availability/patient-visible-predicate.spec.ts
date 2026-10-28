@@ -1,11 +1,15 @@
-import { CommercialClassification, VerificationStatus } from '@prisma/client';
+import { CommercialClassification, Prisma, VerificationStatus } from '@prisma/client';
 import {
   ACTIVE_PHARMACY_MANAGER_WHERE,
   PATIENT_VISIBLE_CLASSIFICATIONS,
   PHARMACY_OPERATOR_ROLES,
   PUBLIC_PHARMACY_WHERE,
+  commerciallyEligibleWhere,
   isPatientVisible,
+  publicPharmacyWhere,
 } from './availability.visibility';
+
+const NOW = new Date('2026-10-28T09:00:00Z');
 
 /**
  * The predicate and the query have to stay the same rule.
@@ -28,10 +32,13 @@ const VISIBLE = {
   // has been claimed in the past and is managed by nobody now, and patients are
   // shown the second fact — see ACTIVE_PHARMACY_MANAGER_WHERE.
   hasActiveManager: true,
+  // A live trial or a paid term in grace covers it. Network Core alone no
+  // longer carries patient visibility: the listing is what the plan pays for.
+  commerciallyEligible: true,
 };
 
 describe('the predicate matches the query it stands in for', () => {
-  it('tests every field the query filters on, and no others', () => {
+  it('tests every field the safety half of the query filters on, and no others', () => {
     expect(Object.keys(PUBLIC_PHARMACY_WHERE).sort()).toEqual([
       'commercialClassification',
       'isParticipating',
@@ -39,6 +46,49 @@ describe('the predicate matches the query it stands in for', () => {
       'users',
       'verificationStatus',
     ]);
+  });
+
+  it('adds commercial eligibility on top of the safety gates, never instead', () => {
+    const whole = publicPharmacyWhere(NOW);
+    // Every safety clause survives composition. Paying must not buy a pharmacy
+    // past verification, participation, the classification allowlist or an
+    // operator account.
+    for (const key of Object.keys(PUBLIC_PHARMACY_WHERE)) {
+      expect(whole[key as keyof typeof whole]).toEqual(
+        PUBLIC_PHARMACY_WHERE[key as keyof typeof PUBLIC_PHARMACY_WHERE],
+      );
+    }
+    // And the commercial clause is there too, inside AND rather than as a
+    // top-level OR a caller could overwrite.
+    expect(Object.keys(whole).sort()).toEqual([
+      'AND',
+      'commercialClassification',
+      'isParticipating',
+      'users',
+      'verificationStatus',
+    ]);
+    expect(whole.AND).toEqual([commerciallyEligibleWhere(NOW)]);
+  });
+
+  it('keeps the commercial clause when a caller adds its own OR beside it', () => {
+    // The composition hazard: spreading an object whose commercial clause is a
+    // top-level OR, next to a caller's own OR, keeps only the caller's — and
+    // every unpaid pharmacy is listed. Nothing does this today; this holds it.
+    const composed: Prisma.PharmacyWhereInput = {
+      ...publicPharmacyWhere(NOW),
+      OR: [{ city: 'Hyderabad' }, { city: 'Secunderabad' }],
+    };
+    expect(composed.AND).toEqual([commerciallyEligibleWhere(NOW)]);
+    expect(composed.OR).toEqual([{ city: 'Hyderabad' }, { city: 'Secunderabad' }]);
+    for (const key of Object.keys(PUBLIC_PHARMACY_WHERE)) {
+      expect(composed[key as keyof typeof composed]).toEqual(
+        PUBLIC_PHARMACY_WHERE[key as keyof typeof PUBLIC_PHARMACY_WHERE],
+      );
+    }
+  });
+
+  it('agrees with the query that an uncovered pharmacy is not shown', () => {
+    expect(isPatientVisible({ ...VISIBLE, commerciallyEligible: false })).toBe(false);
   });
 
   it('agrees with the query on the verification status', () => {
@@ -64,6 +114,9 @@ describe('the predicate matches the query it stands in for', () => {
 });
 
 describe('every classification, decided the same way both times', () => {
+  // Commercially covered throughout, so this isolates the classification gate:
+  // the commercial gate has its own tests above and in
+  // commercial-visibility.spec.ts.
   it.each(Object.values(CommercialClassification))('%s', (classification) => {
     const expected = PATIENT_VISIBLE_CLASSIFICATIONS.includes(classification);
 
@@ -103,6 +156,7 @@ describe('verification status alone decides nothing', () => {
       isParticipating: true,
       commercialClassification: CommercialClassification.CLAIMED_PENDING,
       hasActiveManager: true,
+      commerciallyEligible: true,
     };
 
     expect(verifiedButUnclaimed.verificationStatus).toBe(VerificationStatus.VERIFIED);

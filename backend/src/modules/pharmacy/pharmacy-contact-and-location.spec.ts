@@ -85,6 +85,17 @@ function buildService(
   const neighbours = state.neighbours ?? [];
   const geocode = jest.fn().mockResolvedValue(state.geocode ?? null);
   const tx = {
+    // Covered by an active plan, so these specs keep testing the gate
+    // they are about rather than the billing one. See commercial-visibility.spec.ts
+    // for the tests that exercise this gate directly.
+    subscriptionLocation: {
+    findMany: jest.fn().mockResolvedValue([
+    { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+    ]),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    create: jest.fn().mockResolvedValue({}),
+    upsert: jest.fn().mockResolvedValue({}),
+    },
     pharmacy: { create: jest.fn(async ({ data }: any) => ({ id: 'ph_new', ...data })) },
     // Registering with a country resolves it to a Jurisdiction row.
     jurisdiction: { upsert: jest.fn().mockResolvedValue({ id: 'jur_in', code: 'IN' }) },
@@ -101,6 +112,17 @@ function buildService(
   };
 
   const prisma: any = {
+    // Covered by an active plan, so these specs keep testing the gate
+    // they are about rather than the billing one. See commercial-visibility.spec.ts
+    // for the tests that exercise this gate directly.
+    subscriptionLocation: {
+    findMany: jest.fn().mockResolvedValue([
+    { subscription: { state: 'ACTIVE', evaluationEndsAt: null } },
+    ]),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    create: jest.fn().mockResolvedValue({}),
+    upsert: jest.fn().mockResolvedValue({}),
+    },
     pharmacy: {
       // The duplicate-location probe.
       findMany: jest.fn().mockResolvedValue(neighbours),
