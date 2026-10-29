@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsInt,
   IsLatitude,
   IsLongitude,
@@ -98,4 +99,14 @@ export class CreatePharmacyDto {
   @Type(() => Number)
   @IsLongitude()
   longitude?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  confirmSharedAddress?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allowSharedAddress?: boolean;
 }

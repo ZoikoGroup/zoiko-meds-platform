@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsLatitude,
   IsLongitude,
   IsNotEmpty,
@@ -153,4 +154,16 @@ export class UpdatePharmacyProfileDto {
   @ValidateNested()
   @Type(() => VerificationDocumentDto)
   document?: VerificationDocumentDto;
+
+  @ApiPropertyOptional({ description: 'Confirm registration at a shared building/premises.' })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  confirmSharedAddress?: boolean;
+
+  @ApiPropertyOptional({ description: 'Alias for confirmSharedAddress.' })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allowSharedAddress?: boolean;
 }

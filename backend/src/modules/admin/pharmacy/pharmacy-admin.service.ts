@@ -11,7 +11,13 @@ import { grantInitialEvaluation } from '../../commercial/initial-evaluation';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditWriter } from '../audit.writer';
 import { NearbyPharmacyService } from '../../nearby/nearby-pharmacy.service';
-import { assertLocationIsFree } from '../../pharmacy/location-identity';
+import {
+  assertLocationIsFree,
+  normalizeAddressComponent,
+  normalizeLicenseNumber,
+  normalizePharmacyName,
+  withBranchLock,
+} from '../../pharmacy/location-identity';
 import { canParticipate, reviewerListingBlockedReason } from '../../pharmacy/participation';
 import {
   PHARMACY_OPERATOR_ROLES,
@@ -120,69 +126,88 @@ export class PharmacyAdminService {
   }
 
   async create(actorId: string, dto: CreatePharmacyDto, ipAddress?: string) {
-    // Resolved outside the transaction: geocoding is a network call and must
-    // not hold a database transaction open.
-    const coords = await this.resolveCoordinates(dto, [
-      dto.addressLine1,
-      dto.addressLine2,
-      dto.city,
-      dto.region,
-      dto.postalCode,
-      dto.country,
-    ]);
+    const branchKey = [
+      normalizeLicenseNumber(dto.licenseNumber) || normalizePharmacyName(dto.name),
+      normalizeAddressComponent(dto.addressLine1),
+      normalizeAddressComponent(dto.city),
+    ].join(':');
 
-    // One physical pharmacy, one record — checked before the insert so the
-    // duplicate is never created rather than cleaned up afterwards.
-    if (coords) {
-      await assertLocationIsFree(this.prisma, {
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-      });
-    }
+    return withBranchLock(branchKey, async () => {
+      // Resolved outside the transaction: geocoding is a network call and must
+      // not hold a database transaction open.
+      const coords = await this.resolveCoordinates(dto, [
+        dto.addressLine1,
+        dto.addressLine2,
+        dto.city,
+        dto.region,
+        dto.postalCode,
+        dto.country,
+      ]);
 
-    const pharmacy = await this.prisma.$transaction(async (tx) => {
-      const jurisdictionId = await resolveJurisdictionId(tx, resolveCountryAlpha2(dto.country));
-      const created = await tx.pharmacy.create({
-        data: {
+      // One physical pharmacy branch, one record — checked before the insert so
+      // duplicates are prevented while distinct independent pharmacies and branches
+      // can register.
+      if (coords) {
+        await assertLocationIsFree(this.prisma, {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          locationPrecision: coords.precision,
           name: dto.name,
-          licenseNumber: dto.licenseNumber || null,
-          addressLine1: dto.addressLine1 || null,
-          addressLine2: dto.addressLine2 || null,
-          city: dto.city || null,
-          region: dto.region || null,
-          postalCode: dto.postalCode || null,
-          country: dto.country || null,
-          jurisdictionId,
-          // The branch's own number. Patient search offers it as the one action
-          // the governance note asks for — confirm before travelling.
-          phone: dto.phone || null,
-          latitude: coords?.latitude ?? null,
-          longitude: coords?.longitude ?? null,
-          locationPrecision: coords?.precision ?? null,
-          reliabilityScore: (dto.availabilityScore ?? 100) / 100,
-          verificationStatus: VerificationStatus.PENDING,
-        },
-        include: JURISDICTION_INCLUDE,
-      });
-
-      if (dto.licenseNumber) {
-        await tx.verificationRequest.updateMany({
-          where: { licenseNumber: dto.licenseNumber, pharmacyId: null },
-          data: { pharmacyId: created.id },
+          licenseNumber: dto.licenseNumber,
+          addressLine1: dto.addressLine1,
+          addressLine2: dto.addressLine2,
+          city: dto.city,
+          region: dto.region,
+          postalCode: dto.postalCode,
+          country: dto.country,
+          confirmSharedAddress: dto.confirmSharedAddress ?? dto.allowSharedAddress,
         });
       }
-      return created;
-    });
 
-    await this.audit.write(
-      actorId,
-      'admin.pharmacy.create',
-      'Pharmacy',
-      pharmacy.id,
-      { name: pharmacy.name },
-      ipAddress,
-    );
-    return this.toDto(pharmacy);
+      const pharmacy = await this.prisma.$transaction(async (tx) => {
+        const jurisdictionId = await resolveJurisdictionId(tx, resolveCountryAlpha2(dto.country));
+        const created = await tx.pharmacy.create({
+          data: {
+            name: dto.name,
+            licenseNumber: dto.licenseNumber || null,
+            addressLine1: dto.addressLine1 || null,
+            addressLine2: dto.addressLine2 || null,
+            city: dto.city || null,
+            region: dto.region || null,
+            postalCode: dto.postalCode || null,
+            country: dto.country || null,
+            jurisdictionId,
+            // The branch's own number. Patient search offers it as the one action
+            // the governance note asks for — confirm before travelling.
+            phone: dto.phone || null,
+            latitude: coords?.latitude ?? null,
+            longitude: coords?.longitude ?? null,
+            locationPrecision: coords?.precision ?? null,
+            reliabilityScore: (dto.availabilityScore ?? 100) / 100,
+            verificationStatus: VerificationStatus.PENDING,
+          },
+          include: JURISDICTION_INCLUDE,
+        });
+
+        if (dto.licenseNumber) {
+          await tx.verificationRequest.updateMany({
+            where: { licenseNumber: dto.licenseNumber, pharmacyId: null },
+            data: { pharmacyId: created.id },
+          });
+        }
+        return created;
+      });
+
+      await this.audit.write(
+        actorId,
+        'admin.pharmacy.create',
+        'Pharmacy',
+        pharmacy.id,
+        { name: pharmacy.name },
+        ipAddress,
+      );
+      return this.toDto(pharmacy);
+    });
   }
 
   async update(actorId: string, id: string, dto: UpdatePharmacyDto, ipAddress?: string) {
@@ -218,7 +243,17 @@ export class PharmacyAdminService {
       await assertLocationIsFree(this.prisma, {
         latitude: coords.latitude,
         longitude: coords.longitude,
+        locationPrecision: coords.precision,
         excludeId: id,
+        name: dto.name ?? current.name,
+        licenseNumber: dto.licenseNumber !== undefined ? dto.licenseNumber : current.licenseNumber,
+        addressLine1: dto.addressLine1 !== undefined ? dto.addressLine1 : current.addressLine1,
+        addressLine2: dto.addressLine2 !== undefined ? dto.addressLine2 : current.addressLine2,
+        city: dto.city !== undefined ? dto.city : current.city,
+        region: dto.region !== undefined ? dto.region : current.region,
+        postalCode: dto.postalCode !== undefined ? dto.postalCode : current.postalCode,
+        country: dto.country !== undefined ? dto.country : current.country,
+        confirmSharedAddress: dto.confirmSharedAddress ?? dto.allowSharedAddress,
       });
     }
 

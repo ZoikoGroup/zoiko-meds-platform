@@ -30,7 +30,13 @@ import { AddInventoryDto } from './dto/add-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { UpdatePharmacyProfileDto } from './dto/update-profile.dto';
 import { SavedMedicineLinkService } from '../saved-link/saved-medicine-link.service';
-import { assertLocationIsFree } from './location-identity';
+import {
+  assertLocationIsFree,
+  normalizeAddressComponent,
+  normalizeLicenseNumber,
+  normalizePharmacyName,
+  withBranchLock,
+} from './location-identity';
 import { NearbyPharmacyService } from '../nearby/nearby-pharmacy.service';
 import { resolvePharmacyCoordinates } from './pharmacy-coordinates';
 import {
@@ -546,7 +552,14 @@ export class PharmacyService {
       );
     }
 
-    // Resolved once, before the write: the phone number is interpreted in this
+    const branchKey = [
+      normalizeLicenseNumber(licenseNumber) || normalizePharmacyName(name),
+      normalizeAddressComponent(dto.addressLine1),
+      normalizeAddressComponent(dto.city),
+    ].join(':');
+
+    return withBranchLock(branchKey, async () => {
+      // Resolved once, before the write: the phone number is interpreted in this
     // country, so a national-format number and the country it belongs to have to
     // be settled together.
     const submittedCountry = normalizeCountryInput(dto.country);
@@ -584,6 +597,16 @@ export class PharmacyService {
       await assertLocationIsFree(this.prisma, {
         latitude: coords.latitude,
         longitude: coords.longitude,
+        locationPrecision: coords.precision,
+        name,
+        licenseNumber,
+        addressLine1: dto.addressLine1,
+        addressLine2: dto.addressLine2,
+        city: dto.city,
+        region: dto.region,
+        postalCode: dto.postalCode,
+        country: submittedCountry,
+        confirmSharedAddress: dto.confirmSharedAddress ?? dto.allowSharedAddress,
       });
     }
 
@@ -689,6 +712,7 @@ export class PharmacyService {
     );
 
     return this.getProfile(created.id, user);
+    });
   }
   
 
@@ -786,6 +810,11 @@ export class PharmacyService {
     const nextLng = located?.longitude ?? existing.longitude;
     const nextPrecision = located?.precision ?? existing.locationPrecision;
 
+    // What the operator is asking the record to say.
+    const requestedName = name !== undefined ? name : existing.name;
+    const requestedLicense =
+      licenseNumber !== undefined ? licenseNumber : existing.licenseNumber;
+
     // A profile edit can move the pin. Moving it onto another pharmacy's
     // premises creates the same duplicate a second registration would; itself
     // excluded, so re-saving an unchanged location is never blocked.
@@ -794,14 +823,19 @@ export class PharmacyService {
       await assertLocationIsFree(this.prisma, {
         latitude: nextLat,
         longitude: nextLng,
+        locationPrecision: nextPrecision,
         excludeId: pharmacyId,
+        name: requestedName,
+        licenseNumber: requestedLicense,
+        addressLine1: dto.addressLine1 !== undefined ? dto.addressLine1 : existing.addressLine1,
+        addressLine2: dto.addressLine2 !== undefined ? dto.addressLine2 : existing.addressLine2,
+        city: dto.city !== undefined ? dto.city : existing.city,
+        region: dto.region !== undefined ? dto.region : existing.region,
+        postalCode: dto.postalCode !== undefined ? dto.postalCode : existing.postalCode,
+        country: country,
+        confirmSharedAddress: dto.confirmSharedAddress ?? dto.allowSharedAddress,
       });
     }
-
-    // What the operator is asking the record to say.
-    const requestedName = name !== undefined ? name : existing.name;
-    const requestedLicense =
-      licenseNumber !== undefined ? licenseNumber : existing.licenseNumber;
 
     // Whether that differs from what a reviewer has already approved, field by
     // field: the reviewer's summary says which one moved, not merely that
