@@ -61,6 +61,7 @@ export default function PharmacyManagement() {
   // The coordinate editor in the details dialog, and what it last said.
   const [pinInput, setPinInput] = useState('')
   const [pinError, setPinError] = useState('')
+  const [pendingSharedForm, setPendingSharedForm] = useState(null)
 
   const [newForm, setNewForm] = useState({
     name: '',
@@ -139,8 +140,10 @@ export default function PharmacyManagement() {
         await action()
         window.dispatchEvent(new CustomEvent('pharmacy-status-updated'))
         await load(true)
+        return true
       } catch (err) {
         setError(err.message || 'Action failed')
+        return false
       }
     },
     [load]
@@ -242,7 +245,10 @@ export default function PharmacyManagement() {
     // nothing to resolve, so the pharmacy would save with no coordinates and
     // be invisible to every distance-bounded patient search.
     if (!newForm.name || !newForm.licenseNumber || !newForm.city || !newForm.country) return
-    await run(() => admin.createPharmacy(newForm))
+    setPendingSharedForm(newForm)
+    const ok = await run(() => admin.createPharmacy(newForm))
+    if (!ok) return
+    setPendingSharedForm(null)
     setIsAddOpen(false)
     setNewForm({
       name: '',
@@ -591,9 +597,38 @@ export default function PharmacyManagement() {
       />
 
       {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           <AlertTriangle className="size-4 shrink-0" />
-          {error}
+          <span>{error}</span>
+          {pendingSharedForm && error.toLowerCase().includes('shared') && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                const ok = await run(() =>
+                  admin.createPharmacy({ ...pendingSharedForm, confirmSharedAddress: true })
+                )
+                if (ok) {
+                  setPendingSharedForm(null)
+                  setIsAddOpen(false)
+                  setNewForm({
+                    name: '',
+                    licenseNumber: '',
+                    addressLine1: '',
+                    city: '',
+                    region: '',
+                    postalCode: '',
+                    country: '',
+                    phone: '',
+                    availabilityScore: 100,
+                  })
+                }
+              }}
+              className="h-7 text-xs border-danger/40 text-danger hover:bg-danger/20"
+            >
+              Confirm Shared Address
+            </Button>
+          )}
         </div>
       )}
 
