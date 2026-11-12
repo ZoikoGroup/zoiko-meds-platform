@@ -1,0 +1,311 @@
+/*
+ * Sign-in page showcase (the left-hand panel). Every rule is scoped to
+ * .zm-showcase / .zm-globe-* class names that exist only in
+ * components/login-showcase, so nothing here can reach the sign-in form or any
+ * other page.
+ *
+ * One rule governs all the sizing below: this panel must never be taller than
+ * the window or the sign-in column, whichever is taller. If it were, the shared
+ * grid row would grow and move the form. So nothing decorative takes part in
+ * the panel's height: the artwork is absolutely positioned, and the devices
+ * scale to whatever room the text leaves them.
+ */
+
+.zm-showcase {
+  /* cqw units below are a share of this panel's width. */
+  container-type: inline-size;
+  background:
+    radial-gradient(60% 45% at 78% 20%, rgb(14 116 164 / 0.42) 0%, transparent 70%),
+    radial-gradient(48% 30% at 22% 100%, rgb(96 165 250 / 0.26) 0%, transparent 72%),
+    linear-gradient(170deg, #0c2541 0%, #0a2a4c 45%, #0b3556 100%);
+}
+
+/* ── Backdrop ─────────────────────────────────────────────────────────── */
+
+/* Drawn network globe: the backdrop below xl, where the artwork would have to
+   sit behind the copy. Up and to the right, partly off the panel. */
+.zm-showcase__globe {
+  position: absolute;
+  top: -40px;
+  right: -42%;
+  width: 96%;
+  height: auto;
+  opacity: 0.85;
+}
+
+@media (min-width: 640px) {
+  .zm-showcase__globe {
+    top: -90px;
+    right: -18%;
+    width: 72%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .zm-showcase__globe {
+    top: -6%;
+    right: -38%;
+    width: 104%;
+    opacity: 0.95;
+  }
+}
+
+/* Care team in front of the globe, from the reference design. The box keeps
+   the artwork's 876 × 1024 shape at 46% of the panel width, pinned to the top
+   right; its left edge and lower coats fade into the panel. With the copy held
+   to the left 58% (below), the faces always sit clear of the text. */
+.zm-showcase__art {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .zm-showcase__globe {
+    display: none;
+  }
+
+  .zm-showcase__art {
+    display: block;
+    position: absolute;
+    top: 0;
+    right: -2cqw;
+    width: 46cqw;
+    aspect-ratio: 876 / 1024;
+  }
+
+  .zm-showcase__team {
+    position: absolute;
+    inset: 0;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    -webkit-mask-image:
+      linear-gradient(to right, transparent 0%, #000 26%),
+      linear-gradient(to bottom, #000 60%, transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-image:
+      linear-gradient(to right, transparent 0%, #000 26%),
+      linear-gradient(to bottom, #000 60%, transparent 100%);
+    mask-composite: intersect;
+  }
+
+  /* Carries the artwork's routes out over the open sky to its left. */
+  .zm-showcase__arcs {
+    position: absolute;
+    top: 0;
+    left: -60%;
+    width: 160%;
+    height: auto;
+  }
+}
+
+/* A lit floor curving behind the devices, as in the reference. */
+.zm-showcase__horizon {
+  display: none;
+  position: absolute;
+  left: -25%;
+  right: -25%;
+  bottom: -62%;
+  height: 90%;
+  border-radius: 50%;
+  border-top: 1.5px solid rgb(94 234 212 / 0.4);
+  box-shadow:
+    0 -24px 70px -16px rgb(45 212 191 / 0.32),
+    inset 0 36px 70px -36px rgb(45 212 191 / 0.3);
+}
+
+@media (min-width: 1024px) {
+  .zm-showcase__horizon {
+    display: block;
+  }
+}
+
+/* Keeps the white copy above WCAG AA wherever it sits. */
+.zm-showcase__scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgb(8 30 56 / 0.86) 0%, rgb(8 30 56 / 0.6) 42%, rgb(8 30 56 / 0.08) 78%, transparent 100%),
+    linear-gradient(0deg, rgb(5 22 42 / 0.82) 0%, transparent 34%);
+}
+
+@media (max-width: 639px) {
+  .zm-showcase__scrim {
+    background:
+      linear-gradient(90deg, rgb(8 30 56 / 0.82) 0%, rgb(8 30 56 / 0.55) 60%, rgb(8 30 56 / 0.25) 100%),
+      linear-gradient(0deg, rgb(5 22 42 / 0.7) 0%, transparent 40%);
+  }
+}
+
+@media (min-width: 1280px) {
+  /* The copy no longer crosses the artwork, so the scrim only needs to hold
+     the left side and the floor. */
+  .zm-showcase__scrim {
+    background:
+      linear-gradient(90deg, rgb(8 30 56 / 0.7) 0%, rgb(8 30 56 / 0.35) 40%, transparent 60%),
+      linear-gradient(0deg, rgb(5 22 42 / 0.8) 0%, rgb(5 22 42 / 0.25) 30%, transparent 46%);
+  }
+}
+
+/* ── Copy ─────────────────────────────────────────────────────────────── */
+
+@media (min-width: 1280px) {
+  /* Left 58% of the panel, padding included. */
+  .zm-showcase__copy {
+    max-width: calc(58cqw - 3.5rem);
+  }
+
+  .zm-showcase__title {
+    font-size: clamp(2rem, 4.3cqw, 3.5rem);
+  }
+}
+
+@media (min-width: 1536px) {
+  .zm-showcase__copy {
+    max-width: calc(58cqw - 5rem);
+  }
+}
+
+/* ── Stage: devices beside the audience list ───────────────────────────── */
+
+/* Takes the height the copy leaves. Its minimum is the audience list, never
+   the devices, so it cannot push the panel taller. */
+.zm-showcase__stage {
+  flex: 1 1 0;
+  align-items: flex-end;
+  gap: 2rem;
+  margin-top: 1.25rem;
+}
+
+.zm-showcase__device-slot {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .zm-showcase__device-slot {
+    display: block;
+    position: relative;
+    flex: 1 1 0;
+    align-self: stretch;
+    min-width: 0;
+    container-type: size;
+    container-name: zm-devices;
+  }
+
+  /* The pair is 60em × 31.5em (device-mockups.jsx), so this em fits it to the
+     slot in both directions, up to 110% of its drawn size. */
+  .zm-showcase__devices {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    font-size: min(calc(100cqw / 60), calc(100cqh / 31.5), 11px);
+  }
+}
+
+/* Too small to read as a phone and a laptop: leave the space to the list. */
+@container zm-devices (max-width: 250px) or (max-height: 120px) {
+  .zm-showcase__devices {
+    display: none;
+  }
+}
+
+.zm-showcase__infra {
+  flex: 1 1 auto;
+}
+
+.zm-showcase__infra-title {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.zm-showcase__infra-break {
+  display: none;
+}
+
+.zm-showcase__audiences {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 1.25rem;
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+}
+
+@media (min-width: 1280px) {
+  .zm-showcase__infra {
+    flex: 0 0 auto;
+  }
+
+  .zm-showcase__audiences {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.3rem;
+    margin-top: 0.6rem;
+  }
+}
+
+/* Room for the reference's large, three-line heading. Below this height the
+   heading stays on one line, which keeps typical laptop windows (≈ 650–800px
+   tall) inside the sign-in column's height. */
+@media (min-width: 1280px) and (min-height: 880px) {
+  .zm-showcase__infra {
+    padding-bottom: 0.5rem;
+  }
+
+  .zm-showcase__infra-title {
+    font-size: 1.625rem;
+    line-height: 1.15;
+  }
+
+  .zm-showcase__infra-break {
+    display: inline;
+  }
+
+  .zm-showcase__audiences {
+    gap: 0.7rem;
+    margin-top: 1.1rem;
+    font-size: 0.9375rem;
+  }
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────── */
+
+/* A light travelling each route, and a pulse on each hub. */
+.zm-globe-flow {
+  animation: zm-globe-flow 3.6s linear infinite;
+}
+
+@keyframes zm-globe-flow {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.zm-globe-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: zm-globe-pulse 3s ease-out infinite;
+}
+
+@keyframes zm-globe-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  80%,
+  100% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zm-globe-flow {
+    display: none;
+  }
+
+  .zm-globe-pulse {
+    animation: none;
+    opacity: 0;
+  }
+}
