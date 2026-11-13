@@ -183,7 +183,9 @@ export default function Login() {
       showcase={<LoginShowcase />}
     >
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
-        <CardContent className="flex flex-col gap-6 p-6">
+        {/* Spacing scales with the window height (variables in the showcase
+            stylesheet) so the whole card fits one screen. */}
+        <CardContent className="flex flex-col gap-[var(--zm-card-gap,1.5rem)] p-[var(--zm-card-pad,1.5rem)]">
 
           {/* The emailed second factor (MSA-42). The password was right and a
               link is in the account's inbox; there is nothing left to type
@@ -229,7 +231,7 @@ export default function Login() {
           <AuthCardHeading title="Welcome back" description="Sign in to your ZoikoMeds account." />
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-[var(--zm-form-gap,1rem)]">
             {passwordReset && !error && (
               <div role="status" className="rounded-lg bg-teal/10 p-3 text-xs font-medium text-teal leading-snug">
                 Password updated. Sign in with your new password.
@@ -335,7 +337,7 @@ export default function Login() {
                 needs an administrator, not another attempt. */}
             {enrolmentRequired && (
               <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-foreground">
-                <Shield className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                <Shield className="mt-0.5 size-4 shrink-0 text-amber-600" />
                 <p>
                   This workspace requires two-factor authentication and this account has not set
                   it up yet. Ask a workspace administrator to enrol you, then sign in again.
@@ -348,7 +350,7 @@ export default function Login() {
               <div className="flex items-center justify-between text-xs">
                 <label className={cn(
                   "flex items-center gap-2 cursor-pointer transition-colors select-none",
-                  trustError ? "text-danger font-semibold" : "text-muted-foreground"
+                  trustError ? "text-danger font-semibold" : "font-medium text-foreground"
                 )}>
                   <input
                     type="checkbox"

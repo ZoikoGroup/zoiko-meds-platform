@@ -40,7 +40,9 @@ export default function ForgotPassword() {
       showcase={<LoginShowcase />}
     >
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
-        <CardContent className="flex flex-col gap-6 p-6">
+        {/* Spacing scales with the window height (variables in the showcase
+            stylesheet), as on the sign-in card. */}
+        <CardContent className="flex flex-col gap-[var(--zm-card-gap,1.5rem)] p-[var(--zm-card-pad,1.5rem)]">
           {/* Sign In | Create Account | Reset Password, shared with the other
               two auth pages so the card reads as one place. */}
           <AuthTabs active="reset-password" />
@@ -131,7 +133,7 @@ export default function ForgotPassword() {
                 description="We'll email you a link to reset it."
               />
 
-              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <form onSubmit={handleSubmit} className="flex flex-col gap-[var(--zm-form-gap,1rem)]">
                 {error && (
                   <div className="rounded-lg bg-destructive/10 p-3 text-xs font-medium text-destructive leading-snug">
                     ⚠️ {error}

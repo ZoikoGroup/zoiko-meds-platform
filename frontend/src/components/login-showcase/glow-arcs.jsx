@@ -7,13 +7,15 @@
  *
  * Everything left of the artwork stays above y = 14 units, which is above the
  * eyebrow line at every desktop width, so no line or node ever crosses text.
+ * The far end stops 30 units out (about 14% of the panel), which keeps it
+ * clear of the logo now that the artwork sits further left.
  */
 
 // [path, end node or null] — every route starts on a node painted in the
 // artwork; a null end runs off the top of the panel.
 const ROUTES = [
-  ['M18.8 14.8 Q-10 -1 -46 5', [-46, 5]],
-  ['M45.4 29.9 Q16 4 -20 10', [-20, 10]],
+  ['M18.8 14.8 Q-4 0 -30 4', [-30, 4]],
+  ['M45.4 29.9 Q18 4 -12 10', [-12, 10]],
   ['M73.6 24.9 Q58 4 30 -4', null],
 ]
 

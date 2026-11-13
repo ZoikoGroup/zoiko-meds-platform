@@ -30,7 +30,7 @@ import './login-showcase.css'
  * privacy page, and the site's legal and support pages.
  *
  * Desktop (xl and up) shows the full composition; the copy column is held to
- * the left 58% so it never runs over a face in the artwork. Narrower layouts
+ * the left 56% so it never runs over a face in the artwork. Narrower layouts
  * swap the artwork for the drawn network globe, which reads well behind text.
  */
 
@@ -90,17 +90,19 @@ export const LoginShowcase = memo(function LoginShowcase() {
       // tallest) never resizes it.
       className="zm-showcase dark relative isolate flex flex-col overflow-hidden text-white lg:sticky lg:top-0 lg:col-span-6 lg:min-h-screen lg:self-start xl:col-span-7"
     >
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10">
+      <div aria-hidden="true" className="zm-showcase__backdrop pointer-events-none absolute inset-0 -z-10">
         <NetworkGlobe className="zm-showcase__globe" />
+        <div className="zm-showcase__glow" />
         <div className="zm-showcase__art">
           <div className="zm-showcase__team" style={{ backgroundImage: `url(${careTeamArt})` }} />
+          <div className="zm-showcase__relight" />
           <GlowArcs className="zm-showcase__arcs" />
         </div>
         <div className="zm-showcase__horizon" />
         <div className="zm-showcase__scrim" />
       </div>
 
-      <div className="flex flex-1 flex-col px-6 pt-7 pb-5 sm:px-12 sm:pt-8 lg:px-10 xl:px-14 2xl:px-20">
+      <div className="zm-showcase__inner flex flex-1 flex-col px-6 pt-7 pb-5 sm:px-12 sm:pt-8 lg:px-10 xl:px-14 2xl:px-20">
         <Brand className="origin-left scale-110 sm:scale-125" />
 
         <motion.div
@@ -109,7 +111,7 @@ export const LoginShowcase = memo(function LoginShowcase() {
           transition={{ duration: 0.5 }}
           className="zm-showcase__copy my-auto flex max-w-[38rem] flex-col py-5 lg:py-4"
         >
-          <p className="flex items-center gap-3 text-[10px] font-semibold tracking-[0.14em] whitespace-nowrap text-teal-200/90 uppercase sm:text-xs sm:tracking-[0.22em]">
+          <p className="zm-showcase__eyebrow flex items-center gap-3 text-[10px] font-semibold tracking-[0.14em] whitespace-nowrap text-teal-200/90 uppercase sm:text-xs sm:tracking-[0.22em]">
             Global medicine-availability platform
             <span aria-hidden="true" className="hidden h-0.5 w-14 shrink-0 rounded-full bg-gradient-to-r from-teal-300 to-teal-300/0 sm:block" />
           </p>
@@ -125,30 +127,33 @@ export const LoginShowcase = memo(function LoginShowcase() {
             </span>
           </h1>
 
-          <p className="mt-4 max-w-[34rem] text-sm leading-relaxed text-slate-200/85 sm:text-base">
+          <p className="zm-showcase__lede mt-4 max-w-[34rem] text-sm leading-relaxed text-slate-200/85 sm:text-base">
             A global platform that connects patients, pharmacies and healthcare ecosystems with
             real-time, trusted medicine-availability signals.
           </p>
 
-          <ul className="mt-5 grid grid-cols-5 divide-x divide-white/15 sm:mt-6 lg:mt-5">
+          <ul className="zm-showcase__features mt-5 grid grid-cols-5 sm:mt-6 lg:mt-5">
             {FEATURES.map(({ icon: Icon, label, accent }) => (
-              <li key={label} className="flex flex-col items-center gap-2 px-1 text-center sm:px-2">
+              <li key={label} className="zm-showcase__feature flex flex-col items-center gap-2 px-1 text-center sm:px-2">
                 <Icon
-                  className={cn('size-7 sm:size-8 xl:size-9', accent ? 'text-teal-300' : 'text-white')}
+                  className={cn(
+                    'zm-showcase__feature-icon size-7 sm:size-8 xl:size-9',
+                    accent ? 'text-teal-300' : 'text-white',
+                  )}
                   strokeWidth={1.5}
                   aria-hidden="true"
                 />
-                <span className="text-[10px] leading-tight font-semibold text-slate-100 sm:text-xs xl:text-[clamp(11px,1.2cqw,13px)]">
+                <span className="zm-showcase__feature-label text-[10px] leading-tight font-semibold text-slate-50 sm:text-xs xl:text-[clamp(11px,1.2cqw,13px)]">
                   {label}
                 </span>
               </li>
             ))}
           </ul>
 
-          <div className="mt-5 flex sm:mt-6 lg:mt-5">
+          <div className="zm-showcase__cta mt-5 flex sm:mt-6 lg:mt-5">
             <ExternalLink
               href={`${SITE}/overview`}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/30 bg-white/5 px-4.5 py-3 text-[13px] font-semibold text-white backdrop-blur-sm transition hover:border-white/45 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-300 sm:text-sm"
+              className="zm-showcase__cta-link inline-flex items-center justify-center gap-2 rounded-xl border border-white/30 bg-white/5 px-4.5 py-3 text-[13px] font-semibold text-white backdrop-blur-sm transition hover:border-white/45 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-300 sm:text-sm"
             >
               <CirclePlay className="size-[18px] shrink-0" aria-hidden="true" />
               See How It Works
@@ -161,16 +166,16 @@ export const LoginShowcase = memo(function LoginShowcase() {
             <DeviceMockups className="zm-showcase__devices" />
           </div>
           <div className="zm-showcase__infra">
-            <h2 className="zm-showcase__infra-title border-l-[3px] border-teal-300 pl-3 font-bold text-white">
+            <h2 className="zm-showcase__infra-title border-l-[3px] border-teal-300 pl-3 font-extrabold tracking-tight text-white">
               A Trusted <br className="zm-showcase__infra-break" />
               Healthcare <br className="zm-showcase__infra-break" />
               Infrastructure
             </h2>
             <ul className="zm-showcase__audiences">
               {AUDIENCES.map((audience) => (
-                <li key={audience} className="flex items-center gap-2.5 text-slate-100">
-                  <span className="grid size-5 shrink-0 place-items-center rounded-full bg-teal-400 text-[#05283f]">
-                    <Check className="size-3" strokeWidth={3.2} aria-hidden="true" />
+                <li key={audience} className="flex items-center gap-2.5 font-semibold text-white">
+                  <span className="zm-showcase__check grid size-5 shrink-0 place-items-center rounded-full bg-teal-400 text-white">
+                    <Check className="size-3" strokeWidth={3.4} aria-hidden="true" />
                   </span>
                   {audience}
                 </li>
@@ -179,7 +184,7 @@ export const LoginShowcase = memo(function LoginShowcase() {
           </div>
         </div>
 
-        <footer className="mt-4 flex flex-col gap-2 border-t border-white/10 pt-3 text-[11px] text-slate-300/80 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-start xl:flex-row xl:items-center">
+        <footer className="zm-showcase__footer mt-4 flex flex-col gap-2 border-t border-white/10 pt-3 text-[11px] text-slate-300/80 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-start xl:flex-row xl:items-center">
           <nav aria-label="Legal and support">
             <ul className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {FOOTER_LINKS.map(({ label, to, href, icon: Icon }, i) => (

@@ -1,0 +1,105 @@
+/*
+ * The auth card (sign in, create account, reset password) is light whatever
+ * the app theme: a white card on the dark healthcare showcase, as in the
+ * design. AuthLayout puts .zm-auth-light on the card's wrapper only when a
+ * page supplies the showcase, so no other page carries the class.
+ *
+ * Everything inside the card is drawn from theme tokens (bg-card,
+ * text-foreground, border-input, text-teal, …), so redefining the tokens here
+ * is all most of it needs. The rules after the tokens cover what a token
+ * cannot: the gradient on the primary button, the native checkbox, the card's
+ * shadow on the dark page, and the phone input's country list, which opens in
+ * a portal outside this wrapper.
+ *
+ * Contrast on white (WCAG 2.2): ink 15.8:1, muted text 5.4:1, teal links
+ * 5.5:1, error text 4.8:1, input borders 3.1:1 (1.4.11), and white button text
+ * at least 5.3:1 across the middle of the gradient, where the label sits.
+ */
+
+.zm-auth-light,
+body:has(.zm-auth-light) [data-radix-popper-content-wrapper] {
+  color-scheme: light;
+
+  /* Surfaces & ink: white card, dark navy text. */
+  --background: #f8fafc;
+  --foreground: #0c2340;
+  --card: #ffffff;
+  --card-foreground: #0c2340;
+  --popover: #ffffff;
+  --popover-foreground: #0c2340;
+
+  /* Brand. Teal is one step darker than the app's light theme so small teal
+     text (Forgot password?, Terms, Contact Support) passes AA on white. */
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+  --teal: #0f766e;
+  --teal-foreground: #ffffff;
+
+  /* Neutral roles */
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1e293b;
+  --muted: #f1f5f9;
+  --muted-foreground: #5b6b80;
+  --accent: #eff4fb;
+  --accent-foreground: #0c2340;
+
+  /* Status */
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --warning: #d97706;
+  --warning-foreground: #ffffff;
+  --danger: #dc2626;
+  --danger-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --info: #0284c7;
+  --info-foreground: #ffffff;
+
+  /* Lines & focus. Hairlines stay light; field outlines are the one place a
+     light grey would fall under 3:1, so --input is a mid slate. */
+  --border: #e2e8f0;
+  --border-strong: #d3dbe6;
+  --input: #8593a8;
+  --ring: #0d9488;
+}
+
+/* A soft, deep shadow: the card sits on the dark page, not on white. Its
+   sideways reach stays under the ~48px gap to the showcase at 1280px, so the
+   left-hand panel is untouched. */
+.zm-auth-light [data-slot='card'] {
+  border-color: rgb(255 255 255 / 0.85);
+  box-shadow:
+    0 1px 2px rgb(2 12 27 / 0.12),
+    0 22px 40px -18px rgb(2 12 27 / 0.6);
+}
+
+/* The primary action on each card is the teal Button variant (Continue
+   securely, Create account, Send reset link, Back to Sign In). Here it takes
+   the brand's navy-to-teal gradient with white text. */
+.zm-auth-light [data-slot='button'].bg-teal {
+  height: 2.5rem;
+  background-image: linear-gradient(90deg, #1e3a8a 0%, #166789 50%, #0d9488 100%);
+  color: #ffffff;
+  font-size: 0.9375rem;
+  box-shadow: 0 10px 24px -12px rgb(13 148 136 / 0.75);
+}
+
+.zm-auth-light [data-slot='button'].bg-teal:hover {
+  filter: brightness(1.08);
+}
+
+/* The card's logo (AuthCardHeading) is full size where the window has the
+   height for it. On shorter laptop windows it drops to three quarters, so the
+   sign-in card still fits one screen and the longer create-account form
+   scrolls barely further than before. Below 700px it is hidden altogether
+   (a utility on the element). */
+@media (min-width: 1024px) and (max-height: 819px) {
+  .zm-auth-light .zm-auth-logo {
+    zoom: 0.75;
+  }
+}
+
+/* Native checkbox (Trust this device): light box, teal when ticked. */
+.zm-auth-light input[type='checkbox'] {
+  accent-color: #0d9488;
+}

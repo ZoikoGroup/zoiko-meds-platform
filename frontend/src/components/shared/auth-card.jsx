@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { KeyRound, LogIn, UserPlus } from 'lucide-react'
-import { BrandMark } from '@/components/shared/brand'
+import { Brand } from '@/components/shared/brand'
 import { cn } from '@/lib/utils'
 
 /**
@@ -21,12 +21,18 @@ const TABS = [
 const TAB_BASE =
   'relative flex items-center justify-center gap-1.5 rounded-lg px-1.5 py-2.5 text-[11px] font-semibold whitespace-nowrap transition-colors sm:text-xs'
 
-/** Sign In | Create Account | Reset Password. `active` is one of the ids above. */
+/**
+ * Sign In | Create Account | Reset Password. `active` is one of the ids above.
+ *
+ * The card is always light (AuthLayout's zm-auth-light scope), so the tabs
+ * are drawn from its tokens alone: a light-grey track, the current tab a white
+ * surface with dark navy text and the blue-to-teal underline.
+ */
 export function AuthTabs({ active }) {
   return (
     <nav
       aria-label="Account access"
-      className="grid grid-cols-3 gap-1 rounded-xl border border-border/40 bg-muted/80 p-1 dark:border-slate-800/80 dark:bg-slate-900/60"
+      className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-muted p-1"
     >
       {TABS.map(({ id, to, label, icon: Icon }) =>
         id === active ? (
@@ -36,10 +42,10 @@ export function AuthTabs({ active }) {
             aria-current="page"
             className={cn(
               TAB_BASE,
-              'border border-transparent bg-card text-foreground shadow-xs dark:border-slate-700/50 dark:bg-slate-800 dark:text-slate-50',
+              'border border-border/80 bg-card font-bold text-foreground shadow-sm',
             )}
           >
-            <Icon className="hidden size-3.5 shrink-0 text-primary sm:block dark:text-teal" aria-hidden="true" />
+            <Icon className="hidden size-3.5 shrink-0 text-teal sm:block" aria-hidden="true" />
             {label}
             <span
               aria-hidden="true"
@@ -52,7 +58,7 @@ export function AuthTabs({ active }) {
             to={to}
             className={cn(
               TAB_BASE,
-              'text-muted-foreground hover:bg-card/60 hover:text-foreground dark:text-slate-400 dark:hover:bg-slate-800/50 dark:hover:text-slate-100',
+              'text-muted-foreground hover:bg-card/70 hover:text-foreground',
             )}
           >
             <Icon className="hidden size-3.5 shrink-0 sm:block" aria-hidden="true" />
@@ -64,15 +70,19 @@ export function AuthTabs({ active }) {
   )
 }
 
-/** Brand mark, title and one line of context at the top of each form. */
+/**
+ * ZoikoMeds logo, title and one line of context at the top of each form. On
+ * short desktop windows the logo steps aside so the whole card fits on
+ * screen; the page's own logo stays in view either way.
+ */
 export function AuthCardHeading({ title, description }) {
   return (
     <div className="flex flex-col items-center gap-2.5 text-center">
-      <BrandMark size={40} />
+      <Brand size="large" className="zm-auth-logo lg:[@media(max-height:700px)]:hidden" />
       <div className="flex flex-col gap-1">
-        <h2 className="text-xl leading-tight font-bold tracking-tight text-foreground">{title}</h2>
+        <h2 className="text-2xl leading-tight font-extrabold tracking-tight text-foreground">{title}</h2>
         {description && (
-          <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
+          <p className="text-[13px] leading-relaxed text-muted-foreground">{description}</p>
         )}
       </div>
     </div>

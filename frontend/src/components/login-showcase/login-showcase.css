@@ -1,26 +1,131 @@
 /*
- * Sign-in page showcase (the left-hand panel). Every rule is scoped to
- * .zm-showcase / .zm-globe-* class names that exist only in
- * components/login-showcase, so nothing here can reach the sign-in form or any
- * other page.
+ * Auth pages (sign in, create account, reset password): the page background
+ * and the left-hand showcase. Every rule is scoped to .zm-auth-page /
+ * .zm-showcase / .zm-globe-* class names that exist only on those pages, so
+ * nothing here can reach any other page.
  *
- * One rule governs all the sizing below: this panel must never be taller than
- * the window or the sign-in column, whichever is taller. If it were, the shared
- * grid row would grow and move the form. So nothing decorative takes part in
- * the panel's height: the artwork is absolutely positioned, and the devices
- * scale to whatever room the text leaves them.
+ * Two rules govern the sizing below:
+ * - This panel must never be taller than the window or the auth column,
+ *   whichever is taller, or the shared grid row would grow and move the card.
+ *   So nothing decorative takes part in its height: the artwork is absolutely
+ *   positioned, and the devices scale to whatever room the text leaves them.
+ * - On desktop the page should fit one window. Vertical spacing and a few
+ *   sizes are therefore set in vh (clamped), so they shrink with the window
+ *   rather than pushing the footer or the card below it.
  */
+
+/* ── Page ─────────────────────────────────────────────────────────────── */
+
+/* One navy/teal composition behind both columns, so the card sits on the same
+   background as the showcase instead of on a separate light panel. AuthLayout
+   adds this class to its wrapper when a page supplies the showcase. The
+   variables size the auth card's spacing from the window height. */
+.zm-auth-page {
+  --zm-page-pad-y: clamp(0.5rem, 2.5vh, 2rem);
+  --zm-card-pad: clamp(0.875rem, 2.5vh, 1.5rem);
+  --zm-card-gap: clamp(0.625rem, 1.9vh, 1.5rem);
+  --zm-form-gap: clamp(0.5rem, 1.4vh, 1rem);
+  background:
+    radial-gradient(32% 44% at 80% 50%, rgb(45 212 191 / 0.13) 0%, transparent 72%),
+    radial-gradient(46% 40% at 44% 16%, rgb(14 116 164 / 0.36) 0%, transparent 72%),
+    radial-gradient(40% 28% at 18% 100%, rgb(96 165 250 / 0.22) 0%, transparent 72%),
+    linear-gradient(0deg, rgb(5 22 42 / 0.5) 0%, transparent 36%),
+    linear-gradient(165deg, #0c2541 0%, #0a2a4c 45%, #0b3556 100%);
+}
+
+@media (min-width: 1024px) {
+  /* Held to the window, like the pinned showcase in front of it. */
+  .zm-auth-page {
+    background-attachment: fixed;
+  }
+}
+
+/* Desktop with the artwork (the showcase ends at 58.3% of the window): the
+   artwork's light carries on past the panel edge instead of stopping at it,
+   as in the reference, so the page reads as one background. Matched to the
+   artwork's own edge colours — globe blue at the top, the room's mid blue at
+   the doctors' height — then easing to navy, with the reference's teal glow
+   in the right margin and a lit floor under the card. All of it sits behind
+   the card; nothing is laid over it. Positions are in window % (the
+   background is fixed). The original layers follow unchanged. */
+@media (min-width: 1280px) {
+  .zm-auth-page {
+    background:
+      radial-gradient(22% 30% at 57% 14%, rgb(22 112 176 / 0.55) 0%, transparent 72%),
+      radial-gradient(20% 34% at 58% 44%, rgb(30 88 140 / 0.5) 0%, transparent 75%),
+      radial-gradient(24% 34% at 92% 58%, rgb(16 122 150 / 0.5) 0%, transparent 72%),
+      radial-gradient(48% 24% at 78% 100%, rgb(64 130 170 / 0.38) 0%, transparent 72%),
+      radial-gradient(32% 44% at 80% 50%, rgb(45 212 191 / 0.13) 0%, transparent 72%),
+      radial-gradient(46% 40% at 44% 16%, rgb(14 116 164 / 0.36) 0%, transparent 72%),
+      radial-gradient(40% 28% at 18% 100%, rgb(96 165 250 / 0.22) 0%, transparent 72%),
+      linear-gradient(0deg, rgb(5 22 42 / 0.5) 0%, transparent 36%),
+      linear-gradient(165deg, #0c2541 0%, #0a2a4c 45%, #0b3556 100%);
+    background-attachment: fixed;
+  }
+}
 
 .zm-showcase {
   /* cqw units below are a share of this panel's width. */
   container-type: inline-size;
-  background:
-    radial-gradient(60% 45% at 78% 20%, rgb(14 116 164 / 0.42) 0%, transparent 70%),
-    radial-gradient(48% 30% at 22% 100%, rgb(96 165 250 / 0.26) 0%, transparent 72%),
-    linear-gradient(170deg, #0c2541 0%, #0a2a4c 45%, #0b3556 100%);
 }
 
 /* ── Backdrop ─────────────────────────────────────────────────────────── */
+
+/* The showcase has no background of its own. Below 1280px its layers fade out
+   where it meets the auth column (right edge on desktop, bottom edge when
+   stacked), so no seam shows between the two; from 1280px the backdrop runs
+   on under the auth column instead (below). */
+.zm-showcase__backdrop {
+  -webkit-mask-image: linear-gradient(to top, transparent 0%, #000 14%);
+  mask-image: linear-gradient(to top, transparent 0%, #000 14%);
+}
+
+@media (min-width: 1024px) {
+  .zm-showcase__backdrop {
+    -webkit-mask-image: linear-gradient(to left, transparent 0%, #000 10%);
+    mask-image: linear-gradient(to left, transparent 0%, #000 10%);
+  }
+}
+
+/* Desktop with the artwork: one background for the whole page, with no line
+   where the columns meet. The panel stops clipping, and the backdrop runs on
+   under the auth column to the page's right edge (that column is 5/12 of the
+   page, i.e. 5/7 of this panel's width), so nothing has to fade out at the
+   column line. The auth column paints after this panel and has no background
+   of its own, so the card stays on top, unchanged. The page wrapper's
+   overflow: clip keeps anything wider from scrolling. */
+@media (min-width: 1280px) {
+  .zm-showcase {
+    overflow: visible;
+  }
+
+  .zm-showcase__backdrop {
+    right: -71.4286cqw;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
+/* Navy → blue → teal light behind the artwork and the devices: the globe's
+   atmosphere spilling past the artwork, blue light behind the care team, and
+   a teal floor glow. Desktop only, where the artwork is shown. It spans the
+   page with the backdrop, so the light runs on behind the card. */
+.zm-showcase__glow {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .zm-showcase__glow {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(30cqw 24cqw at 62cqw 10cqw, rgb(56 189 248 / 0.3) 0%, transparent 70%),
+      radial-gradient(44cqw 46cqw at 92cqw 32cqw, rgb(30 120 196 / 0.45) 0%, transparent 72%),
+      radial-gradient(58cqw 24cqw at 34cqw 100%, rgb(20 184 166 / 0.28) 0%, transparent 72%),
+      linear-gradient(155deg, rgb(10 38 72 / 0) 0%, rgb(14 74 124 / 0.3) 55%, rgb(13 112 128 / 0.22) 100%);
+  }
+}
 
 /* Drawn network globe: the backdrop below xl, where the artwork would have to
    sit behind the copy. Up and to the right, partly off the panel. */
@@ -50,10 +155,18 @@
   }
 }
 
-/* Care team in front of the globe, from the reference design. The box keeps
-   the artwork's 876 × 1024 shape at 46% of the panel width, pinned to the top
-   right; its left edge and lower coats fade into the panel. With the copy held
-   to the left 58% (below), the faces always sit clear of the text. */
+/* Care team in front of the globe, from the reference design, always at the
+   artwork's own 876 × 1024 shape (never stretched).
+   Desktop: anchored to the card, as in the reference. The photo ends at the
+   outer rim of the second doctor's glasses, so its right edge is placed
+   where that rim meets the card's left edge (the last 2% tucks behind the
+   opaque card); the photo's edge is hidden by the card rather than faded
+   out at the column line, and both faces stay whole. The card's left edge
+   is worked out from the grid: this panel's width, plus the auth column's
+   side padding (3rem) or, where the column is wider than the 30rem card
+   needs, half the spare width. The width is as large as the text allows:
+   the first doctor's profile (12.8% into the photo) starts just past the
+   copy column (56%), at most 58% of the panel. */
 .zm-showcase__art {
   display: none;
 }
@@ -64,11 +177,13 @@
   }
 
   .zm-showcase__art {
+    --zm-card-left: calc(100cqw + max(3rem, (71.4286cqw - 30rem) / 2));
+    --zm-art-w: min(58cqw, calc((var(--zm-card-left) - 58cqw) / 0.852));
     display: block;
     position: absolute;
     top: 0;
-    right: -2cqw;
-    width: 46cqw;
+    left: calc(var(--zm-card-left) - 0.98 * var(--zm-art-w));
+    width: var(--zm-art-w);
     aspect-ratio: 876 / 1024;
   }
 
@@ -78,14 +193,43 @@
     background-position: center;
     background-repeat: no-repeat;
     background-size: cover;
+    filter: brightness(1.1) saturate(1.15) contrast(1.04);
+  }
+
+  /* Left strip, right rim (which falls behind the card), lower coats, and
+     wide fades on the top-right corner (the globe's glare) and bottom-right
+     corner (the second doctor's shoulder), for wherever the photo's edge
+     shows above or below the card — the short reset-password card leaves
+     more of it in view. The faces sit outside every fade. */
+  .zm-showcase__team,
+  .zm-showcase__relight {
     -webkit-mask-image:
-      linear-gradient(to right, transparent 0%, #000 26%),
-      linear-gradient(to bottom, #000 60%, transparent 100%);
+      linear-gradient(to right, transparent 0%, #000 11%, #000 96%, transparent 100%),
+      linear-gradient(to bottom, #000 70%, transparent 100%),
+      radial-gradient(48% 38% at 100% 0%, transparent 0%, rgb(0 0 0 / 0.35) 45%, #000 100%),
+      radial-gradient(26% 36% at 100% 100%, transparent 0%, rgb(0 0 0 / 0.4) 45%, #000 100%);
     -webkit-mask-composite: source-in;
     mask-image:
-      linear-gradient(to right, transparent 0%, #000 26%),
-      linear-gradient(to bottom, #000 60%, transparent 100%);
+      linear-gradient(to right, transparent 0%, #000 11%, #000 96%, transparent 100%),
+      linear-gradient(to bottom, #000 70%, transparent 100%),
+      radial-gradient(48% 38% at 100% 0%, transparent 0%, rgb(0 0 0 / 0.35) 45%, #000 100%),
+      radial-gradient(26% 36% at 100% 100%, transparent 0%, rgb(0 0 0 / 0.4) 45%, #000 100%);
     mask-composite: intersect;
+  }
+
+  /* Evens out the light on the second doctor. The globe's glare sits right
+     behind his head and rims his scalp and brow brighter than anything on
+     the first doctor; a soft navy shade (about a third on the glare, an
+     eighth on his face, fading to nothing) brings both under one room's
+     light and leans his highlights toward the room's blue. It takes the
+     photo's own mask (above), so it only ever darkens photo pixels; the
+     first doctor sits outside both ellipses and is untouched. */
+  .zm-showcase__relight {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(24% 20% at 86% 19%, rgb(8 34 64 / 0.34) 0%, transparent 100%),
+      radial-gradient(22% 24% at 79% 41%, rgb(10 40 76 / 0.14) 0%, transparent 100%);
   }
 
   /* Carries the artwork's routes out over the open sky to its left. */
@@ -119,6 +263,27 @@
   }
 }
 
+@media (min-width: 1280px) {
+  /* Brighter, and carried on past the column line. The backdrop now spans
+     the page, so the arc is sized from the panel (cqw); it runs to the
+     card's left edge and fades out before it (the page's own floor glow
+     lights the floor under and beside the card). Stopping short of the card
+     matters: a masked layer reaching under the card makes the browser give
+     the card a compositing layer of its own, which re-rasterises its
+     rounded edges slightly differently. */
+  .zm-showcase__horizon {
+    left: -25cqw;
+    right: auto;
+    width: calc(125cqw + max(3rem, (71.4286cqw - 30rem) / 2) - 1px);
+    border-top-color: rgb(94 234 212 / 0.55);
+    box-shadow:
+      0 -28px 80px -16px rgb(45 212 191 / 0.42),
+      inset 0 40px 80px -36px rgb(45 212 191 / 0.38);
+    -webkit-mask-image: linear-gradient(to right, #000 70%, transparent 100%);
+    mask-image: linear-gradient(to right, #000 70%, transparent 100%);
+  }
+}
+
 /* Keeps the white copy above WCAG AA wherever it sits. */
 .zm-showcase__scrim {
   position: absolute;
@@ -138,30 +303,140 @@
 
 @media (min-width: 1280px) {
   /* The copy no longer crosses the artwork, so the scrim only needs to hold
-     the left side and the floor. */
+     the text column and the footer line; the artwork and the devices stay
+     unshaded. The backdrop now spans the page, so both shades are measured
+     from this panel and fade out on every side — the text shade by 52% of
+     the panel, the footer shade as a wide, soft ellipse — leaving no edge
+     at the column line and nothing darkened under the card. */
   .zm-showcase__scrim {
     background:
-      linear-gradient(90deg, rgb(8 30 56 / 0.7) 0%, rgb(8 30 56 / 0.35) 40%, transparent 60%),
-      linear-gradient(0deg, rgb(5 22 42 / 0.8) 0%, rgb(5 22 42 / 0.25) 30%, transparent 46%);
+      linear-gradient(90deg, rgb(8 30 56 / 0.55) 0, rgb(8 30 56 / 0.25) 38cqw, transparent 52cqw),
+      radial-gradient(85cqw 24% at 40cqw 100%, rgb(5 22 42 / 0.6) 0%, rgb(5 22 42 / 0.15) 50%, transparent 100%);
   }
 }
 
 /* ── Copy ─────────────────────────────────────────────────────────────── */
 
-@media (min-width: 1280px) {
-  /* Left 58% of the panel, padding included. */
+/* Desktop: vertical rhythm follows the window height (see the note at the top),
+   from roomy on a 1080p screen to compact on a 720p one. */
+@media (min-width: 1024px) {
+  .zm-showcase__inner {
+    padding-top: clamp(1rem, 3.6vh, 2rem);
+    padding-bottom: clamp(0.75rem, 2.2vh, 1.25rem);
+  }
+
   .zm-showcase__copy {
-    max-width: calc(58cqw - 3.5rem);
+    padding-block: clamp(0.25rem, 1.6vh, 1rem);
   }
 
   .zm-showcase__title {
-    font-size: clamp(2rem, 4.3cqw, 3.5rem);
+    margin-top: clamp(0.5rem, 1.6vh, 0.875rem);
+    font-size: clamp(1.75rem, 4.7vh, 2.25rem);
+  }
+
+  .zm-showcase__lede {
+    margin-top: clamp(0.5rem, 1.8vh, 1rem);
+    font-size: clamp(0.875rem, 2.1vh, 1rem);
+  }
+
+  .zm-showcase__features {
+    margin-top: clamp(0.75rem, 2.4vh, 1.25rem);
+  }
+
+  .zm-showcase__features li {
+    gap: clamp(0.3rem, 1vh, 0.5rem);
+  }
+
+  .zm-showcase__feature-icon {
+    width: clamp(1.5rem, 4vh, 2.25rem);
+    height: clamp(1.5rem, 4vh, 2.25rem);
+  }
+
+  .zm-showcase__cta {
+    margin-top: clamp(0.75rem, 2.4vh, 1.25rem);
+  }
+
+  .zm-showcase__cta-link {
+    padding-block: clamp(0.5rem, 1.5vh, 0.75rem);
+  }
+
+  .zm-showcase__footer {
+    margin-top: clamp(0.5rem, 1.8vh, 1.25rem);
+    padding-top: clamp(0.5rem, 1.4vh, 1rem);
   }
 }
 
-@media (min-width: 1536px) {
+/* Five features, evenly spaced, split by short separators that fade at both
+   ends. White icons (the shield in teal) with a soft teal glow. */
+.zm-showcase__feature {
+  position: relative;
+}
+
+.zm-showcase__feature + .zm-showcase__feature::before {
+  content: '';
+  position: absolute;
+  top: 6%;
+  bottom: 6%;
+  left: 0;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0) 0%,
+    rgb(255 255 255 / 0.22) 28%,
+    rgb(255 255 255 / 0.22) 72%,
+    rgb(255 255 255 / 0) 100%
+  );
+}
+
+.zm-showcase__feature-icon {
+  filter: drop-shadow(0 0 0.5rem rgb(45 212 191 / 0.5));
+}
+
+@media (min-width: 1280px) {
+  /* Side padding follows the panel width, as in the reference (about 5.5%),
+     which leaves the copy and the devices more room than a fixed rem did. */
+  .zm-showcase__inner {
+    --zm-pad-x: clamp(2.5rem, 5.5cqw, 4rem);
+    padding-inline: var(--zm-pad-x);
+  }
+
+  /* Left 56% of the panel, padding included: the first doctor's profile
+     starts just past it (see .zm-showcase__art). */
   .zm-showcase__copy {
-    max-width: calc(58cqw - 5rem);
+    max-width: calc(56cqw - var(--zm-pad-x));
+  }
+
+  /* Type and spacing grow on tall windows toward the reference's proportions
+     (a 55px title and roomier rows at 1080p) and stay as compact as before at
+     720p — the "Nvh − n" terms are what make them grow late. */
+  .zm-showcase__title {
+    margin-top: clamp(0.5rem, 3vh - 0.75rem, 1.25rem);
+    font-size: clamp(1.75rem, min(4.9cqw, 6.6vh - 1rem), 3.5rem);
+  }
+
+  /* Held a little short of the copy column: its first line runs at the
+     height of the first doctor's profile. */
+  .zm-showcase__lede {
+    max-width: min(34rem, calc(54cqw - var(--zm-pad-x)));
+    margin-top: clamp(0.5rem, 3vh - 0.75rem, 1.5rem);
+    font-size: clamp(0.875rem, min(1.6cqw, 2.6vh - 0.25rem), 1.1875rem);
+  }
+
+  .zm-showcase__features {
+    margin-top: clamp(0.75rem, 5vh - 1.25rem, 2rem);
+  }
+
+  .zm-showcase__cta {
+    margin-top: clamp(0.75rem, 5vh - 1.25rem, 2rem);
+  }
+
+  .zm-showcase__features li {
+    gap: clamp(0.4rem, 1.2vh, 0.75rem);
+    padding-inline: clamp(0.375rem, 0.9cqw, 0.875rem);
+  }
+
+  .zm-showcase__feature-label {
+    line-height: 1.3;
   }
 }
 
@@ -173,7 +448,7 @@
   flex: 1 1 0;
   align-items: flex-end;
   gap: 2rem;
-  margin-top: 1.25rem;
+  margin-top: clamp(0.5rem, 2vh, 1.25rem);
 }
 
 .zm-showcase__device-slot {
@@ -181,6 +456,14 @@
 }
 
 @media (min-width: 1280px) {
+  /* Runs past the right padding to 97% of the panel, as the reference does,
+     so the audience list sits right of the laptop and the devices get the
+     width it frees. Content never reaches the auth column. */
+  .zm-showcase__stage {
+    gap: clamp(1.25rem, 2.6cqw, 2.25rem);
+    margin-right: calc(3cqw - var(--zm-pad-x));
+  }
+
   .zm-showcase__device-slot {
     display: block;
     position: relative;
@@ -191,13 +474,13 @@
     container-name: zm-devices;
   }
 
-  /* The pair is 60em × 31.5em (device-mockups.jsx), so this em fits it to the
-     slot in both directions, up to 110% of its drawn size. */
+  /* The pair is 61em × 31.5em (device-mockups.jsx), so this em fits it to the
+     slot in both directions, up to 130% of its drawn size. */
   .zm-showcase__devices {
     position: absolute;
     bottom: 0;
     left: 0;
-    font-size: min(calc(100cqw / 60), calc(100cqh / 31.5), 11px);
+    font-size: min(calc(100cqw / 61), calc(100cqh / 31.5), 13px);
   }
 }
 
@@ -229,28 +512,25 @@
   font-size: 0.8125rem;
 }
 
+.zm-showcase__check {
+  background-image: linear-gradient(160deg, #5eead4 0%, #14b8a6 100%);
+  box-shadow:
+    0 0 0 3px rgb(45 212 191 / 0.16),
+    0 0 14px rgb(45 212 191 / 0.5);
+}
+
+/* Desktop: the reference's three-line heading over a one-column list, at
+   every window size. A narrow, fixed-shape block leaves the devices most of
+   the row; its type follows the window so it fits a 720p screen too. */
 @media (min-width: 1280px) {
   .zm-showcase__infra {
     flex: 0 0 auto;
-  }
-
-  .zm-showcase__audiences {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.3rem;
-    margin-top: 0.6rem;
-  }
-}
-
-/* Room for the reference's large, three-line heading. Below this height the
-   heading stays on one line, which keeps typical laptop windows (≈ 650–800px
-   tall) inside the sign-in column's height. */
-@media (min-width: 1280px) and (min-height: 880px) {
-  .zm-showcase__infra {
-    padding-bottom: 0.5rem;
+    width: clamp(13.5rem, 23.5cqw, 17rem);
+    padding-bottom: clamp(0.25rem, 1vh, 0.75rem);
   }
 
   .zm-showcase__infra-title {
-    font-size: 1.625rem;
+    font-size: clamp(1.0625rem, min(2.3cqw, 2.9vh), 1.75rem);
     line-height: 1.15;
   }
 
@@ -259,9 +539,25 @@
   }
 
   .zm-showcase__audiences {
-    gap: 0.7rem;
-    margin-top: 1.1rem;
-    font-size: 0.9375rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(0.3rem, 1.15vh, 0.8rem);
+    margin-top: clamp(0.5rem, 1.7vh, 1.25rem);
+    font-size: clamp(0.8125rem, min(1.4cqw, 1.9vh), 1rem);
+  }
+
+  /* Vertical rhythm a notch tighter than the lg values above, so the
+     devices keep more of the height on 720–900px windows. */
+  .zm-showcase__copy {
+    padding-block: clamp(0.125rem, 0.9vh, 0.75rem);
+  }
+
+  .zm-showcase__feature-icon {
+    width: clamp(1.5rem, 3.6vh, 2.25rem);
+    height: clamp(1.5rem, 3.6vh, 2.25rem);
+  }
+
+  .zm-showcase__stage {
+    margin-top: clamp(0.25rem, 1vh, 1rem);
   }
 }
 

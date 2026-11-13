@@ -18,8 +18,8 @@ import { cn } from '@/lib/utils'
  *
  * Every dimension is in em, so the whole pair scales from one font-size. The
  * showcase sets that font-size from the space it has left (see
- * .zm-showcase__devices in login-showcase.css); at 10px the pair is 60em × 31em,
- * i.e. 600 × 310 px. Text sizes are set on leaf elements only, so containers
+ * .zm-showcase__devices in login-showcase.css); at 10px the pair is 61em × 31.5em,
+ * i.e. 610 × 315 px. Text sizes are set on leaf elements only, so containers
  * keep measuring in the root em.
  */
 
@@ -70,7 +70,7 @@ function Capsule({ className }) {
 
 function Phone() {
   return (
-    <div className="relative z-10 h-[30.5em] w-[15em] shrink-0 rounded-[2.6em] border-[0.35em] border-slate-800 bg-slate-950 p-[0.3em] shadow-[0_2.4em_4.5em_-1.2em_rgba(0,0,0,0.85)] ring-1 ring-white/15">
+    <div className="relative z-10 h-[31.5em] w-[16em] shrink-0 rounded-[2.6em] border-[0.35em] border-slate-800 bg-slate-950 p-[0.3em] shadow-[0_2.4em_4.5em_-1.2em_rgba(0,0,0,0.85)] ring-1 ring-white/15">
       <div className="flex h-full flex-col overflow-hidden rounded-[2.2em] bg-white text-slate-600">
         <div className="flex items-center justify-between px-[1.5em] pt-[0.7em]">
           <span className="text-[0.75em] font-semibold text-slate-900">9:41</span>
