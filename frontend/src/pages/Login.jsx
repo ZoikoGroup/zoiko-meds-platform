@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  LogIn,
-  UserPlus,
   Mail,
   Lock,
   Eye,
@@ -19,11 +17,13 @@ import { useAuth } from '@/providers/auth-provider'
 import { consumeSessionExpired } from '@/lib/api-client'
 import { portalHome } from '@/lib/roles'
 import { AuthLayout } from '@/layouts/auth-layout'
+import { LoginShowcase } from '@/components/login-showcase/login-showcase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { OAuthButtons } from '@/components/shared/oauth-buttons'
+import { AuthCardHeading, AuthTabs } from '@/components/shared/auth-card'
 import { cn } from '@/lib/utils'
 
 export default function Login() {
@@ -180,9 +180,12 @@ export default function Login() {
       title={showcaseTitle}
       description={showcaseDesc}
       pills={showcasePills}
+      showcase={<LoginShowcase />}
     >
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
-        <CardContent className="flex flex-col gap-6 p-6">
+        {/* Spacing scales with the window height (variables in the showcase
+            stylesheet) so the whole card fits one screen. */}
+        <CardContent className="flex flex-col gap-[var(--zm-card-gap,1.5rem)] p-[var(--zm-card-pad,1.5rem)]">
 
           {/* The emailed second factor (MSA-42). The password was right and a
               link is in the account's inbox; there is nothing left to type
@@ -221,26 +224,14 @@ export default function Login() {
           ) : (
           <>
 
-          {/* Segmented Control Headers (Sign In vs Create Account) - dark mode contrast enhanced */}
-          <div className="grid grid-cols-2 rounded-xl bg-muted/80 dark:bg-slate-900/60 p-1 border border-border/40 dark:border-slate-800/80">
-            <button
-              type="button"
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-card dark:bg-slate-800 px-3 py-2 text-xs font-semibold shadow-xs text-foreground dark:text-slate-50 border border-transparent dark:border-slate-700/50 transition-all"
-            >
-              <LogIn className="size-3.5 text-primary dark:text-teal" />
-              Sign In
-            </button>
-            <Link
-              to="/register"
-              className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-            >
-              <UserPlus className="size-3.5" />
-              Create Account
-            </Link>
-          </div>
+          {/* Sign In | Create Account | Reset Password, shared with the other
+              two auth pages so the card reads as one place. */}
+          <AuthTabs active="sign-in" />
+
+          <AuthCardHeading title="Welcome back" description="Sign in to your ZoikoMeds account." />
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-[var(--zm-form-gap,1rem)]">
             {passwordReset && !error && (
               <div role="status" className="rounded-lg bg-teal/10 p-3 text-xs font-medium text-teal leading-snug">
                 Password updated. Sign in with your new password.
@@ -346,7 +337,7 @@ export default function Login() {
                 needs an administrator, not another attempt. */}
             {enrolmentRequired && (
               <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-foreground">
-                <Shield className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                <Shield className="mt-0.5 size-4 shrink-0 text-amber-600" />
                 <p>
                   This workspace requires two-factor authentication and this account has not set
                   it up yet. Ask a workspace administrator to enrol you, then sign in again.
@@ -359,7 +350,7 @@ export default function Login() {
               <div className="flex items-center justify-between text-xs">
                 <label className={cn(
                   "flex items-center gap-2 cursor-pointer transition-colors select-none",
-                  trustError ? "text-danger font-semibold" : "text-muted-foreground"
+                  trustError ? "text-danger font-semibold" : "font-medium text-foreground"
                 )}>
                   <input
                     type="checkbox"

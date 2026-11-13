@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Mail, ArrowLeft, Loader2, ShieldCheck, MailCheck } from 'lucide-react'
 import { AuthLayout } from '@/layouts/auth-layout'
+import { LoginShowcase } from '@/components/login-showcase/login-showcase'
+import { AuthCardHeading, AuthTabs } from '@/components/shared/auth-card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,9 +37,16 @@ export default function ForgotPassword() {
       title="Reset your ZoikoMeds password"
       description="Enter your account email and we'll send you a secure link to set a new password."
       pills={[{ icon: <ShieldCheck className="size-3.5 text-teal" />, label: 'Secure reset link' }]}
+      showcase={<LoginShowcase />}
     >
       <Card className="border border-border/70 bg-card shadow-xl backdrop-blur-md">
-        <CardContent className="flex flex-col gap-6 p-6">
+        {/* Spacing scales with the window height (variables in the showcase
+            stylesheet), as on the sign-in card. */}
+        <CardContent className="flex flex-col gap-[var(--zm-card-gap,1.5rem)] p-[var(--zm-card-pad,1.5rem)]">
+          {/* Sign In | Create Account | Reset Password, shared with the other
+              two auth pages so the card reads as one place. */}
+          <AuthTabs active="reset-password" />
+
           {sent ? (
             <div className="flex flex-col gap-5 py-2">
               <div className="flex flex-col items-center gap-3 text-center">
@@ -119,14 +128,12 @@ export default function ForgotPassword() {
             </div>
           ) : (
             <>
-              <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-bold text-foreground">Forgot password</h2>
-                <p className="text-xs text-muted-foreground">
-                  We'll email you a link to reset it.
-                </p>
-              </div>
+              <AuthCardHeading
+                title="Forgot password"
+                description="We'll email you a link to reset it."
+              />
 
-              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <form onSubmit={handleSubmit} className="flex flex-col gap-[var(--zm-form-gap,1rem)]">
                 {error && (
                   <div className="rounded-lg bg-destructive/10 p-3 text-xs font-medium text-destructive leading-snug">
                     ⚠️ {error}

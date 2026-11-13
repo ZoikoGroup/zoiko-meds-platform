@@ -4,6 +4,8 @@ import { Sun, Moon, ArrowRight } from 'lucide-react'
 import { useTheme } from '@/providers/theme-provider'
 import { Brand } from '@/components/shared/brand'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import './auth-card-light.css'
 
 export function AuthLayout({
   children,
@@ -11,19 +13,40 @@ export function AuthLayout({
   description,
   pills = [],
   listItems = [],
+  showcase,
 }) {
   const { theme, toggleTheme } = useTheme()
   const isDark = theme === 'dark'
+  // Pages with the shared showcase (sign in, create account, reset password)
+  // get a slightly wider card centred in its column; the others keep the
+  // original left-aligned 420px column.
+  const formWidth = showcase ? 'max-w-[30rem]' : 'max-w-[420px]'
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground transition-colors duration-300">
-      {/* Dynamic Background Gradients */}
-      <div className="absolute inset-0 -z-10 bg-radial-[circle_at_top_right] from-primary/5 via-transparent to-transparent opacity-80" />
-      <div className="absolute -top-40 -left-40 -z-10 size-96 rounded-full bg-teal/10 blur-3xl" />
-      
+    // Beside a showcase the whole page is one dark composition (zm-auth-page,
+    // in the showcase stylesheet), and it uses overflow-clip: that clips like
+    // overflow-hidden but is not a scroll container, so the showcase can stay
+    // pinned while the page scrolls.
+    <div
+      className={cn(
+        'relative min-h-screen w-full text-foreground transition-colors duration-300',
+        showcase ? 'zm-auth-page overflow-clip' : 'overflow-hidden bg-background',
+      )}
+    >
+      {!showcase && (
+        <>
+          {/* Dynamic Background Gradients */}
+          <div className="absolute inset-0 -z-10 bg-radial-[circle_at_top_right] from-primary/5 via-transparent to-transparent opacity-80" />
+          <div className="absolute -top-40 -left-40 -z-10 size-96 rounded-full bg-teal/10 blur-3xl" />
+        </>
+      )}
+
       {/* Main Container */}
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-12">
-        {/* Left Side Showcase (Logo & Pitch) */}
+        {/* Left Side Showcase (Logo & Pitch). A page may supply its own panel
+            for this column (the sign-in, create-account and reset-password
+            pages do); the form column below holds the page's card either way. */}
+        {showcase ?? (
         <section className="relative flex flex-col justify-between p-8 sm:p-12 lg:col-span-6 xl:col-span-7 lg:p-20">
           {/* Logo at the top-left of the left pane, scaled up and highlighted */}
           <div className="flex items-center">
@@ -104,32 +127,48 @@ export function AuthLayout({
             &copy; {new Date().getFullYear()} ZoikoMeds. All rights reserved.
           </div>
         </section>
+        )}
 
-        {/* Right Side (Form Card Container, shifted left on desktop) */}
-        <section className="relative flex flex-col justify-between items-center lg:items-start lg:pl-16 xl:pl-28 bg-muted/20 p-6 sm:p-12 lg:col-span-6 xl:col-span-5 lg:border-l lg:border-border/30 lg:bg-card/20 lg:backdrop-blur-md">
-          {/* Decorative Backdrops */}
-          <div className="absolute top-1/2 left-1/2 -z-10 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-3xl" />
-          
-          {/* Top Header Navigation placed inside right section to prevent overlap */}
-          <div className="w-full flex justify-end items-center gap-3 mb-6 sm:mb-8 max-w-[420px]">
-            <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
-              <a href="https://zoikomeds.com/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
-                Back to site
-                <ArrowRight className="size-3.5" />
-              </a>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={toggleTheme}
-              aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
-              className="rounded-full text-muted-foreground hover:text-foreground"
-            >
-              {isDark ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
-            </Button>
-          </div>
+        {/* Right Side (Form Card Container). Beside a showcase: no header, no
+            panel of its own — the card sits centred on the shared background.
+            Otherwise: shifted left on desktop, under the site/theme header. */}
+        <section
+          className={cn(
+            'relative flex flex-col items-center lg:col-span-6 xl:col-span-5',
+            showcase
+              ? 'justify-center px-4 py-6 sm:px-12 lg:px-10 lg:py-[var(--zm-page-pad-y,2rem)] xl:px-12'
+              : 'justify-between bg-muted/20 p-6 sm:p-12 lg:border-l lg:border-border/30 lg:bg-card/20 lg:backdrop-blur-md lg:items-start lg:pl-16 xl:pl-28',
+          )}
+        >
+          {!showcase && (
+            <>
+              {/* Decorative Backdrops */}
+              <div className="absolute top-1/2 left-1/2 -z-10 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-3xl" />
 
-          <div className="w-full max-w-[420px] my-auto">
+              {/* Top Header Navigation placed inside right section to prevent overlap */}
+              <div className={cn('w-full flex justify-end items-center gap-3 mb-6 sm:mb-8', formWidth)}>
+                <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
+                  <a href="https://zoikomeds.com/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
+                    Back to site
+                    <ArrowRight className="size-3.5" />
+                  </a>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={toggleTheme}
+                  aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+                  className="rounded-full text-muted-foreground hover:text-foreground"
+                >
+                  {isDark ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
+                </Button>
+              </div>
+            </>
+          )}
+
+          {/* Beside a showcase the card is always light (auth-card-light.css),
+              a white card on the dark healthcare composition. */}
+          <div className={cn('w-full my-auto', formWidth, showcase && 'zm-auth-light')}>
             <motion.div
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -140,7 +179,7 @@ export function AuthLayout({
           </div>
 
           {/* Bottom spacer to align vertical flex layout */}
-          <div className="h-4 hidden lg:block" />
+          {!showcase && <div className="h-4 hidden lg:block" />}
         </section>
       </div>
     </div>
